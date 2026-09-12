@@ -1,15 +1,15 @@
-name: Build Android APK
+name: Build InOut APK
 
 on:
   push:
     branches: [ main ]
-  workflow_dispatch: # Lets you trigger a build manually with 1 tap
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Set up JDK 17
@@ -19,15 +19,15 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      - name: Grant Execute Permission for Gradlew
+      - name: Make Gradlew Executable
         run: chmod +x gradlew
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --stacktrace
 
-      - name: Upload APK Artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: MyVault-Debug-APK
+          name: InOut-v1.0-Debug
           path: app/build/outputs/apk/debug/*.apk
           
