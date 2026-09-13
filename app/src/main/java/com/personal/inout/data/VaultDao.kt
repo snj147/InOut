@@ -45,7 +45,7 @@ interface VaultDao {
     @Update
     suspend fun updateCounterparty(party: Counterparty)
 
-    @Query("SELECT * FROM counterparty_list: SELECT * FROM counterparties WHERE id = :id LIMIT 1")
+    @Query("SELECT * FROM counterparties WHERE id = :id LIMIT 1")
     suspend fun getCounterpartyById(id: Long): Counterparty?
 
     // SMS Drafts
