@@ -2,6 +2,7 @@ package com.personal.inout
 
 import android.os.Bundle
 import android.widget.Toast
+import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -32,7 +33,7 @@ class MainActivity : FragmentActivity() {
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                     super.onAuthenticationError(errorCode, errString)
-                    Toast.makeText(activity.applicationContext, "Auth Error: $errString", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(activity.applicationContext, "Auth: $errString", Toast.LENGTH_SHORT).show()
                     activity.finish()
                 }
 
@@ -44,7 +45,7 @@ class MainActivity : FragmentActivity() {
         )
 
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
-            .setTitle("Unlock InOut Vault")
+            .setTitle("Unlock InOut Ledger")
             .setSubtitle("Authenticate via Biometrics or Device PIN")
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
             .build()
