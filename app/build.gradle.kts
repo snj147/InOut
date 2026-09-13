@@ -11,7 +11,7 @@ android {
     defaultConfig {
         applicationId = "com.personal.inout"
         minSdk = 21
-        targetSdk = 30
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0"
     }
@@ -43,7 +43,9 @@ dependencies {
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
     ksp("androidx.room:room-compiler:2.6.1")
-    implementation("net.zetetic:sqlcipher-android:4.5.4")
+    
+    // Official SQLCipher binary package
+    implementation("net.zetetic:android-database-sqlcipher:4.5.4")
     implementation("androidx.sqlite:sqlite:2.4.0")
 
     implementation("com.google.mlkit:text-recognition:16.0.0")
