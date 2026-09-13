@@ -8,46 +8,42 @@ import androidx.biometric.BiometricPrompt
 import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import com.personal.inout.ui.DashboardScreen
-import java.util.concurrent.Executor
 
 class MainActivity : FragmentActivity() {
-
-    private lateinit var executor: Executor
-    private lateinit var biometricPrompt: BiometricPrompt
-    private lateinit var promptInfo: BiometricPrompt.PromptInfo
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val app = application as InOutApp
         val db = app.database
+        val activity = this
 
-        executor = ContextCompat.getMainExecutor(this)
-        biometricPrompt = BiometricPrompt(
-            this,
+        val executor = ContextCompat.getMainExecutor(activity)
+        val biometricPrompt = BiometricPrompt(
+            activity,
             executor,
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
-                    setContent {
+                    activity.setContent {
                         DashboardScreen(db = db)
                     }
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                     super.onAuthenticationError(errorCode, errString)
-                    Toast.makeText(this@MainActivity, "Auth Error: $errString", Toast.LENGTH_SHORT).show()
-                    finish()
+                    Toast.makeText(activity.applicationContext, "Auth Error: $errString", Toast.LENGTH_SHORT).show()
+                    activity.finish()
                 }
 
                 override fun onAuthenticationFailed() {
                     super.onAuthenticationFailed()
-                    Toast.makeText(this@MainActivity, "Authentication failed", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(activity.applicationContext, "Authentication failed", Toast.LENGTH_SHORT).show()
                 }
             }
         )
 
-        promptInfo = BiometricPrompt.PromptInfo.Builder()
+        val promptInfo = BiometricPrompt.PromptInfo.Builder()
             .setTitle("Unlock InOut Vault")
             .setSubtitle("Authenticate via Biometrics or Device PIN")
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
