@@ -347,7 +347,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         type = "EXPENSE",
                                         category = split.category.ifBlank { "Receipt Split" },
                                         amount = splitAmount,
-                                        note = "$merchant (${split.assignedTo})"
+                                        note = merchant
                                     )
                                 )
                             }
@@ -358,6 +358,7 @@ fun DashboardScreen(db: AppDatabase) {
                 }
             )
         }
+        
     }
 }
 
