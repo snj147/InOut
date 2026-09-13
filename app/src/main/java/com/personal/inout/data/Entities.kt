@@ -8,36 +8,26 @@ data class Account(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val balance: Double,
-    val type: String // "BANK", "CASH", "CREDIT"
+    val type: String // CASH, BANK, CREDIT
 )
 
 @Entity(tableName = "transactions")
 data class Transaction(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val accountId: Long,
-    val type: String, // "EXPENSE", "INCOME", "TRANSFER"
+    val type: String, // INCOME, EXPENSE, TRANSFER
     val category: String,
     val amount: Double,
-    val note: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val note: String = ""
 )
 
-@Entity(tableName = "debts")
-data class Debt(
-    @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val lender: String,
-    val principal: Double,
-    val isSilent: Boolean, // Silent loans don't trigger reminders or clutter the dashboard
-    val monthlyInterest: Double = 0.0,
-    val dueDate: Long? = null
-)
-
-@Entity(tableName = "sms_inbox")
+@Entity(tableName = "sms_drafts")
 data class SmsDraft(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val rawSender: String,
+    val rawBody: String,
     val amount: Double,
     val merchant: String,
-    val rawBody: String,
     val timestamp: Long = System.currentTimeMillis()
 )
