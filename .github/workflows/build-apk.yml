@@ -17,12 +17,13 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
 
-      - name: Setup Gradle
+      - name: Setup Gradle 8.6
         uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.6'
 
-      - name: Build Debug APK with System Gradle
+      - name: Build Debug APK
         run: gradle assembleDebug --stacktrace
 
       - name: Upload APK
@@ -30,3 +31,4 @@ jobs:
         with:
           name: InOut-v1.0-Debug
           path: app/build/outputs/apk/debug/*.apk
+          
