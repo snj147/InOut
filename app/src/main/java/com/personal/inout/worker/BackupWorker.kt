@@ -3,50 +3,39 @@ package com.personal.inout.worker
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import com.personal.inout.data.AppDatabase
+import kotlinx.coroutines.flow.firstOrNull
 import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class BackupWorker(
-    private val context: Context,
-    params: WorkerParameters
-) : CoroutineWorker(context, params) {
+    appContext: Context,
+    workerParams: WorkerParameters
+) : CoroutineWorker(appContext, workerParams) {
 
     override suspend fun doWork(): Result {
         return try {
-            val dbFile = context.getDatabasePath("inout_encrypted.db")
-            if (!dbFile.exists()) return Result.success()
+            val db = AppDatabase.getDatabase(applicationContext)
+            val accounts = db.vaultDao().getAllAccounts().firstOrNull() ?: emptyList()
+            val transactions = db.vaultDao().getRecentTransactions().firstOrNull() ?: emptyList()
 
-            // Export to public accessible Documents storage
-            val backupFolder = File(context.getExternalFilesDir(null), "Backups").apply { mkdirs() }
-            val dateStamp = SimpleDateFormat("yyyy_MM_dd", Locale.US).format(Date())
-            val destination = File(backupFolder, "inout_backup_$dateStamp.enc")
+            val backupDir = File(applicationContext.filesDir, "backups")
+            if (!backupDir.exists()) backupDir.mkdirs()
 
-            FileInputStream(dbFile).use { input ->
-                FileOutputStream(destination).use { output ->
-                    input.copyTo(output)
-                }
+            val backupFile = File(backupDir, "inout_vault_export_${System.currentTimeMillis()}.csv")
+            backupFile.bufferedWriter().use { writer ->
+                writer.write("--- ACCOUNTS ---\n")
+                writer.write("ID,Name,Balance,Type\n")
+                accounts.forEach { writer.write("${it.id},${it.name},${it.balance},${it.type}\n") }
+
+                writer.write("\n--- TRANSACTIONS ---\n")
+                writer.write("ID,AccountID,Type,Category,Amount,Timestamp,Note\n")
+                transactions.forEach { writer.write("${it.id},${it.accountId},${it.type},${it.category},${it.amount},${it.timestamp},${it.note}\n") }
             }
 
-            pruneOldBackups(backupFolder)
             Result.success()
         } catch (e: Exception) {
+            e.printStackTrace()
             Result.retry()
-        }
-    }
-
-    private fun pruneOldBackups(folder: File) {
-        val files = folder.listFiles() ?: return
-        // Keep files strictly within the last 30 daily snapshots
-        if (files.size > 30) {
-            files.sortBy { it.lastModified() }
-            val toDeleteCount = files.size - 30
-            for (i in 0 until toDeleteCount) {
-                files[i].delete()
-            }
         }
     }
 }
