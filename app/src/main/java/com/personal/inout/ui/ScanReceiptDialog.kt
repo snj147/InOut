@@ -17,13 +17,12 @@ import androidx.compose.ui.window.Dialog
 import com.personal.inout.ocr.ParsedReceipt
 
 data class EditableSplitItem(
-    var description: String,
-    var amountText: String,
-    var category: String,
-    var assignedTo: String = "Me"
+    val description: String,
+    val amountText: String,
+    val category: String,
+    val assignedTo: String = "Me"
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScanReceiptDialog(
     parsedData: ParsedReceipt,
@@ -36,16 +35,17 @@ fun ScanReceiptDialog(
         mutableStateListOf<EditableSplitItem>().apply {
             if (parsedData.lineItems.isNotEmpty()) {
                 addAll(
-                    parsedData.lineItems.map {
+                    parsedData.lineItems.map { lineItem ->
                         EditableSplitItem(
-                            description = it.description,
-                            amountText = it.amount.toString(),
-                            category = "Scanned Item"
+                            description = lineItem.description,
+                            amountText = lineItem.amount.toString(),
+                            category = "Scanned Item",
+                            assignedTo = "Me"
                         )
                     }
                 )
             } else {
-                add(EditableSplitItem("Scanned Receipt", totalText, "General"))
+                add(EditableSplitItem(description = "Scanned Receipt", amountText = totalText, category = "General", assignedTo = "Me"))
             }
         }
     }
@@ -95,7 +95,7 @@ fun ScanReceiptDialog(
                         fontWeight = FontWeight.SemiBold
                     )
                     TextButton(onClick = {
-                        splitItems.add(EditableSplitItem("", "0.0", "Split"))
+                        splitItems.add(EditableSplitItem(description = "", amountText = "0.0", category = "Split", assignedTo = "Me"))
                     }) {
                         Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
@@ -121,16 +121,16 @@ fun ScanReceiptDialog(
                             ) {
                                 OutlinedTextField(
                                     value = item.description,
-                                    onValueChange = {
-                                        splitItems[index] = item.copy(description = it)
+                                    onValueChange = { newDesc ->
+                                        splitItems[index] = item.copy(description = newDesc)
                                     },
                                     label = { Text("Item") },
                                     modifier = Modifier.weight(1.5f)
                                 )
                                 OutlinedTextField(
                                     value = item.amountText,
-                                    onValueChange = {
-                                        splitItems[index] = item.copy(amountText = it)
+                                    onValueChange = { newAmt ->
+                                        splitItems[index] = item.copy(amountText = newAmt)
                                     },
                                     label = { Text("₹") },
                                     modifier = Modifier.weight(1f)
