@@ -26,15 +26,29 @@ interface VaultDao {
     @Query("SELECT * FROM transactions ORDER BY timestamp DESC")
     fun getAllTransactions(): Flow<List<Transaction>>
 
-    @Query("SELECT * FROM transactions ORDER BY timestamp DESC LIMIT 50")
-    fun getRecentTransactions(): Flow<List<Transaction>>
-
     @Insert
     suspend fun insertTransaction(transaction: Transaction): Long
 
     @Query("DELETE FROM transactions WHERE id = :txId")
     suspend fun deleteTransaction(txId: Long)
 
+    @Query("DELETE FROM transactions")
+    suspend fun clearAllTransactions()
+
+    // Counterparties (Lenders & Borrowers)
+    @Query("SELECT * FROM counterparties ORDER BY name ASC")
+    fun getAllCounterparties(): Flow<List<Counterparty>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCounterparty(party: Counterparty): Long
+
+    @Update
+    suspend fun updateCounterparty(party: Counterparty)
+
+    @Query("SELECT * FROM counterparty_list: SELECT * FROM counterparties WHERE id = :id LIMIT 1")
+    suspend fun getCounterpartyById(id: Long): Counterparty?
+
+    // SMS Drafts
     @Query("SELECT * FROM sms_drafts ORDER BY timestamp DESC")
     fun getStagedSms(): Flow<List<SmsDraft>>
 
@@ -43,4 +57,7 @@ interface VaultDao {
 
     @Query("DELETE FROM sms_drafts WHERE id = :draftId")
     suspend fun deleteSmsDraftById(draftId: Long)
+
+    @Query("DELETE FROM sms_drafts")
+    suspend fun clearAllSms()
 }
