@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface VaultDao {
-    @Query("SELECT * FROM accounts")
+    @Query("SELECT * FROM accounts ORDER BY id ASC")
     fun getAllAccounts(): Flow<List<Account>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -14,11 +14,20 @@ interface VaultDao {
     @Update
     suspend fun updateAccount(account: Account)
 
-    @Query("SELECT * FROM transactions ORDER BY timestamp DESC LIMIT 20")
+    @Query("DELETE FROM accounts WHERE id = :accountId")
+    suspend fun deleteAccount(accountId: Long)
+
+    @Query("SELECT * FROM transactions ORDER BY timestamp DESC")
+    fun getAllTransactions(): Flow<List<Transaction>>
+
+    @Query("SELECT * FROM transactions ORDER BY timestamp DESC LIMIT 30")
     fun getRecentTransactions(): Flow<List<Transaction>>
 
     @Insert
     suspend fun insertTransaction(transaction: Transaction): Long
+
+    @Query("DELETE FROM transactions WHERE id = :txId")
+    suspend fun deleteTransaction(txId: Long)
 
     @Query("SELECT * FROM sms_drafts ORDER BY timestamp DESC")
     fun getStagedSms(): Flow<List<SmsDraft>>
@@ -26,6 +35,7 @@ interface VaultDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSmsDraft(draft: SmsDraft): Long
 
-    @Delete
-    suspend fun deleteSmsDraft(draft: SmsDraft)
+    // Guaranteed deletion by ID:
+    @Query("DELETE FROM sms_drafts WHERE id = :draftId")
+    suspend fun deleteSmsDraftById(draftId: Long)
 }
