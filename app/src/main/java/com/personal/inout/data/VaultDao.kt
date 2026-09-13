@@ -17,10 +17,16 @@ interface VaultDao {
     @Query("DELETE FROM accounts WHERE id = :accountId")
     suspend fun deleteAccount(accountId: Long)
 
+    @Query("UPDATE accounts SET isDefault = 0")
+    suspend fun clearDefaultAccounts()
+
+    @Query("UPDATE accounts SET isDefault = 1 WHERE id = :accountId")
+    suspend fun setDefaultAccount(accountId: Long)
+
     @Query("SELECT * FROM transactions ORDER BY timestamp DESC")
     fun getAllTransactions(): Flow<List<Transaction>>
 
-    @Query("SELECT * FROM transactions ORDER BY timestamp DESC LIMIT 30")
+    @Query("SELECT * FROM transactions ORDER BY timestamp DESC LIMIT 50")
     fun getRecentTransactions(): Flow<List<Transaction>>
 
     @Insert
@@ -35,7 +41,6 @@ interface VaultDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertSmsDraft(draft: SmsDraft): Long
 
-    // Guaranteed deletion by ID:
     @Query("DELETE FROM sms_drafts WHERE id = :draftId")
     suspend fun deleteSmsDraftById(draftId: Long)
 }
