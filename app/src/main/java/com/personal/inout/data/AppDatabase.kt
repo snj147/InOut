@@ -7,8 +7,7 @@ import androidx.room.RoomDatabase
 import net.sqlcipher.database.SQLiteDatabase
 import net.sqlcipher.database.SupportFactory
 
-
-@Database(entities = [Account::class, Transaction::class, SmsDraft::class], version = 2, exportSchema = false)
+@Database(entities = [Account::class, Transaction::class, Counterparty::class, SmsDraft::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun vaultDao(): VaultDao
 
