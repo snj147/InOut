@@ -7,7 +7,11 @@ import androidx.room.RoomDatabase
 import net.sqlcipher.database.SQLiteDatabase
 import net.sqlcipher.database.SupportFactory
 
-@Database(entities = [Account::class, Transaction::class, Debt::class, SmsDraft::class], version = 1)
+@Database(
+    entities = [Account::class, Transaction::class, SmsDraft::class],
+    version = 1,
+    exportSchema = false
+)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun vaultDao(): VaultDao
 
@@ -17,18 +21,21 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
-                // Pre-stretching your 4-digit master PIN using SQLCipher passphrase
-                val passphrase = SQLiteDatabase.getBytes("1234".toCharArray())
+                // Initialize SQLCipher binary hooks
+                SQLiteDatabase.loadLibs(context)
+
+                // Passphrase for local AES-256 database encryption
+                val passphrase = SQLiteDatabase.getBytes("inout-local-secure-key-2026".toCharArray())
                 val factory = SupportFactory(passphrase)
 
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "inout_encrypted.db"
+                    "inout_vault.db"
                 )
-                .openHelperFactory(factory)
-                .fallbackToDestructiveMigration()
-                .build()
+                    .openHelperFactory(factory)
+                    .fallbackToDestructiveMigration()
+                    .build()
 
                 INSTANCE = instance
                 instance
