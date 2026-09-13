@@ -72,15 +72,17 @@ fun ScanReceiptDialog(
 
                 OutlinedTextField(
                     value = merchantName,
-                    onValueChange = { merchantName = it },
+                    onValueChange = { str: String -> merchantName = str },
                     label = { Text("Store / Merchant Name") },
+                    singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 OutlinedTextField(
                     value = totalText,
-                    onValueChange = { totalText = it },
+                    onValueChange = { str: String -> totalText = str },
                     label = { Text("Receipt Total (₹)") },
+                    singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
 
@@ -121,18 +123,20 @@ fun ScanReceiptDialog(
                             ) {
                                 OutlinedTextField(
                                     value = item.description,
-                                    onValueChange = { newDesc ->
-                                        splitItems[index] = item.copy(description = newDesc)
+                                    onValueChange = { str: String ->
+                                        splitItems[index] = item.copy(description = str)
                                     },
                                     label = { Text("Item") },
+                                    singleLine = true,
                                     modifier = Modifier.weight(1.5f)
                                 )
                                 OutlinedTextField(
                                     value = item.amountText,
-                                    onValueChange = { newAmt ->
-                                        splitItems[index] = item.copy(amountText = newAmt)
+                                    onValueChange = { str: String ->
+                                        splitItems[index] = item.copy(amountText = str)
                                     },
                                     label = { Text("₹") },
+                                    singleLine = true,
                                     modifier = Modifier.weight(1f)
                                 )
                                 IconButton(onClick = { splitItems.removeAt(index) }) {
