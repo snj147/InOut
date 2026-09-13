@@ -3,6 +3,7 @@ package com.personal.inout.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
@@ -10,130 +11,158 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import com.personal.inout.ocr.ParsedReceipt
 
-data class SplitItem(var category: String, var amountText: String)
+data class EditableSplitItem(
+    var description: String,
+    var amountText: String,
+    var category: String,
+    var assignedTo: String = "Me"
+)
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScanReceiptDialog(
     parsedData: ParsedReceipt,
     onDismiss: () -> Unit,
-    onConfirm: (total: Double, note: String, splits: List<SplitItem>, keepPhoto: Boolean) -> Unit
+    onConfirm: (total: Double, merchant: String, splits: List<EditableSplitItem>, tip: Double) -> Unit
 ) {
-    var totalText by remember { mutableStateOf(parsedData.totalAmount?.toString() ?: "") }
-    var merchantText by remember { mutableStateOf(parsedData.merchantName ?: "") }
-    var isSplitMode by remember { mutableStateOf(false) }
-    var keepPhoto by remember { mutableStateOf(false) }
-
-    // Multi-split lines
-    val splits = remember {
-        mutableStateListOf(
-            SplitItem("Groceries", parsedData.totalAmount?.toString() ?: "")
-        )
+    var merchantName by remember { mutableStateOf(parsedData.merchant) }
+    var totalText by remember { mutableStateOf(if (parsedData.total > 0) parsedData.total.toString() else "") }
+    val splitItems = remember {
+        mutableStateListOf<EditableSplitItem>().apply {
+            if (parsedData.lineItems.isNotEmpty()) {
+                addAll(
+                    parsedData.lineItems.map {
+                        EditableSplitItem(
+                            description = it.description,
+                            amountText = it.amount.toString(),
+                            category = "Scanned Item"
+                        )
+                    }
+                )
+            } else {
+                add(EditableSplitItem("Scanned Receipt", totalText, "General"))
+            }
+        }
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Processed Receipt") },
-        text = {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.85f)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                item {
-                    OutlinedTextField(
-                        value = merchantText,
-                        onValueChange = { merchantText = it },
-                        label = { Text("Merchant / Store") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
+                Text(
+                    text = "Receipt Breakdown & Split",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
 
-                item {
-                    OutlinedTextField(
-                        value = totalText,
-                        onValueChange = { totalText = it },
-                        label = { Text("Total Bill (₹)") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
+                OutlinedTextField(
+                    value = merchantName,
+                    onValueChange = { merchantName = it },
+                    label = { Text("Store / Merchant Name") },
+                    modifier = Modifier.fillMaxWidth()
+                )
 
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(checked = keepPhoto, onCheckedChange = { keepPhoto = it })
+                OutlinedTextField(
+                    value = totalText,
+                    onValueChange = { totalText = it },
+                    label = { Text("Receipt Total (₹)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Line Items (${splitItems.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    TextButton(onClick = {
+                        splitItems.add(EditableSplitItem("", "0.0", "Split"))
+                    }) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Archive compressed receipt image", style = MaterialTheme.typography.bodySmall)
+                        Text("Add Item")
                     }
                 }
 
-                item {
-                    Divider()
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Split across categories?", style = MaterialTheme.typography.bodyMedium)
-                        Switch(checked = isSplitMode, onCheckedChange = { isSplitMode = it })
-                    }
-                }
-
-                if (isSplitMode) {
-                    itemsIndexed(splits) { index, split ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    itemsIndexed(splitItems) { index, item ->
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                            shape = RoundedCornerShape(8.dp)
                         ) {
-                            OutlinedTextField(
-                                value = split.category,
-                                onValueChange = { splits[index] = split.copy(category = it) },
-                                label = { Text("Category") },
-                                modifier = Modifier.weight(1.2f)
-                            )
-                            OutlinedTextField(
-                                value = split.amountText,
-                                onValueChange = { splits[index] = split.copy(amountText = it) },
-                                label = { Text("₹") },
-                                modifier = Modifier.weight(0.8f)
-                            )
-                            if (splits.size > 1) {
-                                IconButton(onClick = { splits.removeAt(index) }) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Remove")
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedTextField(
+                                    value = item.description,
+                                    onValueChange = {
+                                        splitItems[index] = item.copy(description = it)
+                                    },
+                                    label = { Text("Item") },
+                                    modifier = Modifier.weight(1.5f)
+                                )
+                                OutlinedTextField(
+                                    value = item.amountText,
+                                    onValueChange = {
+                                        splitItems[index] = item.copy(amountText = it)
+                                    },
+                                    label = { Text("₹") },
+                                    modifier = Modifier.weight(1f)
+                                )
+                                IconButton(onClick = { splitItems.removeAt(index) }) {
+                                    Icon(
+                                        Icons.Default.Delete,
+                                        contentDescription = "Remove",
+                                        tint = MaterialTheme.colorScheme.error
+                                    )
                                 }
                             }
                         }
                     }
+                }
 
-                    item {
-                        TextButton(
-                            onClick = { splits.add(SplitItem("General", "")) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = null)
-                            Spacer(Modifier.width(4.dp))
-                            Text("Add Split Category")
-                        }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) { Text("Cancel") }
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = {
+                        val computedTotal = totalText.toDoubleOrNull()
+                            ?: splitItems.sumOf { it.amountText.toDoubleOrNull() ?: 0.0 }
+                        onConfirm(computedTotal, merchantName, splitItems, 0.0)
+                    }) {
+                        Text("Record & Split")
                     }
                 }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val finalTotal = totalText.toDoubleOrNull() ?: 0.0
-                    onConfirm(finalTotal, merchantText, splits, keepPhoto)
-                }
-            ) {
-                Text("Post to Ledger")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Discard") }
         }
-    )
+    }
 }
