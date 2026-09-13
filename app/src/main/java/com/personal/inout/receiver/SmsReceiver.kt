@@ -4,7 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
-import com.personal.inout.InOutApp
+import com.personal.inout.data.AppDatabase
 import com.personal.inout.data.SmsDraft
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -12,49 +12,53 @@ import kotlinx.coroutines.launch
 import java.util.regex.Pattern
 
 class SmsReceiver : BroadcastReceiver() {
+
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
 
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
-        val fullBody = StringBuilder()
-        var sender = ""
+        if (messages.isNullOrEmpty()) return
 
-        for (msg in messages) {
-            sender = msg.displayOriginatingAddress ?: ""
-            fullBody.append(msg.displayMessageBody)
-        }
+        val fullBody = messages.joinToString(separator = "") { it.displayMessageBody ?: "" }
+        val sender = messages[0].displayOriginatingAddress ?: "Unknown"
 
-        val text = fullBody.toString()
+        val parsed = parseTransactionSms(fullBody) ?: return
 
-        // Ignore common spam keywords
-        val lower = text.lowercase()
-        if (lower.contains("win") || lower.contains("apply now") || lower.contains("approved for")) {
-            return
-        }
-
-        // Parse amounts (Supports formats like: Rs. 500, INR 1,450.00, Rs 200)
-        val amountPattern = Pattern.compile("(?i)(?:INR|RS\\.?)\\s*([\\d,]+\\.?\\d*)")
-        val amountMatcher = amountPattern.matcher(text)
-
-        if (amountMatcher.find()) {
-            val rawAmount = amountMatcher.group(1)?.replace(",", "")?.toDoubleOrNull() ?: return
-            
-            // Extract basic vendor text following 'at', 'to', or 'vpa'
-            val merchantPattern = Pattern.compile("(?i)(?:at|to|vpa)\\s+([A-Za-z0-9_]+)")
-            val merchantMatcher = merchantPattern.matcher(text)
-            val merchant = if (merchantMatcher.find()) merchantMatcher.group(1) ?: "Unknown" else "Merchant"
-
-            val draft = SmsDraft(
-                rawSender = sender,
-                amount = rawAmount,
-                merchant = merchant,
-                rawBody = text
-            )
-
-            val app = context.applicationContext as InOutApp
-            CoroutineScope(Dispatchers.IO).launch {
-                app.database.vaultDao().insertSmsDraft(draft)
+        val pendingResult = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val db = AppDatabase.getDatabase(context)
+                db.vaultDao().insertSmsDraft(
+                    SmsDraft(
+                        rawSender = sender,
+                        rawBody = fullBody,
+                        amount = parsed.amount,
+                        merchant = parsed.merchant
+                    )
+                )
+            } finally {
+                pendingResult.finish()
             }
         }
     }
+
+    private fun parseTransactionSms(body: String): ParsedSmsData? {
+        val lower = body.lowercase()
+        val isTx = listOf("debited", "spent", "paid", "sent", "transferred", "withdrawn", "credited", "received")
+            .any { lower.contains(it) }
+        if (!isTx) return null
+
+        val amountRegex = Pattern.compile("(?i)(?:rs\\.?|inr|₹)\\s*([0-9]+(?:\\.[0-9]{1,2})?)")
+        val matcher = amountRegex.matcher(body)
+        val amount = if (matcher.find()) matcher.group(1)?.toDoubleOrNull() ?: 0.0 else return null
+        if (amount <= 0.0) return null
+
+        val merchantRegex = Pattern.compile("(?i)(?:at|to|info|vpa|ref)\\s+([A-Za-z0-9_@.\\-]{3,20})")
+        val mMatcher = merchantRegex.matcher(body)
+        val merchant = if (mMatcher.find()) mMatcher.group(1)?.trim() ?: "Parsed Transaction" else "Bank Alert"
+
+        return ParsedSmsData(amount = amount, merchant = merchant)
+    }
+
+    private data class ParsedSmsData(val amount: Double, val merchant: String)
 }
