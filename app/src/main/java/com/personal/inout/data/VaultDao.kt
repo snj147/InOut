@@ -9,31 +9,22 @@ interface VaultDao {
     fun getAllAccounts(): Flow<List<Account>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertAccount(account: Account)
+    suspend fun insertAccount(account: Account): Long
 
     @Update
     suspend fun updateAccount(account: Account)
 
-    @Query("SELECT * FROM transactions ORDER BY timestamp DESC LIMIT 50")
+    @Query("SELECT * FROM transactions ORDER BY timestamp DESC LIMIT 20")
     fun getRecentTransactions(): Flow<List<Transaction>>
 
     @Insert
-    suspend fun insertTransaction(tx: Transaction)
+    suspend fun insertTransaction(transaction: Transaction): Long
 
-    @Query("SELECT * FROM debts WHERE isSilent = 0")
-    fun getActiveDebts(): Flow<List<Debt>>
-
-    @Query("SELECT * FROM debts WHERE isSilent = 1")
-    fun getSilentDebts(): Flow<List<Debt>>
-
-    @Insert
-    suspend fun insertDebt(debt: Debt)
-
-    @Query("SELECT * FROM sms_inbox ORDER BY timestamp DESC")
+    @Query("SELECT * FROM sms_drafts ORDER BY timestamp DESC")
     fun getStagedSms(): Flow<List<SmsDraft>>
 
-    @Insert
-    suspend fun insertSmsDraft(draft: SmsDraft)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSmsDraft(draft: SmsDraft): Long
 
     @Delete
     suspend fun deleteSmsDraft(draft: SmsDraft)
