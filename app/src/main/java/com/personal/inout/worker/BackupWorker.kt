@@ -6,6 +6,9 @@ import androidx.work.WorkerParameters
 import com.personal.inout.data.AppDatabase
 import kotlinx.coroutines.flow.firstOrNull
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class BackupWorker(
     appContext: Context,
@@ -15,23 +18,26 @@ class BackupWorker(
     override suspend fun doWork(): Result {
         return try {
             val db = AppDatabase.getDatabase(applicationContext)
-            val accounts = db.vaultDao().getAllAccounts().firstOrNull() ?: emptyList()
-            val transactions = db.vaultDao().getRecentTransactions().firstOrNull() ?: emptyList()
+            val transactions = db.vaultDao().getAllTransactions().firstOrNull() ?: emptyList()
 
             val backupDir = File(applicationContext.filesDir, "backups")
-            if (!backupDir.exists()) backupDir.mkdirs()
-
-            val backupFile = File(backupDir, "inout_vault_export_${System.currentTimeMillis()}.csv")
-            backupFile.bufferedWriter().use { writer ->
-                writer.write("--- ACCOUNTS ---\n")
-                writer.write("ID,Name,Balance,Type\n")
-                accounts.forEach { writer.write("${it.id},${it.name},${it.balance},${it.type}\n") }
-
-                writer.write("\n--- TRANSACTIONS ---\n")
-                writer.write("ID,AccountID,Type,Category,Amount,Timestamp,Note\n")
-                transactions.forEach { writer.write("${it.id},${it.accountId},${it.type},${it.category},${it.amount},${it.timestamp},${it.note}\n") }
+            if (!backupDir.exists()) {
+                backupDir.mkdirs()
             }
 
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val backupFile = File(backupDir, "ledger_backup_$timestamp.csv")
+
+            val csvContent = StringBuilder().apply {
+                append("ID,FlowType,Category,Amount,Timestamp,Note,PartyName,IsRecurring,Frequency\n")
+                for (tx in transactions) {
+                    val sanitizedNote = tx.note.replace(",", " ")
+                    val sanitizedParty = tx.partyName.replace(",", " ")
+                    append("${tx.id},${tx.flowType},${tx.category},${tx.amount},${tx.timestamp},$sanitizedNote,$sanitizedParty,${tx.isRecurring},${tx.frequency}\n")
+                }
+            }
+
+            backupFile.writeText(csvContent.toString())
             Result.success()
         } catch (e: Exception) {
             e.printStackTrace()
