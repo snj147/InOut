@@ -30,15 +30,16 @@ fun ScanReceiptDialog(
     onConfirm: (total: Double, merchant: String, splits: List<EditableSplitItem>, tip: Double) -> Unit
 ) {
     var merchantName by remember { mutableStateOf(parsedData.merchant) }
-    var totalText by remember { mutableStateOf(if (parsedData.total > 0) parsedData.total.toString() else "") }
+    var totalText by remember { mutableStateOf(if (parsedData.total > 0.0) parsedData.total.toString() else "") }
+    
     val splitItems = remember {
         mutableStateListOf<EditableSplitItem>().apply {
             if (parsedData.lineItems.isNotEmpty()) {
                 addAll(
-                    parsedData.lineItems.map { lineItem ->
+                    parsedData.lineItems.map { item ->
                         EditableSplitItem(
-                            description = lineItem.description,
-                            amountText = lineItem.amount.toString(),
+                            description = item.description,
+                            amountText = item.amount.toString(),
                             category = "Scanned Item",
                             assignedTo = "Me"
                         )
@@ -72,7 +73,7 @@ fun ScanReceiptDialog(
 
                 OutlinedTextField(
                     value = merchantName,
-                    onValueChange = { str: String -> merchantName = str },
+                    onValueChange = { merchantName = it },
                     label = { Text("Store / Merchant Name") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -80,7 +81,7 @@ fun ScanReceiptDialog(
 
                 OutlinedTextField(
                     value = totalText,
-                    onValueChange = { str: String -> totalText = str },
+                    onValueChange = { totalText = it },
                     label = { Text("Receipt Total (₹)") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
@@ -123,8 +124,8 @@ fun ScanReceiptDialog(
                             ) {
                                 OutlinedTextField(
                                     value = item.description,
-                                    onValueChange = { str: String ->
-                                        splitItems[index] = item.copy(description = str)
+                                    onValueChange = { newDesc ->
+                                        splitItems[index] = item.copy(description = newDesc)
                                     },
                                     label = { Text("Item") },
                                     singleLine = true,
@@ -132,8 +133,8 @@ fun ScanReceiptDialog(
                                 )
                                 OutlinedTextField(
                                     value = item.amountText,
-                                    onValueChange = { str: String ->
-                                        splitItems[index] = item.copy(amountText = str)
+                                    onValueChange = { newAmt ->
+                                        splitItems[index] = item.copy(amountText = newAmt)
                                     },
                                     label = { Text("₹") },
                                     singleLine = true,
