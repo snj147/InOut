@@ -7,6 +7,7 @@ import androidx.room.RoomDatabase
 import net.sqlcipher.database.SQLiteDatabase
 import net.sqlcipher.database.SupportFactory
 
+
 @Database(
     entities = [Account::class, Transaction::class, SmsDraft::class],
     version = 1,
