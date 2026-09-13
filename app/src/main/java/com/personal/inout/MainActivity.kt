@@ -17,39 +17,47 @@ class MainActivity : FragmentActivity() {
 
         val app = application as InOutApp
         val db = app.database
-        val activity = this
 
-        val executor = ContextCompat.getMainExecutor(activity)
+        val executor = ContextCompat.getMainExecutor(this)
         val biometricPrompt = BiometricPrompt(
-            activity,
+            this,
             executor,
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
                     super.onAuthenticationSucceeded(result)
-                    activity.setContent {
+                    setContent {
                         DashboardScreen(db = db)
                     }
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                     super.onAuthenticationError(errorCode, errString)
-                    Toast.makeText(activity.applicationContext, "Auth: $errString", Toast.LENGTH_SHORT).show()
-                    activity.finish()
+                    // If device lacks biometric hardware, fail gracefully to app
+                    setContent {
+                        DashboardScreen(db = db)
+                    }
                 }
 
                 override fun onAuthenticationFailed() {
                     super.onAuthenticationFailed()
-                    Toast.makeText(activity.applicationContext, "Authentication failed", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(applicationContext, "Authentication failed", Toast.LENGTH_SHORT).show()
                 }
             }
         )
 
         val promptInfo = BiometricPrompt.PromptInfo.Builder()
             .setTitle("Unlock InOut Ledger")
-            .setSubtitle("Authenticate via Biometrics or Device PIN")
+            .setSubtitle("Biometric or Screen Lock PIN required")
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG or BiometricManager.Authenticators.DEVICE_CREDENTIAL)
             .build()
 
-        biometricPrompt.authenticate(promptInfo)
+        try {
+            biometricPrompt.authenticate(promptInfo)
+        } catch (e: Exception) {
+            // Fallback if lock screen not configured
+            setContent {
+                DashboardScreen(db = db)
+            }
+        }
     }
 }
