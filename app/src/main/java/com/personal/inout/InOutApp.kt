@@ -4,29 +4,28 @@ import android.app.Application
 import androidx.work.*
 import com.personal.inout.data.AppDatabase
 import com.personal.inout.worker.BackupWorker
+import com.personal.inout.worker.DueReminderWorker
 import java.util.concurrent.TimeUnit
 
 class InOutApp : Application() {
-    val database: AppDatabase by lazy { AppDatabase.getDatabase(this) }
+
+    val database by lazy { AppDatabase.getDatabase(this) }
 
     override fun onCreate() {
         super.onCreate()
-        scheduleDailyBackup()
-    }
 
-    private fun scheduleDailyBackup() {
-        val constraints = Constraints.Builder()
-            .setRequiresCharging(true)
-            .build()
-
-        val backupRequest = PeriodicWorkRequestBuilder<BackupWorker>(24, TimeUnit.HOURS)
-            .setConstraints(constraints)
-            .build()
-
+        val reminderWork = PeriodicWorkRequestBuilder<DueReminderWorker>(12, TimeUnit.HOURS).build()
         WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            "DailyBackupWork",
+            "InOutDueReminders",
             ExistingPeriodicWorkPolicy.KEEP,
-            backupRequest
+            reminderWork
+        )
+
+        val backupWork = PeriodicWorkRequestBuilder<BackupWorker>(24, TimeUnit.HOURS).build()
+        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
+            "InOutDailyBackup",
+            ExistingPeriodicWorkPolicy.KEEP,
+            backupWork
         )
     }
 }
