@@ -9,9 +9,15 @@ data class Account(
     val id: Long = 0,
     val name: String,
     val balance: Double,
-    val type: String, // "BANK", "CASH", "CREDIT", "LOAN"
+    val totalLimit: Double = 0.0,    // Credit Card limit
+    val type: String,                // "CASH", "BANK", "CREDIT", "LENDER", "BORROWER"
     val isDefault: Boolean = false,
-    val monthlyLimit: Double = 0.0
+    val hasEyeMask: Boolean = true,
+    val billingDay: Int = 1,         // CC billing date or due date
+    val dueDate: Long = 0L,          // Repayment target date
+    val repaymentType: String = "BULLET", // "BULLET", "INSTALLMENT"
+    val frequency: String = "MONTHLY",    // "MONTHLY", "YEARLY"
+    val installmentCount: Int = 1
 )
 
 @Entity(tableName = "transactions")
@@ -25,11 +31,10 @@ data class Transaction(
     val amount: Double,
     val timestamp: Long = System.currentTimeMillis(),
     val note: String = "",
-    val counterpartyId: Long = 0L,
     val partyName: String = "",
     val returnDate: Long = 0L,
     val isRecurring: Boolean = false,
-    val frequency: String = "NONE" // "DAILY", "WEEKLY", "MONTHLY"
+    val frequency: String = "NONE"
 )
 
 @Entity(tableName = "counterparties")
