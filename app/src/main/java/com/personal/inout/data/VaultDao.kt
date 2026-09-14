@@ -17,6 +17,9 @@ interface VaultDao {
     @Query("DELETE FROM accounts WHERE id = :accountId")
     suspend fun deleteAccount(accountId: Long)
 
+    @Query("DELETE FROM accounts")
+    suspend fun clearAllAccounts()
+
     @Query("UPDATE accounts SET isDefault = 0")
     suspend fun clearDefaultAccounts()
 
@@ -35,7 +38,6 @@ interface VaultDao {
     @Query("DELETE FROM transactions")
     suspend fun clearAllTransactions()
 
-    // Counterparties (Lenders & Borrowers)
     @Query("SELECT * FROM counterparties ORDER BY name ASC")
     fun getAllCounterparties(): Flow<List<Counterparty>>
 
@@ -45,10 +47,9 @@ interface VaultDao {
     @Update
     suspend fun updateCounterparty(party: Counterparty)
 
-    @Query("SELECT * FROM counterparties WHERE id = :id LIMIT 1")
-    suspend fun getCounterpartyById(id: Long): Counterparty?
+    @Query("DELETE FROM counterparties")
+    suspend fun clearAllCounterparties()
 
-    // SMS Drafts
     @Query("SELECT * FROM sms_drafts ORDER BY timestamp DESC")
     fun getStagedSms(): Flow<List<SmsDraft>>
 
