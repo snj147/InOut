@@ -49,8 +49,8 @@ class DueReminderWorker(
 
                 val customView = RemoteViews(applicationContext.packageName, R.layout.notification_custom_due).apply {
                     setTextViewText(R.id.notif_badge, timingText.uppercase())
-                    setTextViewText(R.id.notif_partyHeadline, headline)
-                    setTextViewText(R.id.notif_amountSubtext, "₹ ${String.format("%,.0f", dueAmt)} • $timingText")
+                    setTextViewText(R.id.notif_party_headline, headline)
+                    setTextViewText(R.id.notif_amount_subtext, "₹ ${String.format("%,.0f", dueAmt)} • $timingText")
                 }
 
                 val notification = NotificationCompat.Builder(applicationContext, channelId)
