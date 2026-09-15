@@ -10,6 +10,9 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -21,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
@@ -29,10 +33,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -49,6 +59,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.cos
+import kotlin.math.sin
+
+enum class CockpitStyle(val label: String) {
+    BATTERY_EQUALIZER("Battery & Equalizer"),
+    ECLIPSE_SPOTLIGHT("Eclipse & Spotlight"),
+    VAULT_ORBIT("Vault & Orbit")
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -62,6 +80,11 @@ fun DashboardScreen(db: AppDatabase) {
         mutableStateOf(AppThemeMode.valueOf(savedTheme ?: AppThemeMode.AMBER_OCHRE.name))
     }
 
+    var activeCockpitStyle by remember {
+        val savedCockpit = prefs.getString("cockpit_style", CockpitStyle.BATTERY_EQUALIZER.name)
+        mutableStateOf(CockpitStyle.valueOf(savedCockpit ?: CockpitStyle.BATTERY_EQUALIZER.name))
+    }
+
     val theme = when (activeThemeMode) {
         AppThemeMode.AMBER_OCHRE -> AmberTheme
         AppThemeMode.OLIVE_MATCHA -> OliveMatchaTheme
@@ -72,7 +95,7 @@ fun DashboardScreen(db: AppDatabase) {
     val transactions by db.vaultDao().getAllTransactions().collectAsState(initial = emptyList())
     val stagedSms by db.vaultDao().getStagedSms().collectAsState(initial = emptyList())
 
-    var selectedTab by remember { mutableStateOf(0) } // 0: Ledger, 1: Accounts, 2: Review, 3: Settings
+    var selectedTab by remember { mutableStateOf(0) }
 
     var showMainTxDialog by remember { mutableStateOf(false) }
     var prefilledTx by remember { mutableStateOf<Transaction?>(null) }
@@ -83,9 +106,12 @@ fun DashboardScreen(db: AppDatabase) {
     var showAllLedgerSheet by remember { mutableStateOf(false) }
     var showAllRecurringSheet by remember { mutableStateOf(false) }
 
-    var itemPendingAction by remember { mutableStateOf<Pair<String, Any>?>(null) } // "ACCOUNT" or "RECURRING"
+    // Long press action flow
+    var itemPendingAction by remember { mutableStateOf<Pair<String, Any>?>(null) }
+    var itemPendingPinDelete by remember { mutableStateOf<Pair<String, Any>?>(null) }
 
-    // High reliability camera snapshot
+    val savedPin = prefs.getString("user_pin", "1234") ?: "1234"
+
     val cameraSnapLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap: Bitmap? ->
         if (bitmap != null) {
             scope.launch {
@@ -107,7 +133,6 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    // Camera permission check launcher
     val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
             cameraSnapLauncher.launch(null)
@@ -116,7 +141,6 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    // Modern Android Photo Picker (zero storage permissions required)
     val photoPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
         if (uri != null) {
             scope.launch {
@@ -138,6 +162,14 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
+    val currentCal = Calendar.getInstance()
+    val thisMonthTxs = transactions.filter {
+        val c = Calendar.getInstance().apply { timeInMillis = it.timestamp }
+        c.get(Calendar.MONTH) == currentCal.get(Calendar.MONTH) && c.get(Calendar.YEAR) == currentCal.get(Calendar.YEAR)
+    }
+    val totalIn = thisMonthTxs.filter { it.flowType == "IN" }.sumOf { it.amount }
+    val totalOut = thisMonthTxs.filter { it.flowType == "OUT" }.sumOf { it.amount }
+
     CompositionLocalProvider(LocalThemeColors provides theme) {
         Scaffold(
             containerColor = theme.bg,
@@ -147,7 +179,7 @@ fun DashboardScreen(db: AppDatabase) {
                         .fillMaxWidth()
                         .windowInsetsPadding(WindowInsets.statusBars)
                         .background(theme.bg)
-                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                        .padding(horizontal = 18.dp, vertical = 10.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -155,8 +187,19 @@ fun DashboardScreen(db: AppDatabase) {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("InOut", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = theme.textBright)
-                            Text("PERSONAL LEDGER", fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp, color = theme.accent)
+                            Text("InOut", fontSize = 21.sp, fontWeight = FontWeight.ExtraBold, color = theme.textBright)
+                            Text("PERSONAL LEDGER", fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp, color = theme.accent)
+                        }
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(Icons.Default.ArrowDownward, contentDescription = null, tint = theme.mildGreen, modifier = Modifier.size(13.dp))
+                                Text("₹${String.format("%,.0f", totalIn)}", color = theme.mildGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Icon(Icons.Default.ArrowUpward, contentDescription = null, tint = theme.mildRed, modifier = Modifier.size(13.dp))
+                                Text("₹${String.format("%,.0f", totalOut)}", color = theme.mildRed, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
@@ -233,6 +276,8 @@ fun DashboardScreen(db: AppDatabase) {
                 when (selectedTab) {
                     0 -> LedgerTabScreen(
                         transactions = transactions,
+                        accounts = accounts,
+                        cockpitStyle = activeCockpitStyle,
                         onViewAllClick = { showAllLedgerSheet = true }
                     )
                     1 -> AccountsTabScreen(
@@ -285,9 +330,14 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                     3 -> SettingsTabScreen(
                         currentTheme = activeThemeMode,
+                        currentCockpit = activeCockpitStyle,
                         onSelectTheme = { mode ->
                             activeThemeMode = mode
                             prefs.edit().putString("selected_theme", mode.name).apply()
+                        },
+                        onSelectCockpit = { style ->
+                            activeCockpitStyle = style
+                            prefs.edit().putString("cockpit_style", style.name).apply()
                         },
                         onClearLedger = {
                             scope.launch {
@@ -302,7 +352,6 @@ fun DashboardScreen(db: AppDatabase) {
                 }
             }
 
-            // Quick Add Transaction Dialog (with state-retaining edit mode)
             if (showMainTxDialog) {
                 MainLedgerTransactionDialog(
                     accounts = accounts.filter { it.type in listOf("CASH", "BANK", "CREDIT") },
@@ -329,7 +378,6 @@ fun DashboardScreen(db: AppDatabase) {
                 )
             }
 
-            // Create New Account Card (with strict liquidity verification)
             if (showCreateCardDialog) {
                 CreateAccountCardDialog(
                     availableSourceAccounts = accounts.filter { it.type in listOf("CASH", "BANK") },
@@ -337,8 +385,6 @@ fun DashboardScreen(db: AppDatabase) {
                     onSave = { acc, sourceAccId, initialDate, initialNote ->
                         scope.launch {
                             val sourceAcc = accounts.firstOrNull { it.id == sourceAccId }
-                            
-                            // Liquidity check: cannot lend if wallet doesn't have balance
                             if (acc.type == "BORROWER" && sourceAcc != null && sourceAcc.balance < acc.balance) {
                                 Toast.makeText(context, "Cannot lend ₹${acc.balance.toInt()}: ${sourceAcc.name} only has ₹${sourceAcc.balance.toInt()}", Toast.LENGTH_LONG).show()
                                 return@launch
@@ -426,7 +472,6 @@ fun DashboardScreen(db: AppDatabase) {
                 )
             }
 
-            // Quick Actions with Funding Checks
             quickActionAccount?.let { (acc, action) ->
                 QuickActionDialog(
                     account = acc,
@@ -436,8 +481,6 @@ fun DashboardScreen(db: AppDatabase) {
                     onConfirm = { deltaAmount, fundingAccId, actionDate, noteText ->
                         scope.launch {
                             val fundingAcc = accounts.firstOrNull { it.id == fundingAccId }
-
-                            // Solvency checks
                             if (action in listOf("REFILL", "REPAY") && fundingAcc != null && fundingAcc.balance < deltaAmount) {
                                 Toast.makeText(context, "Cannot complete ${action.lowercase()}: ${fundingAcc.name} only has ₹${fundingAcc.balance.toInt()}", Toast.LENGTH_LONG).show()
                                 return@launch
@@ -524,7 +567,6 @@ fun DashboardScreen(db: AppDatabase) {
                 )
             }
 
-            // Intra-Account Transfer
             if (showTransferDialog) {
                 IntraAccountTransferDialog(
                     accounts = accounts.filter { it.type in listOf("CASH", "BANK", "CREDIT") },
@@ -556,7 +598,6 @@ fun DashboardScreen(db: AppDatabase) {
                 )
             }
 
-            // Edit Account Card Dialog
             editingAccount?.let { acc ->
                 EditAccountCardDialog(
                     account = acc,
@@ -584,18 +625,15 @@ fun DashboardScreen(db: AppDatabase) {
                         }
                     },
                     onDelete = {
-                        scope.launch {
-                            db.vaultDao().deleteAccount(acc.id)
-                            editingAccount = null
-                        }
+                        itemPendingPinDelete = Pair("ACCOUNT", acc)
+                        editingAccount = null
                     }
                 )
             }
 
-            // Long-Press Action Sheet (for Cards or Recurring Ribbons)
+            // Long-press bottom action pill
             itemPendingAction?.let { (type, item) ->
-                LongPressActionDialog(
-                    title = if (type == "ACCOUNT") (item as Account).name else (item as Transaction).note.ifBlank { (item as Transaction).category },
+                MinimalLongPressSheet(
                     onDismiss = { itemPendingAction = null },
                     onEdit = {
                         if (type == "ACCOUNT") {
@@ -607,20 +645,33 @@ fun DashboardScreen(db: AppDatabase) {
                         itemPendingAction = null
                     },
                     onDelete = {
+                        itemPendingPinDelete = Pair(type, item)
+                        itemPendingAction = null
+                    }
+                )
+            }
+
+            // PIN challenge for deletions
+            itemPendingPinDelete?.let { (type, item) ->
+                ThemePinPadDialog(
+                    title = "Confirm Deletion",
+                    subtitle = "Enter your 4-digit PIN to permanently remove this entry.",
+                    expectedPin = savedPin,
+                    onDismiss = { itemPendingPinDelete = null },
+                    onSuccess = {
                         scope.launch {
                             if (type == "ACCOUNT") {
                                 db.vaultDao().deleteAccount((item as Account).id)
                             } else {
                                 db.vaultDao().deleteTransaction((item as Transaction).id)
                             }
-                            itemPendingAction = null
-                            Toast.makeText(context, "Item deleted", Toast.LENGTH_SHORT).show()
+                            itemPendingPinDelete = null
+                            Toast.makeText(context, "Deleted successfully", Toast.LENGTH_SHORT).show()
                         }
                     }
                 )
             }
 
-            // Searchable Full Ledger Sheet (with CSV Export)
             if (showAllLedgerSheet) {
                 AllTransactionsSearchSheet(
                     transactions = transactions,
@@ -629,45 +680,29 @@ fun DashboardScreen(db: AppDatabase) {
                 )
             }
 
-            // Dedicated View All Recurring Sheet
             if (showAllRecurringSheet) {
                 AllRecurringEntriesSheet(
                     recurringTransactions = transactions.filter { it.isRecurring },
                     recurringAccounts = accounts.filter { it.repaymentType == "INSTALLMENTS" },
                     onDismiss = { showAllRecurringSheet = false },
-                    onEditRecurring = { tx ->
-                        prefilledTx = tx
-                        showMainTxDialog = true
-                        showAllRecurringSheet = false
-                    },
-                    onEditAccount = { acc ->
-                        editingAccount = acc
-                        showAllRecurringSheet = false
-                    }
+                    onLongPressRecurring = { tx -> itemPendingAction = Pair("RECURRING", tx) },
+                    onLongPressAccount = { acc -> itemPendingAction = Pair("ACCOUNT", acc) }
                 )
             }
         }
     }
 }
 
-// ---------------- TAB 0: LEDGER (SLIM ROWS + 5-6 RECENT CAP) ----------------
+// ---------------- TAB 0: LEDGER WITH COLORFUL COCKPIT ----------------
 
 @Composable
 fun LedgerTabScreen(
     transactions: List<Transaction>,
+    accounts: List<Account>,
+    cockpitStyle: CockpitStyle,
     onViewAllClick: () -> Unit
 ) {
     val theme = LocalThemeColors.current
-    val currentCal = Calendar.getInstance()
-    val thisMonthTxs = transactions.filter {
-        val c = Calendar.getInstance().apply { timeInMillis = it.timestamp }
-        c.get(Calendar.MONTH) == currentCal.get(Calendar.MONTH) && c.get(Calendar.YEAR) == currentCal.get(Calendar.YEAR)
-    }
-
-    val totalOut = thisMonthTxs.filter { it.flowType == "OUT" }.sumOf { it.amount }
-    val totalIn = thisMonthTxs.filter { it.flowType == "IN" }.sumOf { it.amount }
-    val expenseCategories = thisMonthTxs.filter { it.flowType == "OUT" }.groupBy { it.category }
-
     val recentTxs = transactions.take(6)
 
     LazyColumn(
@@ -675,62 +710,14 @@ fun LedgerTabScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(bottom = 90.dp)
     ) {
-        item { Spacer(Modifier.height(4.dp)) }
+        item { Spacer(Modifier.height(2.dp)) }
 
         item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = theme.surface)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(20.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(modifier = Modifier.weight(1.2f)) {
-                        Text("THIS MONTH'S FLOW", color = theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                        Spacer(Modifier.height(10.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Spent: ", color = theme.textMuted, fontSize = 13.sp)
-                            Text("₹ ${String.format("%,.0f", totalOut)}", color = theme.mildRed, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("Income: ", color = theme.textMuted, fontSize = 13.sp)
-                            Text("₹ ${String.format("%,.0f", totalIn)}", color = theme.mildGreen, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    Box(
-                        modifier = Modifier.size(72.dp).weight(0.8f),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Canvas(modifier = Modifier.size(64.dp)) {
-                            val strokeWidth = 8.dp.toPx()
-                            if (expenseCategories.isEmpty()) {
-                                drawCircle(color = theme.surfaceAlt, style = Stroke(width = strokeWidth))
-                            } else {
-                                var startAngle = -90f
-                                val palette = listOf(theme.accent, theme.mildRed, theme.mildGreen, Color(0xFFE5A93C), Color(0xFFC48B57))
-                                expenseCategories.entries.forEachIndexed { idx, entry ->
-                                    val catSum = entry.value.sumOf { it.amount }
-                                    val sweep = if (totalOut > 0) ((catSum / totalOut) * 360f).toFloat() else 0f
-                                    drawArc(
-                                        color = palette[idx % palette.size],
-                                        startAngle = startAngle,
-                                        sweepAngle = sweep,
-                                        useCenter = false,
-                                        style = Stroke(width = strokeWidth, cap = StrokeCap.Round)
-                                    )
-                                    startAngle += sweep
-                                }
-                            }
-                        }
-                        Text("${expenseCategories.size} Cats", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
+            CockpitInsightCard(
+                style = cockpitStyle,
+                accounts = accounts,
+                transactions = transactions
+            )
         }
 
         item {
@@ -739,7 +726,7 @@ fun LedgerTabScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Recent Activity", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text("Recent Activity", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 if (transactions.isNotEmpty()) {
                     Text(
                         "View All (${transactions.size}) →",
@@ -780,7 +767,296 @@ fun LedgerTabScreen(
     }
 }
 
-// ---------------- HIGH DENSITY SLIM LEDGER ROW (~48dp) ----------------
+// ---------------- DUAL-PANEL COCKPIT INSIGHT CARD ----------------
+
+@Composable
+fun CockpitInsightCard(
+    style: CockpitStyle,
+    accounts: List<Account>,
+    transactions: List<Transaction>
+) {
+    val theme = LocalThemeColors.current
+
+    val totalLiquid = accounts.filter { it.type in listOf("CASH", "BANK") }.sumOf { it.balance }
+    val totalCcBills = accounts.filter { it.type == "CREDIT" }.sumOf { (it.totalLimit - it.balance).coerceAtLeast(0.0) }
+    val totalLenderDebts = accounts.filter { it.type == "LENDER" }.sumOf { it.balance }
+    val unencumberedCash = (totalLiquid - totalCcBills - totalLenderDebts).coerceAtLeast(0.0)
+    val ratio = if (totalLiquid > 0) (unencumberedCash / totalLiquid).toFloat().coerceIn(0f, 1f) else 0f
+
+    val currentCal = Calendar.getInstance()
+    val thisMonthTxs = transactions.filter {
+        val c = Calendar.getInstance().apply { timeInMillis = it.timestamp }
+        c.get(Calendar.MONTH) == currentCal.get(Calendar.MONTH) && c.get(Calendar.YEAR) == currentCal.get(Calendar.YEAR)
+    }
+
+    val totalSpent = thisMonthTxs.filter { it.flowType == "OUT" }.sumOf { it.amount }
+    val totalIncome = thisMonthTxs.filter { it.flowType == "IN" }.sumOf { it.amount }
+    val netSaved = (totalIncome - totalSpent).coerceAtLeast(0.0)
+    val retentionPct = if (totalIncome > 0) ((netSaved / totalIncome) * 100).toInt() else 0
+
+    val daysInMonth = currentCal.getActualMaximum(Calendar.DAY_OF_MONTH)
+    val currentDay = currentCal.get(Calendar.DAY_OF_MONTH)
+    val remainingDays = (daysInMonth - currentDay + 1).coerceAtLeast(1)
+    val dailySafeBurn = (unencumberedCash / remainingDays)
+
+    val topCategoryEntry = thisMonthTxs.filter { it.flowType == "OUT" }
+        .groupBy { it.category }
+        .maxByOrNull { entry -> entry.value.sumOf { it.amount } }
+
+    val topCategoryName = topCategoryEntry?.key ?: "None"
+    val topCategoryAmount = topCategoryEntry?.value?.sumOf { it.amount } ?: 0.0
+    val topCategoryPct = if (totalSpent > 0) ((topCategoryAmount / totalSpent) * 100).toInt() else 0
+
+    val last7DaysSpend = remember(transactions) {
+        val list = mutableListOf<Double>()
+        for (i in 6 downTo 0) {
+            val targetCal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -i) }
+            val daySum = transactions.filter {
+                val c = Calendar.getInstance().apply { timeInMillis = it.timestamp }
+                it.flowType == "OUT" &&
+                        c.get(Calendar.DAY_OF_YEAR) == targetCal.get(Calendar.DAY_OF_YEAR) &&
+                        c.get(Calendar.YEAR) == targetCal.get(Calendar.YEAR)
+            }.sumOf { it.amount }
+            list.add(daySum)
+        }
+        list
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth().height(154.dp),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = theme.surface)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxSize().padding(14.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            when (style) {
+                CockpitStyle.BATTERY_EQUALIZER -> {
+                    // Left: Battery Cell
+                    Column(
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("POCKET RESERVE", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        BatteryGaugeCanvas(ratio = ratio, themeColor = theme.accent, greenColor = theme.mildGreen)
+                        Column {
+                            Text("₹ ${String.format("%,.0f", unencumberedCash)} Free", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+                            Text("Dues safely reserved", color = theme.textMuted, fontSize = 9.5.sp)
+                        }
+                    }
+
+                    Divider(color = theme.surfaceAlt, modifier = Modifier.fillMaxHeight().width(1.dp).padding(vertical = 4.dp))
+
+                    // Right: 7-Day Equalizer Bars
+                    Column(
+                        modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 12.dp),
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("WEEKLY RHYTHM", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        EqualizerCanvas(dailySpends = last7DaysSpend, theme = theme)
+                        Text("Quiet week • spikes mapped", color = theme.textMuted, fontSize = 9.5.sp)
+                    }
+                }
+
+                CockpitStyle.ECLIPSE_SPOTLIGHT -> {
+                    // Left: Eclipse Speedometer Dial
+                    Column(
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("DAILY SPEED LIMIT", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth().height(70.dp)) {
+                            EclipseGaugeCanvas(burn = dailySafeBurn, theme = theme)
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("₹${String.format("%.0f", dailySafeBurn)}", color = theme.textBright, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+                                Text("/ day", color = theme.textMuted, fontSize = 9.sp)
+                            }
+                        }
+                        Text("$remainingDays days remaining", color = theme.accent, fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    Divider(color = theme.surfaceAlt, modifier = Modifier.fillMaxHeight().width(1.dp).padding(vertical = 4.dp))
+
+                    // Right: Category Spotlight Tile
+                    Column(
+                        modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 12.dp),
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("TOP OUTFLOW LEAK", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Box(
+                                modifier = Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(theme.accent.copy(alpha = 0.2f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.LocalFireDepartment, contentDescription = null, tint = theme.accent, modifier = Modifier.size(20.dp))
+                            }
+                            Column {
+                                Text(topCategoryName, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                                Text("$topCategoryPct% of all spend", color = theme.mildRed, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Text("₹ ${String.format("%,.0f", topCategoryAmount)} spent this month", color = theme.textMuted, fontSize = 9.5.sp)
+                    }
+                }
+
+                CockpitStyle.VAULT_ORBIT -> {
+                    // Left: Vault Stash
+                    Column(
+                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("SAVINGS VAULT", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Default.Savings, contentDescription = null, tint = theme.accent, modifier = Modifier.size(32.dp))
+                            Column {
+                                Text("+₹ ${String.format("%,.0f", netSaved)}", color = theme.mildGreen, fontWeight = FontWeight.ExtraBold, fontSize = 15.sp)
+                                Text("$retentionPct% retained", color = theme.textMuted, fontSize = 10.sp)
+                            }
+                        }
+                        Text("Surplus accumulating", color = theme.textMuted, fontSize = 9.5.sp)
+                    }
+
+                    Divider(color = theme.surfaceAlt, modifier = Modifier.fillMaxHeight().width(1.dp).padding(vertical = 4.dp))
+
+                    // Right: Habit Orbit
+                    Column(
+                        modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 12.dp),
+                        verticalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("DISCIPLINE ORBIT", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxWidth().height(65.dp)) {
+                            OrbitCanvas(dailySpends = last7DaysSpend, theme = theme)
+                        }
+                        val zeroSpendDays = last7DaysSpend.count { it == 0.0 }
+                        Text("$zeroSpendDays calm days this week", color = theme.mildGreen, fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ---------------- CUSTOM CANVAS WIDGETS ----------------
+
+@Composable
+fun BatteryGaugeCanvas(ratio: Float, themeColor: Color, greenColor: Color) {
+    val animatedRatio by animateFloatAsState(targetValue = ratio, animationSpec = tween(700, easing = FastOutSlowInEasing), label = "battery")
+
+    Canvas(modifier = Modifier.fillMaxWidth(0.9f).height(24.dp)) {
+        val corner = 5.dp.toPx()
+        val stroke = 1.5.dp.toPx()
+        val capWidth = 4.dp.toPx()
+        val capHeight = 10.dp.toPx()
+        val shellWidth = size.width - capWidth - 3.dp.toPx()
+
+        drawRoundRect(
+            color = themeColor.copy(alpha = 0.5f),
+            size = Size(shellWidth, size.height),
+            cornerRadius = CornerRadius(corner, corner),
+            style = Stroke(width = stroke)
+        )
+
+        drawRoundRect(
+            color = themeColor.copy(alpha = 0.5f),
+            topLeft = Offset(shellWidth + 2.dp.toPx(), (size.height - capHeight) / 2),
+            size = Size(capWidth, capHeight),
+            cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx())
+        )
+
+        val innerPadding = 3.dp.toPx()
+        val maxFillWidth = shellWidth - (innerPadding * 2)
+        val fillWidth = maxFillWidth * animatedRatio
+
+        if (fillWidth > 0f) {
+            drawRoundRect(
+                brush = Brush.horizontalGradient(listOf(themeColor, greenColor)),
+                topLeft = Offset(innerPadding, innerPadding),
+                size = Size(fillWidth, size.height - (innerPadding * 2)),
+                cornerRadius = CornerRadius(3.dp.toPx(), 3.dp.toPx())
+            )
+        }
+    }
+}
+
+@Composable
+fun EqualizerCanvas(dailySpends: List<Double>, theme: ThemeColors) {
+    val max = (dailySpends.maxOrNull() ?: 1.0).coerceAtLeast(1.0)
+
+    Canvas(modifier = Modifier.fillMaxWidth().height(48.dp)) {
+        val barCount = 7
+        val space = 6.dp.toPx()
+        val totalSpacing = space * (barCount - 1)
+        val barWidth = (size.width - totalSpacing) / barCount
+
+        dailySpends.take(7).forEachIndexed { i, spend ->
+            val barHeight = ((spend / max).toFloat() * size.height).coerceAtLeast(4.dp.toPx())
+            val x = i * (barWidth + space)
+            val y = size.height - barHeight
+
+            val col = when {
+                spend == 0.0 -> theme.mildGreen
+                spend > (max * 0.7) -> theme.mildRed
+                else -> theme.accent
+            }
+
+            drawRoundRect(
+                color = col,
+                topLeft = Offset(x, y),
+                size = Size(barWidth, barHeight),
+                cornerRadius = CornerRadius(2.dp.toPx(), 2.dp.toPx())
+            )
+        }
+    }
+}
+
+@Composable
+fun EclipseGaugeCanvas(burn: Double, theme: ThemeColors) {
+    Canvas(modifier = Modifier.size(64.dp)) {
+        val stroke = 6.dp.toPx()
+        drawArc(
+            color = theme.surfaceAlt,
+            startAngle = 150f,
+            sweepAngle = 240f,
+            useCenter = false,
+            style = Stroke(width = stroke, cap = StrokeCap.Round)
+        )
+        drawArc(
+            brush = Brush.sweepGradient(listOf(theme.mildGreen, theme.accent, theme.mildRed)),
+            startAngle = 150f,
+            sweepAngle = 170f,
+            useCenter = false,
+            style = Stroke(width = stroke, cap = StrokeCap.Round)
+        )
+    }
+}
+
+@Composable
+fun OrbitCanvas(dailySpends: List<Double>, theme: ThemeColors) {
+    Canvas(modifier = Modifier.size(60.dp)) {
+        val r = size.minDimension / 2.3f
+        val center = Offset(size.width / 2, size.height / 2)
+
+        drawCircle(color = theme.surfaceAlt, radius = r, style = Stroke(width = 1.dp.toPx()))
+
+        val count = 7
+        for (i in 0 until count) {
+            val angle = Math.toRadians((i * (360.0 / count) - 90)).toFloat()
+            val x = center.x + r * cos(angle)
+            val y = center.y + r * sin(angle)
+
+            val isZeroSpend = (dailySpends.getOrNull(i) ?: 0.0) == 0.0
+            drawCircle(
+                color = if (isZeroSpend) theme.mildGreen else theme.accent,
+                radius = if (isZeroSpend) 4.5.dp.toPx() else 3.dp.toPx(),
+                center = Offset(x, y)
+            )
+        }
+    }
+}
+
+// ---------------- SLIM LEDGER ROW (~48dp) ----------------
 
 @Composable
 fun SlimLedgerRow(tx: Transaction) {
@@ -851,7 +1127,7 @@ fun SlimLedgerRow(tx: Transaction) {
     }
 }
 
-// ---------------- TAB 1: ACCOUNTS & CAROUSELS (LONG-PRESS ACTIONS) ----------------
+// ---------------- TAB 1: ACCOUNTS & CAROUSELS (REACTIVE EYE TOGGLE) ----------------
 
 @Composable
 fun AccountsTabScreen(
@@ -875,7 +1151,7 @@ fun AccountsTabScreen(
     ) {
         item { Spacer(Modifier.height(4.dp)) }
 
-        // Upper Carousel 1: Cash, Bank, Credit Card (Fixed 210dp x 145dp)
+        // Carousel 1: Cash, Bank, Credit
         item {
             Text("Wallets & Bank Accounts", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
@@ -894,7 +1170,7 @@ fun AccountsTabScreen(
             }
         }
 
-        // Upper Carousel 2: Borrowers & Lenders (Fixed 210dp x 145dp)
+        // Carousel 2: Borrowers & Lenders
         item {
             Text("Borrowers & Lenders", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
@@ -917,7 +1193,7 @@ fun AccountsTabScreen(
         item {
             OutlinedButton(
                 onClick = onOpenTransfer,
-                modifier = Modifier.fillMaxWidth().height(44.dp),
+                modifier = Modifier.fillMaxWidth().height(42.dp),
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent)
             ) {
@@ -927,7 +1203,7 @@ fun AccountsTabScreen(
             }
         }
 
-        // Lower Section: Active Recurring Entries (Capped at 3 items)
+        // Lower Section: Active Recurring Entries (Capped at 3)
         val allRecurringCount = recurringTransactions.size + accounts.count { it.repaymentType == "INSTALLMENTS" }
         item {
             Row(
@@ -976,7 +1252,7 @@ fun AccountsTabScreen(
     }
 }
 
-// ---------------- UNIFORM FIXED CARDS (LONG-PRESS READY) ----------------
+// ---------------- FIXED CARD WITH REACTIVE EYE TOGGLE ----------------
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -986,17 +1262,14 @@ fun FixedWalletCard(
     onQuickAction: (String) -> Unit
 ) {
     val theme = LocalThemeColors.current
-    var isRevealed by remember { mutableStateOf(!account.hasEyeMask) }
+    var isRevealed by remember(account.hasEyeMask) { mutableStateOf(!account.hasEyeMask) }
     val scope = rememberCoroutineScope()
 
     Card(
         modifier = Modifier
             .size(width = 210.dp, height = 145.dp)
             .clip(RoundedCornerShape(18.dp))
-            .combinedClickable(
-                onClick = {},
-                onLongClick = onLongPress
-            ),
+            .combinedClickable(onClick = {}, onLongClick = onLongPress),
         colors = CardDefaults.cardColors(containerColor = theme.surface)
     ) {
         Column(
@@ -1075,7 +1348,7 @@ fun FixedPartyCard(
     onQuickAction: (String) -> Unit
 ) {
     val theme = LocalThemeColors.current
-    var isRevealed by remember { mutableStateOf(!account.hasEyeMask) }
+    var isRevealed by remember(account.hasEyeMask) { mutableStateOf(!account.hasEyeMask) }
     val scope = rememberCoroutineScope()
     val isLender = account.type == "LENDER"
 
@@ -1083,10 +1356,7 @@ fun FixedPartyCard(
         modifier = Modifier
             .size(width = 210.dp, height = 145.dp)
             .clip(RoundedCornerShape(18.dp))
-            .combinedClickable(
-                onClick = {},
-                onLongClick = onLongPress
-            ),
+            .combinedClickable(onClick = {}, onLongClick = onLongPress),
         colors = CardDefaults.cardColors(containerColor = theme.surface)
     ) {
         Column(
@@ -1149,7 +1419,7 @@ fun FixedPartyCard(
     }
 }
 
-// ---------------- RECURRING RIBBON (LONG-PRESS ACTIVATED) ----------------
+// ---------------- RECURRING RIBBON ----------------
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -1167,10 +1437,7 @@ fun RecurringRibbonItem(
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .background(theme.surface)
-            .combinedClickable(
-                onClick = {},
-                onLongClick = onLongPress
-            )
+            .combinedClickable(onClick = {}, onLongClick = onLongPress)
             .padding(horizontal = 14.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -1189,7 +1456,7 @@ fun RecurringRibbonItem(
     }
 }
 
-// ---------------- TAB 2: REVIEW QUEUE ----------------
+// ---------------- REVIEW QUEUE & SETTINGS ----------------
 
 @Composable
 fun ReviewQueueTabScreen(
@@ -1214,21 +1481,21 @@ fun ReviewQueueTabScreen(
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
                     onClick = onCameraClick,
-                    modifier = Modifier.weight(1f).height(48.dp),
+                    modifier = Modifier.weight(1f).height(44.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
                 ) {
-                    Icon(Icons.Default.PhotoCamera, contentDescription = null, tint = theme.bg, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.PhotoCamera, contentDescription = null, tint = theme.bg, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Take Photo", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
                 OutlinedButton(
                     onClick = onGalleryClick,
-                    modifier = Modifier.weight(1f).height(48.dp),
+                    modifier = Modifier.weight(1f).height(44.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent)
                 ) {
-                    Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
                     Text("Pick Image", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                 }
@@ -1242,9 +1509,9 @@ fun ReviewQueueTabScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Review Feed", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text("Review Feed", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                     IconButton(onClick = onManualSyncSms, modifier = Modifier.size(24.dp)) {
-                        Icon(Icons.Default.Sync, contentDescription = "Simulate SMS Scan", tint = theme.accent, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Sync, contentDescription = "Simulate SMS Scan", tint = theme.accent, modifier = Modifier.size(15.dp))
                     }
                 }
                 if (stagedSms.isNotEmpty()) {
@@ -1279,38 +1546,38 @@ fun ReviewQueueTabScreen(
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable { expandedDraftId = if (isExpanded) null else draft.id },
                     colors = CardDefaults.cardColors(containerColor = theme.surface)
                 ) {
-                    Column(Modifier.padding(16.dp)) {
+                    Column(Modifier.padding(14.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(draft.merchant, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Text(draft.merchant, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                 Text("From: ${draft.rawSender}", color = theme.textMuted, fontSize = 11.sp)
                             }
-                            Text("₹ ${String.format("%.2f", draft.amount)}", color = theme.accent, fontWeight = FontWeight.ExtraBold, fontSize = 17.sp)
+                            Text("₹ ${String.format("%.2f", draft.amount)}", color = theme.accent, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
                         }
 
                         AnimatedVisibility(visible = isExpanded) {
-                            Column(Modifier.padding(top = 12.dp)) {
-                                Text(draft.rawBody, color = theme.textMuted, fontSize = 12.sp, lineHeight = 16.sp)
-                                Spacer(Modifier.height(14.dp))
+                            Column(Modifier.padding(top = 10.dp)) {
+                                Text(draft.rawBody, color = theme.textMuted, fontSize = 11.sp, lineHeight = 15.sp)
+                                Spacer(Modifier.height(12.dp))
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                                     OutlinedButton(
                                         onClick = { onDiscard(draft.id) },
-                                        shape = RoundedCornerShape(10.dp),
+                                        shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.mildRed)
                                     ) {
-                                        Text("Discard", fontSize = 12.sp)
+                                        Text("Discard", fontSize = 11.sp)
                                     }
                                     Spacer(Modifier.width(10.dp))
                                     Button(
                                         onClick = { onConsider(draft) },
-                                        shape = RoundedCornerShape(10.dp),
+                                        shape = RoundedCornerShape(8.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = theme.mildGreen)
                                     ) {
-                                        Text("Consider", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                        Text("Consider", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     }
                                 }
                             }
@@ -1322,12 +1589,12 @@ fun ReviewQueueTabScreen(
     }
 }
 
-// ---------------- TAB 3: SETTINGS ----------------
-
 @Composable
 fun SettingsTabScreen(
     currentTheme: AppThemeMode,
+    currentCockpit: CockpitStyle,
     onSelectTheme: (AppThemeMode) -> Unit,
+    onSelectCockpit: (CockpitStyle) -> Unit,
     onClearLedger: () -> Unit
 ) {
     val theme = LocalThemeColors.current
@@ -1345,7 +1612,7 @@ fun SettingsTabScreen(
         contentPadding = PaddingValues(bottom = 90.dp)
     ) {
         item { Spacer(Modifier.height(4.dp)) }
-        item { Text("App Preferences", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+        item { Text("App Preferences", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) }
 
         item {
             Card(
@@ -1353,13 +1620,13 @@ fun SettingsTabScreen(
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = theme.surface)
             ) {
-                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Text("Palette Theme", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Text("Palette Theme", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(
-                            Triple("Amber Ochre", AppThemeMode.AMBER_OCHRE, AmberTheme.accent),
-                            Triple("Olive Matcha", AppThemeMode.OLIVE_MATCHA, OliveMatchaTheme.accent),
-                            Triple("Sand Dune", AppThemeMode.SAND_DUNE, SandDuneTheme.accent)
+                            Triple("Amber", AppThemeMode.AMBER_OCHRE, AmberTheme.accent),
+                            Triple("Olive", AppThemeMode.OLIVE_MATCHA, OliveMatchaTheme.accent),
+                            Triple("Sand", AppThemeMode.SAND_DUNE, SandDuneTheme.accent)
                         ).forEach { (label, mode, col) ->
                             val isSel = currentTheme == mode
                             Box(
@@ -1368,10 +1635,34 @@ fun SettingsTabScreen(
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(if (isSel) col.copy(alpha = 0.25f) else theme.surfaceAlt)
                                     .clickable { onSelectTheme(mode) }
-                                    .padding(vertical = 10.dp),
+                                    .padding(vertical = 8.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(label, color = if (isSel) col else theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                                Text(label, color = if (isSel) col else theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    Divider(color = theme.surfaceAlt)
+
+                    Text("Dashboard Cockpit Widget", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CockpitStyle.values().forEach { style ->
+                            val isSel = currentCockpit == style
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSel) theme.accent.copy(alpha = 0.15f) else Color.Transparent)
+                                    .clickable { onSelectCockpit(style) }
+                                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(style.label, color = if (isSel) theme.accent else theme.textBright, fontSize = 12.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
+                                if (isSel) {
+                                    Icon(Icons.Default.Check, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
+                                }
                             }
                         }
                     }
@@ -1384,15 +1675,15 @@ fun SettingsTabScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("Security PIN", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("Required to wipe all ledger data", color = theme.textMuted, fontSize = 12.sp)
+                            Text("Security PIN", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
+                            Text("Protects deletes and ledger wipes", color = theme.textMuted, fontSize = 11.sp)
                         }
                         Button(
                             onClick = { showSetPinDialog = true },
                             colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("Change PIN", color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Change PIN", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -1402,9 +1693,9 @@ fun SettingsTabScreen(
                         onClick = { showPinVerifyDialog = true },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Icon(Icons.Default.DeleteSweep, contentDescription = null, tint = theme.mildRed)
+                        Icon(Icons.Default.DeleteSweep, contentDescription = null, tint = theme.mildRed, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Reset & Clear All Ledger Records", color = theme.mildRed, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("Reset & Clear All Ledger Records", color = theme.mildRed, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
             }
@@ -1436,11 +1727,43 @@ fun SettingsTabScreen(
     }
 }
 
-// ---------------- LONG-PRESS ACTION SHEET ----------------
+// ---------------- COMPACT REUSABLE INPUT HELPER ----------------
 
 @Composable
-fun LongPressActionDialog(
-    title: String,
+fun CompactInputField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier
+) {
+    val theme = LocalThemeColors.current
+
+    Box(
+        modifier = modifier
+            .height(42.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(theme.surfaceAlt)
+            .padding(horizontal = 10.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        if (value.isEmpty()) {
+            Text(placeholder, color = theme.textMuted, fontSize = 12.sp)
+        }
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = TextStyle(color = theme.textBright, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold),
+            cursorBrush = SolidColor(theme.accent),
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+// ---------------- MINIMAL LONG-PRESS ACTION SHEET ----------------
+
+@Composable
+fun MinimalLongPressSheet(
     onDismiss: () -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit
@@ -1449,37 +1772,40 @@ fun LongPressActionDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(14.dp),
             color = theme.surface,
-            modifier = Modifier.fillMaxWidth().padding(16.dp)
+            modifier = Modifier.width(220.dp)
         ) {
             Column(
-                modifier = Modifier.padding(18.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier.padding(10.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                Text(title, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Divider(color = theme.surfaceAlt)
-                TextButton(
-                    onClick = onEdit,
-                    modifier = Modifier.fillMaxWidth()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onEdit() }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Icon(Icons.Default.Edit, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Edit Item", color = theme.textBright, fontSize = 14.sp)
+                    Text("Edit Item", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
-                TextButton(
-                    onClick = onDelete,
-                    modifier = Modifier.fillMaxWidth()
+
+                Divider(color = theme.surfaceAlt, thickness = 0.5.dp)
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onDelete() }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Icon(Icons.Default.Delete, contentDescription = null, tint = theme.mildRed, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Delete Permanently", color = theme.mildRed, fontSize = 14.sp)
-                }
-                TextButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("Cancel", color = theme.textMuted, fontSize = 13.sp)
+                    Text("Delete (PIN)", color = theme.mildRed, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }
@@ -1493,8 +1819,8 @@ fun AllRecurringEntriesSheet(
     recurringTransactions: List<Transaction>,
     recurringAccounts: List<Account>,
     onDismiss: () -> Unit,
-    onEditRecurring: (Transaction) -> Unit,
-    onEditAccount: (Account) -> Unit
+    onLongPressRecurring: (Transaction) -> Unit,
+    onLongPressAccount: (Account) -> Unit
 ) {
     val theme = LocalThemeColors.current
 
@@ -1513,7 +1839,7 @@ fun AllRecurringEntriesSheet(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("All Recurring Entries", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("All Recurring Entries", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
                         Icon(Icons.Default.Close, contentDescription = "Close", tint = theme.textMuted)
                     }
@@ -1529,7 +1855,7 @@ fun AllRecurringEntriesSheet(
                             subtitle = "${rTx.flowType} • ${rTx.frequency}",
                             amount = rTx.amount,
                             isPositive = rTx.flowType == "IN",
-                            onLongPress = { onEditRecurring(rTx) }
+                            onLongPress = { onLongPressRecurring(rTx) }
                         )
                     }
 
@@ -1539,7 +1865,7 @@ fun AllRecurringEntriesSheet(
                             subtitle = "Installment • ${rAcc.frequency}",
                             amount = rAcc.balance / rAcc.installmentCount.coerceAtLeast(1),
                             isPositive = rAcc.type == "BORROWER",
-                            onLongPress = { onEditAccount(rAcc) }
+                            onLongPress = { onLongPressAccount(rAcc) }
                         )
                     }
                 }
@@ -1599,10 +1925,10 @@ fun AllTransactionsSearchSheet(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("All Records (${filteredList.size})", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    Text("All Records (${filteredList.size})", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = onExportCsv, modifier = Modifier.size(28.dp)) {
-                            Icon(Icons.Default.Share, contentDescription = "Export CSV", tint = theme.accent, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.Share, contentDescription = "Export CSV", tint = theme.accent, modifier = Modifier.size(17.dp))
                         }
                         IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
                             Icon(Icons.Default.Close, contentDescription = "Close", tint = theme.textMuted)
@@ -1610,49 +1936,31 @@ fun AllTransactionsSearchSheet(
                     }
                 }
 
-                // Instant Search Bar
-                OutlinedTextField(
+                CompactInputField(
                     value = query,
                     onValueChange = { query = it },
-                    placeholder = { Text("Search text, category, party, amount...", color = theme.textMuted, fontSize = 12.sp) },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp)) },
-                    trailingIcon = {
-                        if (query.isNotEmpty()) {
-                            IconButton(onClick = { query = "" }, modifier = Modifier.size(20.dp)) {
-                                Icon(Icons.Default.Clear, contentDescription = null, tint = theme.textMuted, modifier = Modifier.size(14.dp))
-                            }
-                        }
-                    },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = theme.textBright,
-                        unfocusedTextColor = theme.textBright,
-                        focusedBorderColor = theme.accent,
-                        unfocusedBorderColor = theme.surfaceAlt
-                    ),
+                    placeholder = "Search note, amount, party...",
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // Quick Filter Chips
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf("ALL", "IN", "OUT", "B/L").forEach { f ->
                         val isSel = selectedFilter == f
                         Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
+                                .clip(RoundedCornerShape(6.dp))
                                 .background(if (isSel) theme.accent else theme.surfaceAlt)
                                 .clickable { selectedFilter = f }
                                 .padding(horizontal = 10.dp, vertical = 5.dp)
                         ) {
-                            Text(f, color = if (isSel) theme.bg else theme.textMuted, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                            Text(f, color = if (isSel) theme.bg else theme.textMuted, fontWeight = FontWeight.Bold, fontSize = 10.sp)
                         }
                     }
                 }
 
-                // High Density Result List
                 if (filteredList.isEmpty()) {
                     Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                        Text("No matching ledger transactions found.", color = theme.textMuted, fontSize = 13.sp)
+                        Text("No matching ledger transactions found.", color = theme.textMuted, fontSize = 12.sp)
                     }
                 } else {
                     LazyColumn(modifier = Modifier.weight(1f)) {
@@ -1667,7 +1975,7 @@ fun AllTransactionsSearchSheet(
     }
 }
 
-// ---------------- CREATE ACCOUNT CARD POPUP (INSTALLMENTS & COMPACT FORM) ----------------
+// ---------------- CREATE CARD DIALOG ----------------
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1703,7 +2011,7 @@ fun CreateAccountCardDialog(
         containerColor = theme.surface,
         titleContentColor = theme.textBright,
         onDismissRequest = onDismiss,
-        title = { Text("Create Account Card", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+        title = { Text("Create Card", fontWeight = FontWeight.Bold, fontSize = 15.sp) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1718,76 +2026,80 @@ fun CreateAccountCardDialog(
                                 .padding(vertical = 6.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(t, color = if (isSel) theme.bg else theme.textBright, fontSize = 8.5.sp, fontWeight = FontWeight.Bold)
+                            Text(t, color = if (isSel) theme.bg else theme.textBright, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
 
-                OutlinedTextField(
+                CompactInputField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text(when (selectedType) {
+                    placeholder = when (selectedType) {
                         "CASH" -> "Wallet Name"
                         "BANK" -> "Bank Name"
                         "CREDIT" -> "Card Name"
                         "LENDER" -> "Lender Name"
                         else -> "Borrower Name"
-                    }, color = theme.textMuted, fontSize = 11.sp) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                    modifier = Modifier.fillMaxWidth().height(52.dp)
+                    },
+                    modifier = Modifier.fillMaxWidth()
                 )
 
-                // Compact two-column row: Amount + Date
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedTextField(
+                    CompactInputField(
                         value = amount,
                         onValueChange = { amount = it },
-                        label = { Text(if (selectedType == "CREDIT") "Avail Limit" else "Amount", color = theme.textMuted, fontSize = 11.sp) },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                        modifier = Modifier.weight(1f).height(52.dp)
+                        placeholder = if (selectedType == "CREDIT") "Avail Limit" else "Amount",
+                        modifier = Modifier.weight(1f)
                     )
 
                     val cDateStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(creationDateMillis))
-                    OutlinedButton(
-                        onClick = { showCreationDatePicker = true },
-                        modifier = Modifier.weight(1f).height(52.dp),
-                        shape = RoundedCornerShape(6.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textBright)
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(theme.surfaceAlt)
+                            .clickable { showCreationDatePicker = true }
+                            .padding(horizontal = 10.dp),
+                        contentAlignment = Alignment.CenterStart
                     ) {
-                        Text("Date: $cDateStr", fontSize = 11.sp)
+                        Text("Date: $cDateStr", color = theme.textBright, fontSize = 12.sp)
                     }
                 }
 
                 if (selectedType == "CREDIT") {
-                    OutlinedTextField(
+                    CompactInputField(
                         value = totalLimit,
                         onValueChange = { totalLimit = it },
-                        label = { Text("Total Limit (₹)", color = theme.textMuted, fontSize = 11.sp) },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                        modifier = Modifier.fillMaxWidth().height(52.dp)
+                        placeholder = "Total Credit Limit (₹)",
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
 
-                // Channel Account Selector
                 if (selectedType in listOf("LENDER", "BORROWER") && availableSourceAccounts.isNotEmpty()) {
-                    val activeSource = availableSourceAccounts.firstOrNull { it.id == selectedSourceAccId }?.name ?: "Select Funding Account"
+                    val activeSource = availableSourceAccounts.firstOrNull { it.id == selectedSourceAccId }?.name ?: "Select Funding"
                     ExposedDropdownMenuBox(
                         expanded = sourceAccExpanded,
                         onExpandedChange = { sourceAccExpanded = !sourceAccExpanded },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        OutlinedTextField(
-                            value = activeSource,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text(if (selectedType == "LENDER") "Receive Loan In" else "Give Loan From", color = theme.textMuted, fontSize = 11.sp) },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = sourceAccExpanded) },
-                            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                            modifier = Modifier.menuAnchor().fillMaxWidth().height(52.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .menuAnchor()
+                                .fillMaxWidth()
+                                .height(42.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(theme.surfaceAlt)
+                                .padding(horizontal = 10.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            Text(
+                                text = "${if (selectedType == "LENDER") "Deposit to" else "Fund from"}: $activeSource",
+                                color = theme.textBright,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                         ExposedDropdownMenu(
                             expanded = sourceAccExpanded,
                             onDismissRequest = { sourceAccExpanded = false },
@@ -1795,7 +2107,7 @@ fun CreateAccountCardDialog(
                         ) {
                             availableSourceAccounts.forEach { acc ->
                                 DropdownMenuItem(
-                                    text = { Text("${acc.name} (₹${acc.balance.toInt()})", color = theme.textBright) },
+                                    text = { Text("${acc.name} (₹${acc.balance.toInt()})", color = theme.textBright, fontSize = 12.sp) },
                                     onClick = {
                                         selectedSourceAccId = acc.id
                                         sourceAccExpanded = false
@@ -1806,9 +2118,8 @@ fun CreateAccountCardDialog(
                     }
                 }
 
-                // Installment Controls for Borrower/Lender
                 if (selectedType in listOf("LENDER", "BORROWER")) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf("BULLET", "INSTALLMENTS").forEach { rType ->
                             val isSel = repaymentType == rType
                             Box(
@@ -1817,10 +2128,10 @@ fun CreateAccountCardDialog(
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(if (isSel) theme.accent else theme.surfaceAlt)
                                     .clickable { repaymentType = rType }
-                                    .padding(vertical = 6.dp),
+                                    .padding(vertical = 5.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(rType, color = if (isSel) theme.bg else theme.textBright, fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
+                                Text(rType, color = if (isSel) theme.bg else theme.textBright, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -1832,29 +2143,30 @@ fun CreateAccountCardDialog(
                                 onExpandedChange = { freqExpanded = !freqExpanded },
                                 modifier = Modifier.weight(1f)
                             ) {
-                                OutlinedTextField(
-                                    value = frequency,
-                                    onValueChange = {},
-                                    readOnly = true,
-                                    label = { Text("Freq", color = theme.textMuted, fontSize = 11.sp) },
-                                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = freqExpanded) },
-                                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                                    modifier = Modifier.menuAnchor().fillMaxWidth().height(52.dp)
-                                )
+                                Box(
+                                    modifier = Modifier
+                                        .menuAnchor()
+                                        .fillMaxWidth()
+                                        .height(42.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(theme.surfaceAlt)
+                                        .padding(horizontal = 10.dp),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    Text(frequency, color = theme.textBright, fontSize = 12.sp)
+                                }
                                 ExposedDropdownMenu(expanded = freqExpanded, onDismissRequest = { freqExpanded = false }, modifier = Modifier.background(theme.surface)) {
                                     listOf("MONTHLY", "YEARLY").forEach { f ->
-                                        DropdownMenuItem(text = { Text(f, color = theme.textBright) }, onClick = { frequency = f; freqExpanded = false })
+                                        DropdownMenuItem(text = { Text(f, color = theme.textBright, fontSize = 12.sp) }, onClick = { frequency = f; freqExpanded = false })
                                     }
                                 }
                             }
 
-                            OutlinedTextField(
+                            CompactInputField(
                                 value = installmentCount,
                                 onValueChange = { installmentCount = it },
-                                label = { Text("Count", color = theme.textMuted, fontSize = 11.sp) },
-                                singleLine = true,
-                                colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                                modifier = Modifier.weight(1f).height(52.dp)
+                                placeholder = "Count",
+                                modifier = Modifier.weight(1f)
                             )
                         }
 
@@ -1862,9 +2174,9 @@ fun CreateAccountCardDialog(
                         val count = installmentCount.toIntOrNull() ?: 1
                         if (principal > 0.0 && count > 0) {
                             Text(
-                                "Installment: ₹${String.format("%.0f", principal / count)} / ${frequency.lowercase()}",
+                                "Plan: ₹${String.format("%.0f", principal / count)} / ${frequency.lowercase()}",
                                 color = theme.accent,
-                                fontSize = 11.sp,
+                                fontSize = 10.5.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -1873,15 +2185,17 @@ fun CreateAccountCardDialog(
 
                 if (selectedType in listOf("CREDIT", "LENDER", "BORROWER")) {
                     val dDateStr = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(dueDateMillis))
-                    OutlinedButton(
-                        onClick = { showDueDatePicker = true },
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textBright)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(theme.surfaceAlt)
+                            .clickable { showDueDatePicker = true }
+                            .padding(horizontal = 10.dp),
+                        contentAlignment = Alignment.CenterStart
                     ) {
-                        Icon(Icons.Default.Event, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Due Date: $dDateStr", fontSize = 11.sp)
+                        Text("Due Date: $dDateStr", color = theme.textBright, fontSize = 12.sp)
                     }
                 }
 
@@ -1926,11 +2240,11 @@ fun CreateAccountCardDialog(
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
             ) {
-                Text("Create Card", color = theme.bg, fontWeight = FontWeight.Bold)
+                Text("Create Card", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
+            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted, fontSize = 12.sp) }
         }
     )
 
@@ -1975,8 +2289,8 @@ fun QuickActionDialog(
     val needsChannel = action in listOf("REFILL", "REPAY", "COLLECT")
 
     val title = when (action) {
-        "ADD" -> "Add Balance to ${account.name}"
-        "REFILL" -> "Refill ${account.name} Limit"
+        "ADD" -> "Add to ${account.name}"
+        "REFILL" -> "Refill ${account.name}"
         "REPAY" -> "Repay ${account.name}"
         else -> "Collect from ${account.name}"
     }
@@ -1985,19 +2299,17 @@ fun QuickActionDialog(
         containerColor = theme.surface,
         titleContentColor = theme.textBright,
         onDismissRequest = onDismiss,
-        title = { Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+        title = { Text(title, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
+                CompactInputField(
                     value = deltaAmount,
                     onValueChange = {
                         deltaAmount = it
                         errorMsg = ""
                     },
-                    label = { Text("Amount (₹)", color = theme.textMuted, fontSize = 11.sp) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                    modifier = Modifier.fillMaxWidth().height(52.dp)
+                    placeholder = "Amount (₹)",
+                    modifier = Modifier.fillMaxWidth()
                 )
 
                 if (needsChannel && availableFundingAccounts.isNotEmpty()) {
@@ -2007,15 +2319,23 @@ fun QuickActionDialog(
                         onExpandedChange = { fundingExpanded = !fundingExpanded },
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        OutlinedTextField(
-                            value = activeFunding,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text(if (action == "COLLECT") "Deposit Collected Into" else "Fund / Pay From", color = theme.textMuted, fontSize = 11.sp) },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = fundingExpanded) },
-                            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                            modifier = Modifier.menuAnchor().fillMaxWidth().height(52.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .menuAnchor()
+                                .fillMaxWidth()
+                                .height(42.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(theme.surfaceAlt)
+                                .padding(horizontal = 10.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            Text(
+                                text = "${if (action == "COLLECT") "Deposit to" else "Fund from"}: $activeFunding",
+                                color = theme.textBright,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
                         ExposedDropdownMenu(
                             expanded = fundingExpanded,
                             onDismissRequest = { fundingExpanded = false },
@@ -2023,7 +2343,7 @@ fun QuickActionDialog(
                         ) {
                             availableFundingAccounts.forEach { acc ->
                                 DropdownMenuItem(
-                                    text = { Text("${acc.name} (Bal: ₹${acc.balance.toInt()})", color = theme.textBright) },
+                                    text = { Text("${acc.name} (₹${acc.balance.toInt()})", color = theme.textBright, fontSize = 12.sp) },
                                     onClick = {
                                         selectedFundingAccId = acc.id
                                         fundingExpanded = false
@@ -2035,28 +2355,28 @@ fun QuickActionDialog(
                 }
 
                 val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(actionDateMillis))
-                OutlinedButton(
-                    onClick = { showActionDatePicker = true },
-                    modifier = Modifier.fillMaxWidth().height(44.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textBright)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(42.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(theme.surfaceAlt)
+                        .clickable { showActionDatePicker = true }
+                        .padding(horizontal = 10.dp),
+                    contentAlignment = Alignment.CenterStart
                 ) {
-                    Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Date: $dateFormatted", fontSize = 11.sp)
+                    Text("Date: $dateFormatted", color = theme.textBright, fontSize = 12.sp)
                 }
 
-                OutlinedTextField(
+                CompactInputField(
                     value = note,
                     onValueChange = { note = it },
-                    label = { Text("Note / Memo (Optional)", color = theme.textMuted, fontSize = 11.sp) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                    modifier = Modifier.fillMaxWidth().height(52.dp)
+                    placeholder = "Note (Optional)",
+                    modifier = Modifier.fillMaxWidth()
                 )
 
                 if (errorMsg.isNotEmpty()) {
-                    Text(errorMsg, color = theme.mildRed, fontSize = 11.sp)
+                    Text(errorMsg, color = theme.mildRed, fontSize = 10.5.sp)
                 }
             }
         },
@@ -2069,11 +2389,11 @@ fun QuickActionDialog(
                         return@Button
                     }
                     if (action == "REPAY" && amt > account.balance) {
-                        errorMsg = "Repayment cannot exceed balance of ₹${account.balance}"
+                        errorMsg = "Repayment cannot exceed ₹${account.balance}"
                         return@Button
                     }
                     if (action == "COLLECT" && amt > account.balance) {
-                        errorMsg = "Collection cannot exceed receivable of ₹${account.balance}"
+                        errorMsg = "Collection cannot exceed ₹${account.balance}"
                         return@Button
                     }
                     if (action == "REFILL" && (account.balance + amt) > account.totalLimit) {
@@ -2084,11 +2404,11 @@ fun QuickActionDialog(
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
             ) {
-                Text("Confirm", color = theme.bg, fontWeight = FontWeight.Bold)
+                Text("Confirm", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
+            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted, fontSize = 12.sp) }
         }
     )
 
@@ -2101,7 +2421,7 @@ fun QuickActionDialog(
     }
 }
 
-// ---------------- EDIT ACCOUNT MODAL ----------------
+// ---------------- EDIT ACCOUNT CARD DIALOG ----------------
 
 @Composable
 fun EditAccountCardDialog(
@@ -2125,66 +2445,55 @@ fun EditAccountCardDialog(
         containerColor = theme.surface,
         titleContentColor = theme.textBright,
         onDismissRequest = onDismiss,
-        title = { Text("Edit ${account.name}", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+        title = { Text("Edit ${account.name}", fontWeight = FontWeight.Bold, fontSize = 15.sp) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
+                CompactInputField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Account Name", color = theme.textMuted, fontSize = 11.sp) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                    modifier = Modifier.fillMaxWidth().height(52.dp)
+                    placeholder = "Account Name",
+                    modifier = Modifier.fillMaxWidth()
                 )
 
-                OutlinedTextField(
+                CompactInputField(
                     value = balance,
                     onValueChange = { balance = it },
-                    label = { Text(when (account.type) {
-                        "CREDIT" -> "Available Limit (₹)"
-                        "LENDER" -> "Current Outstanding (₹)"
-                        "BORROWER" -> "Current Receivable (₹)"
-                        else -> "Current Balance (₹)"
-                    }, color = theme.textMuted, fontSize = 11.sp) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                    modifier = Modifier.fillMaxWidth().height(52.dp)
+                    placeholder = "Current Balance / Outstanding",
+                    modifier = Modifier.fillMaxWidth()
                 )
 
                 if (account.type == "CREDIT") {
-                    OutlinedTextField(
+                    CompactInputField(
                         value = totalLimit,
                         onValueChange = { totalLimit = it },
-                        label = { Text("Total Limit (₹)", color = theme.textMuted, fontSize = 11.sp) },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                        modifier = Modifier.fillMaxWidth().height(52.dp)
+                        placeholder = "Total Limit (₹)",
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
 
                 if (account.type in listOf("CREDIT", "LENDER", "BORROWER")) {
                     val dDateStr = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(dueDateMillis))
-                    OutlinedButton(
-                        onClick = { showDueDatePicker = true },
-                        modifier = Modifier.fillMaxWidth().height(44.dp),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textBright)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(theme.surfaceAlt)
+                            .clickable { showDueDatePicker = true }
+                            .padding(horizontal = 10.dp),
+                        contentAlignment = Alignment.CenterStart
                     ) {
-                        Icon(Icons.Default.Event, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Due Date: $dDateStr", fontSize = 11.sp)
+                        Text("Due Date: $dDateStr", color = theme.textBright, fontSize = 12.sp)
                     }
                 }
 
                 val newBal = balance.toDoubleOrNull() ?: account.balance
                 if (newBal != account.balance) {
-                    OutlinedTextField(
+                    CompactInputField(
                         value = adjustmentNote,
                         onValueChange = { adjustmentNote = it },
-                        label = { Text("Reason for balance change", color = theme.textMuted, fontSize = 11.sp) },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                        modifier = Modifier.fillMaxWidth().height(52.dp)
+                        placeholder = "Reason for adjustment",
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
 
@@ -2216,13 +2525,13 @@ fun EditAccountCardDialog(
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
             ) {
-                Text("Save", color = theme.bg, fontWeight = FontWeight.Bold)
+                Text("Save", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
         },
         dismissButton = {
             Row {
-                TextButton(onClick = onDelete) { Text("Delete", color = theme.mildRed) }
-                TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
+                TextButton(onClick = onDelete) { Text("Delete", color = theme.mildRed, fontSize = 12.sp) }
+                TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted, fontSize = 12.sp) }
             }
         }
     )
@@ -2236,7 +2545,7 @@ fun EditAccountCardDialog(
     }
 }
 
-// ---------------- MAIN LEDGER POPUP (IN / OUT ONLY) ----------------
+// ---------------- TRANSACTION DIALOG (WITH ACCURATE RECURRING RETENTION) ----------------
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -2264,7 +2573,7 @@ fun MainLedgerTransactionDialog(
     }
     var accExpanded by remember { mutableStateOf(false) }
 
-    // Retain state if editing existing recurring entry
+    // Accurate persistent recurring state initialization
     var isRecurring by remember { mutableStateOf(prefilled?.isRecurring ?: false) }
     var recurringFrequency by remember { mutableStateOf(if (prefilled != null && prefilled.frequency != "NONE") prefilled.frequency else "MONTHLY") }
     var freqExpanded by remember { mutableStateOf(false) }
@@ -2276,7 +2585,7 @@ fun MainLedgerTransactionDialog(
         containerColor = theme.surface,
         titleContentColor = theme.textBright,
         onDismissRequest = onDismiss,
-        title = { Text(if (prefilled != null) "Edit Entry" else "Record Entry", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+        title = { Text(if (prefilled != null) "Edit Entry" else "Record Entry", fontWeight = FontWeight.Bold, fontSize = 15.sp) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2286,9 +2595,9 @@ fun MainLedgerTransactionDialog(
                             category = outCategories.first()
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = if (flowType == "OUT") theme.mildRed else theme.surfaceAlt),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).height(38.dp)
                     ) {
-                        Text("Out (Expense)", color = if (flowType == "OUT") Color.White else theme.textMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("Out (Expense)", color = if (flowType == "OUT") Color.White else theme.textMuted, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                     }
                     Button(
                         onClick = {
@@ -2296,59 +2605,60 @@ fun MainLedgerTransactionDialog(
                             category = inCategories.first()
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = if (flowType == "IN") theme.mildGreen else theme.surfaceAlt),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).height(38.dp)
                     ) {
-                        Text("In (Income)", color = if (flowType == "IN") Color.Black else theme.textMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("In (Income)", color = if (flowType == "IN") Color.Black else theme.textMuted, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                     }
                 }
 
-                // Compact Amount & Date row
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    OutlinedTextField(
+                    CompactInputField(
                         value = amount,
                         onValueChange = { amount = it },
-                        label = { Text("Amount (₹)", color = theme.textMuted, fontSize = 11.sp) },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                        modifier = Modifier.weight(1f).height(52.dp)
+                        placeholder = "Amount (₹)",
+                        modifier = Modifier.weight(1f)
                     )
 
                     val dateFormatted = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(selectedDateMillis))
-                    OutlinedButton(
-                        onClick = { showDatePicker = true },
-                        modifier = Modifier.weight(1f).height(52.dp),
-                        shape = RoundedCornerShape(6.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textBright)
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(theme.surfaceAlt)
+                            .clickable { showDatePicker = true }
+                            .padding(horizontal = 10.dp),
+                        contentAlignment = Alignment.CenterStart
                     ) {
-                        Text("Date: $dateFormatted", fontSize = 11.sp)
+                        Text("Date: $dateFormatted", color = theme.textBright, fontSize = 12.sp)
                     }
                 }
 
-                OutlinedTextField(
+                CompactInputField(
                     value = note,
                     onValueChange = { note = it },
-                    label = { Text("Note / Merchant", color = theme.textMuted, fontSize = 11.sp) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                    modifier = Modifier.fillMaxWidth().height(52.dp)
+                    placeholder = "Note / Merchant",
+                    modifier = Modifier.fillMaxWidth()
                 )
 
-                // Compact Category & Account row
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     ExposedDropdownMenuBox(
                         expanded = catExpanded,
                         onExpandedChange = { catExpanded = !catExpanded },
                         modifier = Modifier.weight(1f)
                     ) {
-                        OutlinedTextField(
-                            value = category,
-                            onValueChange = {},
-                            readOnly = true,
-                            label = { Text("Category", color = theme.textMuted, fontSize = 11.sp) },
-                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = catExpanded) },
-                            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                            modifier = Modifier.menuAnchor().fillMaxWidth().height(52.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .menuAnchor()
+                                .fillMaxWidth()
+                                .height(42.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(theme.surfaceAlt)
+                                .padding(horizontal = 10.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            Text(category, color = theme.textBright, fontSize = 12.sp)
+                        }
                         ExposedDropdownMenu(
                             expanded = catExpanded,
                             onDismissRequest = { catExpanded = false },
@@ -2357,7 +2667,7 @@ fun MainLedgerTransactionDialog(
                             val activeCats = if (flowType == "IN") inCategories else outCategories
                             activeCats.forEach { cat ->
                                 DropdownMenuItem(
-                                    text = { Text(cat, color = theme.textBright) },
+                                    text = { Text(cat, color = theme.textBright, fontSize = 12.sp) },
                                     onClick = {
                                         category = cat
                                         catExpanded = false
@@ -2374,15 +2684,18 @@ fun MainLedgerTransactionDialog(
                             onExpandedChange = { accExpanded = !accExpanded },
                             modifier = Modifier.weight(1f)
                         ) {
-                            OutlinedTextField(
-                                value = activeAccName,
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text(if (flowType == "IN") "Into" else "From", color = theme.textMuted, fontSize = 11.sp) },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = accExpanded) },
-                                colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                                modifier = Modifier.menuAnchor().fillMaxWidth().height(52.dp)
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .menuAnchor()
+                                    .fillMaxWidth()
+                                    .height(42.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(theme.surfaceAlt)
+                                    .padding(horizontal = 10.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Text(activeAccName, color = theme.textBright, fontSize = 12.sp)
+                            }
                             ExposedDropdownMenu(
                                 expanded = accExpanded,
                                 onDismissRequest = { accExpanded = false },
@@ -2390,7 +2703,7 @@ fun MainLedgerTransactionDialog(
                             ) {
                                 accounts.forEach { acc ->
                                     DropdownMenuItem(
-                                        text = { Text("${acc.name} (${acc.type})", color = theme.textBright) },
+                                        text = { Text("${acc.name} (${acc.type})", color = theme.textBright, fontSize = 12.sp) },
                                         onClick = {
                                             selectedAccId = acc.id
                                             accExpanded = false
@@ -2402,7 +2715,6 @@ fun MainLedgerTransactionDialog(
                     }
                 }
 
-                // Recurring Controls
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -2423,22 +2735,25 @@ fun MainLedgerTransactionDialog(
                             onExpandedChange = { freqExpanded = !freqExpanded },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            OutlinedTextField(
-                                value = recurringFrequency,
-                                onValueChange = {},
-                                readOnly = true,
-                                label = { Text("Repeat Frequency", color = theme.textMuted, fontSize = 11.sp) },
-                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = freqExpanded) },
-                                colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                                modifier = Modifier.menuAnchor().fillMaxWidth().height(52.dp)
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .menuAnchor()
+                                    .fillMaxWidth()
+                                    .height(42.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(theme.surfaceAlt)
+                                    .padding(horizontal = 10.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Text("Repeat: $recurringFrequency", color = theme.textBright, fontSize = 12.sp)
+                            }
                             ExposedDropdownMenu(
                                 expanded = freqExpanded,
                                 onDismissRequest = { freqExpanded = false },
                                 modifier = Modifier.background(theme.surface)
                             ) {
                                 listOf("DAILY", "WEEKLY", "MONTHLY", "YEARLY").forEach { f ->
-                                    DropdownMenuItem(text = { Text(f, color = theme.textBright) }, onClick = { recurringFrequency = f; freqExpanded = false })
+                                    DropdownMenuItem(text = { Text(f, color = theme.textBright, fontSize = 12.sp) }, onClick = { recurringFrequency = f; freqExpanded = false })
                                 }
                             }
                         }
@@ -2458,15 +2773,17 @@ fun MainLedgerTransactionDialog(
 
                         if (hasEndDate) {
                             val endFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(recurringEndDateMillis))
-                            OutlinedButton(
-                                onClick = { showEndDatePicker = true },
-                                modifier = Modifier.fillMaxWidth().height(44.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textBright)
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(42.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(theme.surfaceAlt)
+                                    .clickable { showEndDatePicker = true }
+                                    .padding(horizontal = 10.dp),
+                                contentAlignment = Alignment.CenterStart
                             ) {
-                                Icon(Icons.Default.Event, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text("Ends on: $endFormatted", fontSize = 11.sp)
+                                Text("Ends on: $endFormatted", color = theme.textBright, fontSize = 12.sp)
                             }
                         }
                     }
@@ -2497,11 +2814,11 @@ fun MainLedgerTransactionDialog(
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
             ) {
-                Text("Confirm", color = theme.bg, fontWeight = FontWeight.Bold)
+                Text("Confirm", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
+            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted, fontSize = 12.sp) }
         }
     )
 
@@ -2545,48 +2862,70 @@ fun IntraAccountTransferDialog(
         containerColor = theme.surface,
         titleContentColor = theme.textBright,
         onDismissRequest = onDismiss,
-        title = { Text("Intra-Account Transfer", fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+        title = { Text("Intra-Account Transfer", fontWeight = FontWeight.Bold, fontSize = 15.sp) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 ExposedDropdownMenuBox(expanded = fromExpanded, onExpandedChange = { fromExpanded = !fromExpanded }, modifier = Modifier.fillMaxWidth()) {
                     val fromName = accounts.firstOrNull { it.id == fromAccId }?.name ?: "Select"
-                    OutlinedTextField(value = fromName, onValueChange = {}, readOnly = true, label = { Text("From", color = theme.textMuted, fontSize = 11.sp) }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = fromExpanded) }, colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt), modifier = Modifier.menuAnchor().fillMaxWidth().height(52.dp))
+                    Box(
+                        modifier = Modifier
+                            .menuAnchor()
+                            .fillMaxWidth()
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(theme.surfaceAlt)
+                            .padding(horizontal = 10.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Text("From: $fromName", color = theme.textBright, fontSize = 12.sp)
+                    }
                     ExposedDropdownMenu(expanded = fromExpanded, onDismissRequest = { fromExpanded = false }, modifier = Modifier.background(theme.surface)) {
                         accounts.forEach { acc ->
-                            DropdownMenuItem(text = { Text(acc.name, color = theme.textBright) }, onClick = { fromAccId = acc.id; fromExpanded = false })
+                            DropdownMenuItem(text = { Text(acc.name, color = theme.textBright, fontSize = 12.sp) }, onClick = { fromAccId = acc.id; fromExpanded = false })
                         }
                     }
                 }
 
                 ExposedDropdownMenuBox(expanded = toExpanded, onExpandedChange = { toExpanded = !toExpanded }, modifier = Modifier.fillMaxWidth()) {
                     val toName = accounts.firstOrNull { it.id == toAccId }?.name ?: "Select"
-                    OutlinedTextField(value = toName, onValueChange = {}, readOnly = true, label = { Text("To", color = theme.textMuted, fontSize = 11.sp) }, trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = toExpanded) }, colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt), modifier = Modifier.menuAnchor().fillMaxWidth().height(52.dp))
+                    Box(
+                        modifier = Modifier
+                            .menuAnchor()
+                            .fillMaxWidth()
+                            .height(42.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(theme.surfaceAlt)
+                            .padding(horizontal = 10.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        Text("To: $toName", color = theme.textBright, fontSize = 12.sp)
+                    }
                     ExposedDropdownMenu(expanded = toExpanded, onDismissRequest = { toExpanded = false }, modifier = Modifier.background(theme.surface)) {
                         accounts.forEach { acc ->
-                            DropdownMenuItem(text = { Text(acc.name, color = theme.textBright) }, onClick = { toAccId = acc.id; toExpanded = false })
+                            DropdownMenuItem(text = { Text(acc.name, color = theme.textBright, fontSize = 12.sp) }, onClick = { toAccId = acc.id; toExpanded = false })
                         }
                     }
                 }
 
-                OutlinedTextField(
+                CompactInputField(
                     value = amount,
                     onValueChange = { amount = it },
-                    label = { Text("Transfer Amount (₹)", color = theme.textMuted, fontSize = 11.sp) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                    modifier = Modifier.fillMaxWidth().height(52.dp)
+                    placeholder = "Amount (₹)",
+                    modifier = Modifier.fillMaxWidth()
                 )
 
                 val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(transferDateMillis))
-                OutlinedButton(
-                    onClick = { showTransferDatePicker = true },
-                    modifier = Modifier.fillMaxWidth().height(44.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textBright)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(42.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(theme.surfaceAlt)
+                        .clickable { showTransferDatePicker = true }
+                        .padding(horizontal = 10.dp),
+                    contentAlignment = Alignment.CenterStart
                 ) {
-                    Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Date: $dateFormatted", fontSize = 11.sp)
+                    Text("Date: $dateFormatted", color = theme.textBright, fontSize = 12.sp)
                 }
             }
         },
@@ -2602,11 +2941,11 @@ fun IntraAccountTransferDialog(
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
             ) {
-                Text("Transfer", color = theme.bg, fontWeight = FontWeight.Bold)
+                Text("Transfer", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
+            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted, fontSize = 12.sp) }
         }
     )
 
@@ -2641,11 +2980,11 @@ fun ThemedDatePickerDialog(
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
             ) {
-                Text("Select", color = theme.bg, fontWeight = FontWeight.Bold)
+                Text("Select", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
+            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted, fontSize = 12.sp) }
         },
         colors = DatePickerDefaults.colors(containerColor = theme.surface)
     ) {
@@ -2671,7 +3010,7 @@ fun ThemedDatePickerDialog(
     }
 }
 
-// ---------------- THEMED PIN KEYPADS ----------------
+// ---------------- THEMED PIN DIALOGS ----------------
 
 @Composable
 fun ThemePinPadDialog(title: String, subtitle: String, expectedPin: String, onDismiss: () -> Unit, onSuccess: () -> Unit) {
@@ -2682,14 +3021,14 @@ fun ThemePinPadDialog(title: String, subtitle: String, expectedPin: String, onDi
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(20.dp), color = theme.surface, modifier = Modifier.fillMaxWidth().padding(10.dp)) {
             Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text(title, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text(title, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 Text(subtitle, color = theme.textMuted, fontSize = 12.sp, textAlign = TextAlign.Center)
 
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     for (i in 0 until 4) {
                         val isFilled = i < enteredPin.length
                         Box(
-                            modifier = Modifier.size(16.dp).clip(CircleShape).background(
+                            modifier = Modifier.size(15.dp).clip(CircleShape).background(
                                 when {
                                     isError -> theme.mildRed
                                     isFilled -> theme.accent
@@ -2701,7 +3040,7 @@ fun ThemePinPadDialog(title: String, subtitle: String, expectedPin: String, onDi
                 }
 
                 if (isError) {
-                    Text("Incorrect PIN. Try again.", color = theme.mildRed, fontSize = 12.sp)
+                    Text("Incorrect PIN. Try again.", color = theme.mildRed, fontSize = 11.5.sp)
                 }
 
                 val keypadKeys = listOf(
@@ -2716,7 +3055,7 @@ fun ThemePinPadDialog(title: String, subtitle: String, expectedPin: String, onDi
                         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                             row.forEach { key ->
                                 Box(
-                                    modifier = Modifier.size(60.dp).clip(CircleShape).background(theme.surfaceAlt).clickable {
+                                    modifier = Modifier.size(56.dp).clip(CircleShape).background(theme.surfaceAlt).clickable {
                                         when (key) {
                                             "C" -> { enteredPin = ""; isError = false }
                                             "⌫" -> { if (enteredPin.isNotEmpty()) enteredPin = enteredPin.dropLast(1); isError = false }
@@ -2733,14 +3072,14 @@ fun ThemePinPadDialog(title: String, subtitle: String, expectedPin: String, onDi
                                     },
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(key, color = theme.textBright, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                    Text(key, color = theme.textBright, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
                     }
                 }
 
-                TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted, fontSize = 13.sp) }
+                TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted, fontSize = 12.sp) }
             }
         }
     }
@@ -2754,13 +3093,13 @@ fun ThemeSetPinDialog(onDismiss: () -> Unit, onSavePin: (String) -> Unit) {
     Dialog(onDismissRequest = onDismiss) {
         Surface(shape = RoundedCornerShape(20.dp), color = theme.surface, modifier = Modifier.fillMaxWidth().padding(10.dp)) {
             Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text("Set New PIN", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text("Set New PIN", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 Text("Enter a 4-digit security PIN for ledger actions.", color = theme.textMuted, fontSize = 12.sp)
 
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                     for (i in 0 until 4) {
                         val isFilled = i < pinText.length
-                        Box(modifier = Modifier.size(16.dp).clip(CircleShape).background(if (isFilled) theme.accent else theme.surfaceAlt))
+                        Box(modifier = Modifier.size(15.dp).clip(CircleShape).background(if (isFilled) theme.accent else theme.surfaceAlt))
                     }
                 }
 
@@ -2776,7 +3115,7 @@ fun ThemeSetPinDialog(onDismiss: () -> Unit, onSavePin: (String) -> Unit) {
                         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                             row.forEach { key ->
                                 Box(
-                                    modifier = Modifier.size(60.dp).clip(CircleShape).background(theme.surfaceAlt).clickable {
+                                    modifier = Modifier.size(56.dp).clip(CircleShape).background(theme.surfaceAlt).clickable {
                                         when (key) {
                                             "C" -> pinText = ""
                                             "⌫" -> if (pinText.isNotEmpty()) pinText = pinText.dropLast(1)
@@ -2790,14 +3129,14 @@ fun ThemeSetPinDialog(onDismiss: () -> Unit, onSavePin: (String) -> Unit) {
                                     },
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(key, color = theme.textBright, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                    Text(key, color = theme.textBright, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
                     }
                 }
 
-                TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted, fontSize = 13.sp) }
+                TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted, fontSize = 12.sp) }
             }
         }
     }
