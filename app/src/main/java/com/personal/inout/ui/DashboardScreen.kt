@@ -9,14 +9,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -77,7 +73,7 @@ fun DashboardScreen(db: AppDatabase) {
     var showTransferDialog by remember { mutableStateOf(false) }
     var quickActionAccount by remember { mutableStateOf<Pair<Account, String>?>(null) }
     var editingAccount by remember { mutableStateOf<Account?>(null) }
-    var showBLHistorySheet by remember { mutableStateOf(false) }
+    var showAllLedgerSheet by remember { mutableStateOf(false) }
 
     val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap: Bitmap? ->
         if (bitmap != null) {
@@ -215,15 +211,19 @@ fun DashboardScreen(db: AppDatabase) {
             ) {
                 when (selectedTab) {
                     0 -> LedgerTabScreen(
-                        transactions = transactions.filter { it.flowType == "IN" || it.flowType == "OUT" }
+                        transactions = transactions,
+                        onViewAllClick = { showAllLedgerSheet = true }
                     )
                     1 -> AccountsTabScreen(
                         accounts = accounts,
-                        transactions = transactions,
+                        recurringTransactions = transactions.filter { it.isRecurring },
                         onOpenTransfer = { showTransferDialog = true },
                         onEditAccount = { editingAccount = it },
                         onQuickAction = { acc, action -> quickActionAccount = Pair(acc, action) },
-                        onViewBLHistory = { showBLHistorySheet = true }
+                        onEditRecurringTx = { tx ->
+                            prefilledTx = tx
+                            showMainTxDialog = true
+                        }
                     )
                     2 -> ReviewQueueTabScreen(
                         stagedSms = stagedSms,
@@ -242,12 +242,12 @@ fun DashboardScreen(db: AppDatabase) {
                         },
                         onCameraClick = {
                             try { cameraLauncher.launch(null) } catch (e: Exception) {
-                                Toast.makeText(context, "Camera permission needed: ${e.message}", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Camera launch failed: ${e.message}", Toast.LENGTH_SHORT).show()
                             }
                         },
                         onGalleryClick = {
                             try { galleryLauncher.launch("image/*") } catch (e: Exception) {
-                                Toast.makeText(context, "Photo picker error: ${e.message}", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Gallery launch failed: ${e.message}", Toast.LENGTH_SHORT).show()
                             }
                         },
                         onManualSyncSms = {
@@ -255,12 +255,12 @@ fun DashboardScreen(db: AppDatabase) {
                                 db.vaultDao().insertSmsDraft(
                                     SmsDraft(
                                         rawSender = "HDFC-BANK",
-                                        rawBody = "Sent Rs. 380.00 to Blinkit on 14-09-2026. Ref 99018.",
+                                        rawBody = "Sent Rs. 380.00 to Blinkit on 15-09-2026. Ref 99018.",
                                         amount = 380.0,
                                         merchant = "Blinkit"
                                     )
                                 )
-                                Toast.makeText(context, "New transaction waiting in review", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Incoming receipt staged in review", Toast.LENGTH_SHORT).show()
                             }
                         }
                     )
@@ -283,6 +283,7 @@ fun DashboardScreen(db: AppDatabase) {
                 }
             }
 
+            // Quick Add Transaction Dialog
             if (showMainTxDialog) {
                 MainLedgerTransactionDialog(
                     accounts = accounts.filter { it.type in listOf("CASH", "BANK", "CREDIT") },
@@ -292,7 +293,7 @@ fun DashboardScreen(db: AppDatabase) {
                         scope.launch {
                             val acc = accounts.firstOrNull { it.id == tx.accountId }
                             if (acc != null && tx.flowType == "OUT" && acc.type != "CREDIT" && (acc.balance - tx.amount) < 0) {
-                                Toast.makeText(context, "Insufficient funds in ${acc.name}", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(context, "Insufficient balance in ${acc.name}", Toast.LENGTH_SHORT).show()
                                 return@launch
                             }
                             db.vaultDao().insertTransaction(tx)
@@ -306,51 +307,178 @@ fun DashboardScreen(db: AppDatabase) {
                 )
             }
 
+            // Create New Account Card (Tethered Double-Entry)
             if (showCreateCardDialog) {
                 CreateAccountCardDialog(
+                    availableSourceAccounts = accounts.filter { it.type in listOf("CASH", "BANK") },
                     onDismiss = { showCreateCardDialog = false },
-                    onSave = { acc ->
+                    onSave = { acc, sourceAccId, initialDate, initialNote ->
                         scope.launch {
-                            db.vaultDao().insertAccount(acc)
+                            val createdId = db.vaultDao().insertAccount(acc)
+                            val sourceAcc = accounts.firstOrNull { it.id == sourceAccId }
+
+                            when (acc.type) {
+                                "LENDER" -> {
+                                    if (sourceAcc != null && acc.balance > 0.0) {
+                                        db.vaultDao().updateAccount(sourceAcc.copy(balance = sourceAcc.balance + acc.balance))
+                                        val displayNote = initialNote.ifBlank { "Borrowed ₹${String.format("%.0f", acc.balance)} from ${acc.name} into ${sourceAcc.name}" }
+                                        db.vaultDao().insertTransaction(
+                                            Transaction(
+                                                accountId = sourceAcc.id,
+                                                flowType = "BORROW",
+                                                type = "NEUTRAL",
+                                                category = "Borrowing",
+                                                amount = acc.balance,
+                                                timestamp = initialDate,
+                                                partyName = acc.name,
+                                                channelAccountName = sourceAcc.name,
+                                                note = displayNote,
+                                                returnDate = acc.dueDate
+                                            )
+                                        )
+                                    }
+                                }
+                                "BORROWER" -> {
+                                    if (sourceAcc != null && acc.balance > 0.0) {
+                                        db.vaultDao().updateAccount(sourceAcc.copy(balance = sourceAcc.balance - acc.balance))
+                                        val displayNote = initialNote.ifBlank { "Lent ₹${String.format("%.0f", acc.balance)} to ${acc.name} from ${sourceAcc.name}" }
+                                        db.vaultDao().insertTransaction(
+                                            Transaction(
+                                                accountId = sourceAcc.id,
+                                                flowType = "LEND",
+                                                type = "NEUTRAL",
+                                                category = "Lending",
+                                                amount = acc.balance,
+                                                timestamp = initialDate,
+                                                partyName = acc.name,
+                                                channelAccountName = sourceAcc.name,
+                                                note = displayNote,
+                                                returnDate = acc.dueDate
+                                            )
+                                        )
+                                    }
+                                }
+                                "CREDIT" -> {
+                                    val debt = (acc.totalLimit - acc.balance).coerceAtLeast(0.0)
+                                    if (debt > 0.0) {
+                                        db.vaultDao().insertTransaction(
+                                            Transaction(
+                                                accountId = createdId,
+                                                flowType = "OUT",
+                                                type = "EXPENSE",
+                                                category = "Existing CC Bill",
+                                                amount = debt,
+                                                timestamp = initialDate,
+                                                note = initialNote.ifBlank { "Existing card balance on ${acc.name}" },
+                                                returnDate = acc.dueDate
+                                            )
+                                        )
+                                    }
+                                }
+                                else -> {
+                                    if (acc.balance > 0.0) {
+                                        db.vaultDao().insertTransaction(
+                                            Transaction(
+                                                accountId = createdId,
+                                                flowType = "IN",
+                                                type = "INCOME",
+                                                category = "Starting Balance",
+                                                amount = acc.balance,
+                                                timestamp = initialDate,
+                                                note = initialNote.ifBlank { "Initial balance for ${acc.name}" }
+                                            )
+                                        )
+                                    }
+                                }
+                            }
                             showCreateCardDialog = false
                         }
                     }
                 )
             }
 
+            // Quick Actions (+ Add, Refill, Repay, Collect) Connected
             quickActionAccount?.let { (acc, action) ->
                 QuickActionDialog(
                     account = acc,
                     action = action,
+                    availableFundingAccounts = accounts.filter { it.type in listOf("CASH", "BANK") && it.id != acc.id },
                     onDismiss = { quickActionAccount = null },
-                    onConfirm = { deltaAmount ->
+                    onConfirm = { deltaAmount, fundingAccId, actionDate, noteText ->
                         scope.launch {
+                            val fundingAcc = accounts.firstOrNull { it.id == fundingAccId }
                             when (action) {
                                 "ADD" -> {
                                     db.vaultDao().updateAccount(acc.copy(balance = acc.balance + deltaAmount))
                                     db.vaultDao().insertTransaction(
-                                        Transaction(accountId = acc.id, flowType = "IN", type = "INCOME", category = "Deposit", amount = deltaAmount, note = "Quick Top-up")
+                                        Transaction(
+                                            accountId = acc.id,
+                                            flowType = "IN",
+                                            type = "INCOME",
+                                            category = "Deposit",
+                                            amount = deltaAmount,
+                                            timestamp = actionDate,
+                                            note = noteText.ifBlank { "Direct balance deposit to ${acc.name}" }
+                                        )
                                     )
                                 }
                                 "REFILL" -> {
+                                    if (fundingAcc != null) {
+                                        db.vaultDao().updateAccount(fundingAcc.copy(balance = fundingAcc.balance - deltaAmount))
+                                    }
                                     val newBal = (acc.balance + deltaAmount).coerceAtMost(acc.totalLimit)
                                     db.vaultDao().updateAccount(acc.copy(balance = newBal))
                                     db.vaultDao().insertTransaction(
-                                        Transaction(accountId = acc.id, flowType = "IN", type = "INCOME", category = "CC Payment", amount = deltaAmount, note = "Limit Refill")
+                                        Transaction(
+                                            accountId = acc.id,
+                                            flowType = "IN",
+                                            type = "INCOME",
+                                            category = "CC Payment",
+                                            amount = deltaAmount,
+                                            timestamp = actionDate,
+                                            channelAccountName = fundingAcc?.name ?: "",
+                                            note = noteText.ifBlank { "Card balance refill via ${fundingAcc?.name ?: "Cash"}" }
+                                        )
                                     )
                                 }
                                 "REPAY" -> {
+                                    if (fundingAcc != null) {
+                                        db.vaultDao().updateAccount(fundingAcc.copy(balance = fundingAcc.balance - deltaAmount))
+                                    }
                                     val newBal = (acc.balance - deltaAmount).coerceAtLeast(0.0)
                                     db.vaultDao().updateAccount(acc.copy(balance = newBal))
                                     db.vaultDao().insertTransaction(
-                                        Transaction(accountId = acc.id, flowType = "REPAY", type = "NEUTRAL", category = "Repayment", amount = deltaAmount, partyName = acc.name, note = "Paid back loan")
+                                        Transaction(
+                                            accountId = acc.id,
+                                            flowType = "REPAY",
+                                            type = "NEUTRAL",
+                                            category = "Repayment",
+                                            amount = deltaAmount,
+                                            timestamp = actionDate,
+                                            partyName = acc.name,
+                                            channelAccountName = fundingAcc?.name ?: "",
+                                            note = noteText.ifBlank { "Repayment to ${acc.name} via ${fundingAcc?.name ?: "account"}" }
+                                        )
                                     )
                                 }
                                 "COLLECT" -> {
+                                    if (fundingAcc != null) {
+                                        db.vaultDao().updateAccount(fundingAcc.copy(balance = fundingAcc.balance + deltaAmount))
+                                    }
                                     val newBal = (acc.balance - deltaAmount).coerceAtLeast(0.0)
                                     db.vaultDao().updateAccount(acc.copy(balance = newBal))
                                     db.vaultDao().insertTransaction(
-                                        Transaction(accountId = acc.id, flowType = "COLLECT", type = "NEUTRAL", category = "Collection", amount = deltaAmount, partyName = acc.name, note = "Collected debt")
+                                        Transaction(
+                                            accountId = acc.id,
+                                            flowType = "COLLECT",
+                                            type = "NEUTRAL",
+                                            category = "Collection",
+                                            amount = deltaAmount,
+                                            timestamp = actionDate,
+                                            partyName = acc.name,
+                                            channelAccountName = fundingAcc?.name ?: "",
+                                            note = noteText.ifBlank { "Collection from ${acc.name} into ${fundingAcc?.name ?: "account"}" }
+                                        )
                                     )
                                 }
                             }
@@ -360,11 +488,12 @@ fun DashboardScreen(db: AppDatabase) {
                 )
             }
 
+            // Intra-Account Transfer
             if (showTransferDialog) {
                 IntraAccountTransferDialog(
                     accounts = accounts.filter { it.type in listOf("CASH", "BANK", "CREDIT") },
                     onDismiss = { showTransferDialog = false },
-                    onTransfer = { fromAcc, toAcc, amount ->
+                    onTransfer = { fromAcc, toAcc, amount, transferDate ->
                         scope.launch {
                             if (fromAcc.type != "CREDIT" && (fromAcc.balance - amount) < 0) {
                                 Toast.makeText(context, "Balance cannot drop below zero", Toast.LENGTH_SHORT).show()
@@ -379,6 +508,8 @@ fun DashboardScreen(db: AppDatabase) {
                                     type = "NEUTRAL",
                                     category = "Internal Transfer",
                                     amount = amount,
+                                    timestamp = transferDate,
+                                    channelAccountName = toAcc.name,
                                     note = "Transfer from ${fromAcc.name} to ${toAcc.name}"
                                 )
                             )
@@ -389,13 +520,30 @@ fun DashboardScreen(db: AppDatabase) {
                 )
             }
 
+            // Edit Account Modal (With Adjustment Audit Logging)
             editingAccount?.let { acc ->
                 EditAccountCardDialog(
                     account = acc,
                     onDismiss = { editingAccount = null },
-                    onSave = { updated ->
+                    onSave = { updated, adjustmentDiff, adjustNote ->
                         scope.launch {
                             db.vaultDao().updateAccount(updated)
+                            if (adjustmentDiff != 0.0) {
+                                val isPositive = adjustmentDiff > 0
+                                val flow = if (isPositive) "IN" else "OUT"
+                                val label = if (isPositive) "+₹${String.format("%.0f", adjustmentDiff)}" else "-₹${String.format("%.0f", -adjustmentDiff)}"
+                                val finalNote = adjustNote.ifBlank { "Balance adjustment on ${updated.name}: $label" }
+                                db.vaultDao().insertTransaction(
+                                    Transaction(
+                                        accountId = updated.id,
+                                        flowType = flow,
+                                        type = if (isPositive) "INCOME" else "EXPENSE",
+                                        category = "Adjustment",
+                                        amount = kotlin.math.abs(adjustmentDiff),
+                                        note = finalNote
+                                    )
+                                )
+                            }
                             editingAccount = null
                         }
                     },
@@ -408,20 +556,24 @@ fun DashboardScreen(db: AppDatabase) {
                 )
             }
 
-            if (showBLHistorySheet) {
-                BorrowLendHistoryDialog(
-                    transactions = transactions.filter { it.flowType in listOf("BORROW", "LEND", "REPAY", "COLLECT") },
-                    onDismiss = { showBLHistorySheet = false }
+            // Searchable Full Ledger Sheet
+            if (showAllLedgerSheet) {
+                AllTransactionsSearchSheet(
+                    transactions = transactions,
+                    onDismiss = { showAllLedgerSheet = false }
                 )
             }
         }
     }
 }
 
-// ---------------- TAB 0: LEDGER ----------------
+// ---------------- TAB 0: LEDGER (SLIM ROWS + 5-6 RECENT CAP) ----------------
 
 @Composable
-fun LedgerTabScreen(transactions: List<Transaction>) {
+fun LedgerTabScreen(
+    transactions: List<Transaction>,
+    onViewAllClick: () -> Unit
+) {
     val theme = LocalThemeColors.current
     val currentCal = Calendar.getInstance()
     val thisMonthTxs = transactions.filter {
@@ -433,9 +585,11 @@ fun LedgerTabScreen(transactions: List<Transaction>) {
     val totalIn = thisMonthTxs.filter { it.flowType == "IN" }.sumOf { it.amount }
     val expenseCategories = thisMonthTxs.filter { it.flowType == "OUT" }.groupBy { it.category }
 
+    val recentTxs = transactions.take(6)
+
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item { Spacer(Modifier.height(4.dp)) }
 
@@ -496,10 +650,25 @@ fun LedgerTabScreen(transactions: List<Transaction>) {
         }
 
         item {
-            Text("Ledger Entries", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Recent Activity", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                if (transactions.isNotEmpty()) {
+                    Text(
+                        "View All (${transactions.size}) →",
+                        color = theme.accent,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clickable { onViewAllClick() }
+                    )
+                }
+            }
         }
 
-        if (transactions.isEmpty()) {
+        if (recentTxs.isEmpty()) {
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -519,66 +688,101 @@ fun LedgerTabScreen(transactions: List<Transaction>) {
                 }
             }
         } else {
-            items(transactions) { tx ->
-                val dateFmt = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(tx.timestamp))
-                Row(
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(theme.surface).padding(14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Box(
-                            modifier = Modifier.size(38.dp).clip(CircleShape).background(theme.surfaceAlt),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                if (tx.flowType == "IN") Icons.Default.ArrowDownward else Icons.Default.ArrowUpward,
-                                contentDescription = null,
-                                tint = if (tx.flowType == "IN") theme.mildGreen else theme.mildRed,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                        Column {
-                            Text(tx.note.ifBlank { tx.category }, color = theme.textBright, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-                            Text("${tx.category} • $dateFmt", color = theme.textMuted, fontSize = 11.sp)
-                        }
-                    }
-                    Text(
-                        "${if (tx.flowType == "IN") "+" else "-"} ₹ ${String.format("%.2f", tx.amount)}",
-                        color = if (tx.flowType == "IN") theme.mildGreen else theme.textBright,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 15.sp
-                    )
-                }
+            items(recentTxs) { tx ->
+                SlimLedgerRow(tx = tx)
+                Divider(color = theme.surfaceAlt.copy(alpha = 0.6f), thickness = 0.5.dp)
             }
         }
         item { Spacer(Modifier.height(40.dp)) }
     }
 }
 
-// ---------------- TAB 1: ACCOUNTS & B/L ----------------
+// ---------------- HIGH DENSITY SLIM LEDGER ROW (~48dp) ----------------
+
+@Composable
+fun SlimLedgerRow(tx: Transaction) {
+    val theme = LocalThemeColors.current
+    val dateFmt = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(tx.timestamp))
+
+    val isCreditFlow = tx.flowType in listOf("IN", "COLLECT")
+    val isTransfer = tx.flowType in listOf("TRANSFER", "NEUTRAL")
+    val flowColor = when {
+        isCreditFlow -> theme.mildGreen
+        isTransfer -> theme.accent
+        else -> theme.mildRed
+    }
+
+    val arrowIcon = when {
+        tx.flowType == "IN" -> Icons.Default.ArrowDownward
+        tx.flowType == "OUT" -> Icons.Default.ArrowUpward
+        tx.flowType == "BORROW" -> Icons.Default.CallReceived
+        tx.flowType == "LEND" -> Icons.Default.CallMade
+        tx.flowType == "COLLECT" -> Icons.Default.ArrowDownward
+        tx.flowType == "REPAY" -> Icons.Default.ArrowUpward
+        else -> Icons.Default.SwapHoriz
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp, horizontal = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(arrowIcon, contentDescription = null, tint = flowColor, modifier = Modifier.size(16.dp))
+            Column {
+                Text(
+                    text = tx.note.ifBlank { tx.category },
+                    color = theme.textBright,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.5.sp,
+                    maxLines = 1
+                )
+                Text(
+                    text = buildString {
+                        if (tx.partyName.isNotBlank()) append("${tx.partyName} • ")
+                        append(tx.category)
+                        if (tx.isRecurring) append(" [${tx.frequency}]")
+                    },
+                    color = theme.textMuted,
+                    fontSize = 11.sp,
+                    maxLines = 1
+                )
+            }
+        }
+
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                text = "${if (isCreditFlow) "+" else if (!isTransfer) "-" else ""}₹ ${String.format("%.0f", tx.amount)}",
+                color = flowColor,
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp
+            )
+            Text(dateFmt, color = theme.textMuted, fontSize = 10.sp)
+        }
+    }
+}
+
+// ---------------- TAB 1: ACCOUNTS & CAROUSELS ----------------
 
 @Composable
 fun AccountsTabScreen(
     accounts: List<Account>,
-    transactions: List<Transaction>,
+    recurringTransactions: List<Transaction>,
     onOpenTransfer: () -> Unit,
     onEditAccount: (Account) -> Unit,
     onQuickAction: (Account, String) -> Unit,
-    onViewBLHistory: () -> Unit
+    onEditRecurringTx: (Transaction) -> Unit
 ) {
     val theme = LocalThemeColors.current
 
     val primaryAccounts = accounts.filter { it.type in listOf("CASH", "BANK", "CREDIT") }
     val blAccounts = accounts.filter { it.type in listOf("LENDER", "BORROWER") }
-
-    val totalReceivables = blAccounts.filter { it.type == "BORROWER" }.sumOf { it.balance }
-    val totalObligations = blAccounts.filter { it.type == "LENDER" }.sumOf { it.balance } +
-            primaryAccounts.filter { it.type == "CREDIT" }.sumOf { (it.totalLimit - it.balance).coerceAtLeast(0.0) }
-
-    val now = System.currentTimeMillis()
-    val next7Days = now + (7 * 24 * 60 * 60 * 1000L)
-    val upcomingDueAccounts = accounts.filter { it.dueDate in now..next7Days && it.balance > 0.0 }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp),
@@ -586,85 +790,7 @@ fun AccountsTabScreen(
     ) {
         item { Spacer(Modifier.height(4.dp)) }
 
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = theme.surface)
-            ) {
-                Column(Modifier.padding(18.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("BORROW & LEND LEDGER", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                        Text("History →", color = theme.textMuted, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { onViewBLHistory() })
-                    }
-                    Spacer(Modifier.height(14.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column {
-                            Text("Receivables (To Collect)", color = theme.textMuted, fontSize = 11.sp)
-                            Text("₹ ${String.format("%,.2f", totalReceivables)}", color = theme.mildGreen, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Column(horizontalAlignment = Alignment.End) {
-                            Text("Obligations (To Pay)", color = theme.textMuted, fontSize = 11.sp)
-                            Text("₹ ${String.format("%,.2f", totalObligations)}", color = theme.mildRed, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    if (upcomingDueAccounts.isNotEmpty()) {
-                        Spacer(Modifier.height(12.dp))
-                        Divider(color = theme.surfaceAlt)
-                        Spacer(Modifier.height(8.dp))
-                        Text("Upcoming payments in 7 days:", color = theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(6.dp))
-                        upcomingDueAccounts.forEach { dueAcc ->
-                            val dateStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(dueAcc.dueDate))
-                            val isPayable = dueAcc.type == "LENDER" || dueAcc.type == "CREDIT"
-                            val dueAmount = if (dueAcc.type == "CREDIT") (dueAcc.totalLimit - dueAcc.balance).coerceAtLeast(0.0) else dueAcc.balance
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    "${if (isPayable) "Pay to" else "Collect from"} ${dueAcc.name} ($dateStr)",
-                                    color = theme.textBright,
-                                    fontSize = 12.sp
-                                )
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("₹ ${String.format("%.0f", dueAmount)}", color = if (isPayable) theme.mildRed else theme.mildGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(if (isPayable) theme.mildRed.copy(alpha = 0.2f) else theme.mildGreen.copy(alpha = 0.2f))
-                                            .clickable { onQuickAction(dueAcc, if (isPayable) "REPAY" else "COLLECT") }
-                                            .padding(horizontal = 8.dp, vertical = 2.dp)
-                                    ) {
-                                        Text(if (isPayable) "Repay" else "Collect", color = if (isPayable) theme.mildRed else theme.mildGreen, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            OutlinedButton(
-                onClick = onOpenTransfer,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent)
-            ) {
-                Icon(Icons.Default.MultipleStop, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("Intra-Account Transfer", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-            }
-        }
-
+        // Upper Carousel 1: Cash, Bank, Credit Card (Uniform Fixed Size)
         item {
             Text("Wallets & Bank Accounts", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
@@ -673,7 +799,7 @@ fun AccountsTabScreen(
             } else {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(primaryAccounts) { acc ->
-                        InteractiveWalletCard(
+                        FixedWalletCard(
                             account = acc,
                             onEdit = { onEditAccount(acc) },
                             onQuickAction = { action -> onQuickAction(acc, action) }
@@ -683,6 +809,7 @@ fun AccountsTabScreen(
             }
         }
 
+        // Upper Carousel 2: Borrowers & Lenders (Uniform Fixed Size)
         item {
             Text("Borrowers & Lenders", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
@@ -691,7 +818,7 @@ fun AccountsTabScreen(
             } else {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(blAccounts) { acc ->
-                        InteractivePartyCard(
+                        FixedPartyCard(
                             account = acc,
                             onEdit = { onEditAccount(acc) },
                             onQuickAction = { action -> onQuickAction(acc, action) }
@@ -701,53 +828,128 @@ fun AccountsTabScreen(
             }
         }
 
+        // Middle Action: Intra-Account Transfer
+        item {
+            OutlinedButton(
+                onClick = onOpenTransfer,
+                modifier = Modifier.fillMaxWidth().height(44.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent)
+            ) {
+                Icon(Icons.Default.MultipleStop, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Intra-Account Transfer", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            }
+        }
+
+        // Lower Section: Active Recurring Ribbons
+        item {
+            Text("Active Recurring Commitments", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+        }
+
+        val recurringLenders = blAccounts.filter { it.repaymentType == "INSTALLMENTS" }
+
+        if (recurringTransactions.isEmpty() && recurringLenders.isEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = theme.surface)
+                ) {
+                    Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("No active recurring commitments", color = theme.textBright, fontWeight = FontWeight.SemiBold)
+                        Text("Recurring incomes, SIPs, and loan installments will appear here.", color = theme.textMuted, fontSize = 11.sp, textAlign = TextAlign.Center)
+                    }
+                }
+            }
+        } else {
+            // General recurring cash flow entries
+            items(recurringTransactions) { rTx ->
+                RecurringRibbonItem(
+                    title = rTx.note.ifBlank { rTx.category },
+                    subtitle = "${rTx.flowType} • ${rTx.frequency}",
+                    amount = rTx.amount,
+                    isPositive = rTx.flowType == "IN",
+                    onEdit = { onEditRecurringTx(rTx) }
+                )
+            }
+
+            // Recurring loan installments
+            items(recurringLenders) { rAcc ->
+                RecurringRibbonItem(
+                    title = "${rAcc.name} (${rAcc.type})",
+                    subtitle = "Installment • ${rAcc.frequency}",
+                    amount = rAcc.balance / rAcc.installmentCount.coerceAtLeast(1),
+                    isPositive = rAcc.type == "BORROWER",
+                    onEdit = { onEditAccount(rAcc) }
+                )
+            }
+        }
+
         item { Spacer(Modifier.height(30.dp)) }
     }
 }
 
+// ---------------- UNIFORM FIXED CARD (210dp x 145dp) ----------------
+
 @Composable
-fun InteractiveWalletCard(account: Account, onEdit: () -> Unit, onQuickAction: (String) -> Unit) {
+fun FixedWalletCard(
+    account: Account,
+    onEdit: () -> Unit,
+    onQuickAction: (String) -> Unit
+) {
     val theme = LocalThemeColors.current
     var isRevealed by remember { mutableStateOf(!account.hasEyeMask) }
     val scope = rememberCoroutineScope()
 
     Card(
-        modifier = Modifier.width(200.dp).clip(RoundedCornerShape(16.dp)),
+        modifier = Modifier
+            .size(width = 210.dp, height = 145.dp)
+            .clip(RoundedCornerShape(18.dp)),
         colors = CardDefaults.cardColors(containerColor = theme.surface)
     ) {
-        Column(Modifier.padding(14.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(account.name, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1)
+        Column(
+            modifier = Modifier.fillMaxSize().padding(14.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(account.name, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, modifier = Modifier.weight(1f))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(account.type, color = theme.accent, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                     IconButton(onClick = onEdit, modifier = Modifier.size(24.dp)) {
-                        Icon(Icons.Outlined.Edit, contentDescription = null, tint = theme.textMuted, modifier = Modifier.size(14.dp))
+                        Icon(Icons.Outlined.Edit, contentDescription = null, tint = theme.textMuted, modifier = Modifier.size(13.dp))
                     }
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
-
-            val displayAmount = when (account.type) {
-                "CREDIT" -> "Avail: ₹ ${String.format("%,.0f", account.balance)}"
-                else -> "₹ ${String.format("%,.2f", account.balance)}"
+            Column {
+                val displayAmount = when (account.type) {
+                    "CREDIT" -> "Avail: ₹ ${String.format("%,.0f", account.balance)}"
+                    else -> "₹ ${String.format("%,.2f", account.balance)}"
+                }
+                Text(
+                    text = if (isRevealed) displayAmount else "₹ ••••••",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = theme.textBright
+                )
+                if (account.type == "CREDIT") {
+                    val billAmount = (account.totalLimit - account.balance).coerceAtLeast(0.0)
+                    Text("Due: ₹ ${String.format("%,.0f", billAmount)}", color = theme.mildRed, fontSize = 10.sp)
+                } else {
+                    Text("Liquid Balance", color = theme.textMuted, fontSize = 10.sp)
+                }
             }
 
-            Text(
-                text = if (isRevealed) displayAmount else "₹ ••••••",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = theme.textBright
-            )
-
-            if (account.type == "CREDIT") {
-                val billAmount = (account.totalLimit - account.balance).coerceAtLeast(0.0)
-                Text("Bill: ₹ ${String.format("%,.0f", billAmount)}", color = theme.mildRed, fontSize = 10.sp)
-            }
-
-            Spacer(Modifier.height(10.dp))
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 if (account.hasEyeMask) {
                     IconButton(
                         onClick = {
@@ -770,7 +972,7 @@ fun InteractiveWalletCard(account: Account, onEdit: () -> Unit, onQuickAction: (
                         .clip(RoundedCornerShape(6.dp))
                         .background(theme.accent)
                         .clickable { onQuickAction(if (account.type == "CREDIT") "REFILL" else "ADD") }
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .padding(horizontal = 9.dp, vertical = 4.dp)
                 ) {
                     Text(if (account.type == "CREDIT") "Refill" else "+ Add", color = theme.bg, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
@@ -780,42 +982,56 @@ fun InteractiveWalletCard(account: Account, onEdit: () -> Unit, onQuickAction: (
 }
 
 @Composable
-fun InteractivePartyCard(account: Account, onEdit: () -> Unit, onQuickAction: (String) -> Unit) {
+fun FixedPartyCard(
+    account: Account,
+    onEdit: () -> Unit,
+    onQuickAction: (String) -> Unit
+) {
     val theme = LocalThemeColors.current
     var isRevealed by remember { mutableStateOf(!account.hasEyeMask) }
     val scope = rememberCoroutineScope()
     val isLender = account.type == "LENDER"
 
     Card(
-        modifier = Modifier.width(200.dp).clip(RoundedCornerShape(16.dp)),
+        modifier = Modifier
+            .size(width = 210.dp, height = 145.dp)
+            .clip(RoundedCornerShape(18.dp)),
         colors = CardDefaults.cardColors(containerColor = theme.surface)
     ) {
-        Column(Modifier.padding(14.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(account.name, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1)
+        Column(
+            modifier = Modifier.fillMaxSize().padding(14.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(account.name, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, modifier = Modifier.weight(1f))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(if (isLender) "LENDER" else "BORROWER", color = if (isLender) theme.mildRed else theme.mildGreen, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                     IconButton(onClick = onEdit, modifier = Modifier.size(24.dp)) {
-                        Icon(Icons.Outlined.Edit, contentDescription = null, tint = theme.textMuted, modifier = Modifier.size(14.dp))
+                        Icon(Icons.Outlined.Edit, contentDescription = null, tint = theme.textMuted, modifier = Modifier.size(13.dp))
                     }
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
+            Column {
+                Text(
+                    text = if (isRevealed) "₹ ${String.format("%,.0f", account.balance)}" else "₹ ••••••",
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = if (isLender) theme.mildRed else theme.mildGreen
+                )
+                val dateStr = if (account.dueDate > 0L) SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(account.dueDate)) else "No due date"
+                Text("Due: $dateStr", color = theme.textMuted, fontSize = 10.sp)
+            }
 
-            Text(
-                text = if (isRevealed) "₹ ${String.format("%,.0f", account.balance)}" else "₹ ••••••",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = if (isLender) theme.mildRed else theme.mildGreen
-            )
-
-            val dateStr = if (account.dueDate > 0L) SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(account.dueDate)) else "No date"
-            Text("Due: $dateStr", color = theme.textMuted, fontSize = 10.sp)
-
-            Spacer(Modifier.height(10.dp))
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 if (account.hasEyeMask) {
                     IconButton(
                         onClick = {
@@ -838,10 +1054,50 @@ fun InteractivePartyCard(account: Account, onEdit: () -> Unit, onQuickAction: (S
                         .clip(RoundedCornerShape(6.dp))
                         .background(if (isLender) theme.mildRed else theme.mildGreen)
                         .clickable { onQuickAction(if (isLender) "REPAY" else "COLLECT") }
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .padding(horizontal = 9.dp, vertical = 4.dp)
                 ) {
                     Text(if (isLender) "Repay" else "Collect", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
+            }
+        }
+    }
+}
+
+// ---------------- ACTIVE RECURRING RIBBON ITEM ----------------
+
+@Composable
+fun RecurringRibbonItem(
+    title: String,
+    subtitle: String,
+    amount: Double,
+    isPositive: Boolean,
+    onEdit: () -> Unit
+) {
+    val theme = LocalThemeColors.current
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(theme.surface)
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
+            Text(subtitle, color = theme.textMuted, fontSize = 11.sp)
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                "${if (isPositive) "+" else "-"} ₹ ${String.format("%.0f", amount)}",
+                color = if (isPositive) theme.mildGreen else theme.mildRed,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp
+            )
+            IconButton(onClick = onEdit, modifier = Modifier.size(26.dp)) {
+                Icon(Icons.Outlined.Edit, contentDescription = null, tint = theme.textMuted, modifier = Modifier.size(14.dp))
             }
         }
     }
@@ -1035,7 +1291,6 @@ fun SettingsTabScreen(
 
                     Divider(color = theme.surfaceAlt)
 
-                    // Set / Change App PIN
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1043,7 +1298,7 @@ fun SettingsTabScreen(
                     ) {
                         Column {
                             Text("Security PIN", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("Configured for data wipe verification", color = theme.textMuted, fontSize = 12.sp)
+                            Text("Required to wipe all ledger data", color = theme.textMuted, fontSize = 12.sp)
                         }
                         Button(
                             onClick = { showSetPinDialog = true },
@@ -1072,7 +1327,7 @@ fun SettingsTabScreen(
     if (showPinVerifyDialog) {
         ThemePinPadDialog(
             title = "Verify Security PIN",
-            subtitle = "Enter your 4-digit PIN to authorize ledger wipe.",
+            subtitle = "Enter your 4-digit PIN to authorize ledger reset.",
             expectedPin = savedPin,
             onDismiss = { showPinVerifyDialog = false },
             onSuccess = {
@@ -1094,250 +1349,632 @@ fun SettingsTabScreen(
     }
 }
 
-// ---------------- THEME-ALIGNED PIN PAD MODAL ----------------
+// ---------------- ALL TRANSACTIONS INSTANT SEARCH SHEET ----------------
 
 @Composable
-fun ThemePinPadDialog(
-    title: String,
-    subtitle: String,
-    expectedPin: String,
-    onDismiss: () -> Unit,
-    onSuccess: () -> Unit
+fun AllTransactionsSearchSheet(
+    transactions: List<Transaction>,
+    onDismiss: () -> Unit
 ) {
     val theme = LocalThemeColors.current
-    var enteredPin by remember { mutableStateOf("") }
-    var isError by remember { mutableStateOf(false) }
+    var query by remember { mutableStateOf("") }
+    var selectedFilter by remember { mutableStateOf("ALL") }
+
+    val filteredList = remember(query, selectedFilter, transactions) {
+        transactions.filter { tx ->
+            val matchesFilter = when (selectedFilter) {
+                "IN" -> tx.flowType in listOf("IN", "COLLECT")
+                "OUT" -> tx.flowType in listOf("OUT", "REPAY")
+                "B/L" -> tx.flowType in listOf("BORROW", "LEND", "REPAY", "COLLECT")
+                else -> true
+            }
+
+            val q = query.trim().lowercase()
+            val matchesQuery = if (q.isEmpty()) {
+                true
+            } else {
+                tx.note.lowercase().contains(q) ||
+                        tx.category.lowercase().contains(q) ||
+                        tx.partyName.lowercase().contains(q) ||
+                        tx.channelAccountName.lowercase().contains(q) ||
+                        tx.amount.toString().contains(q)
+            }
+
+            matchesFilter && matchesQuery
+        }
+    }
 
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             shape = RoundedCornerShape(20.dp),
-            color = theme.surface,
-            modifier = Modifier.fillMaxWidth().padding(10.dp)
+            color = theme.bg,
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.92f)
         ) {
             Column(
-                modifier = Modifier.padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                modifier = Modifier.fillMaxSize().padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(title, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                Text(subtitle, color = theme.textMuted, fontSize = 12.sp, textAlign = TextAlign.Center)
-
-                // 4-Dot Display
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    for (i in 0 until 4) {
-                        val isFilled = i < enteredPin.length
-                        Box(
-                            modifier = Modifier
-                                .size(16.dp)
-                                .clip(CircleShape)
-                                .background(
-                                    when {
-                                        isError -> theme.mildRed
-                                        isFilled -> theme.accent
-                                        else -> theme.surfaceAlt
-                                    }
-                                )
-                        )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("All Ledger Records (${filteredList.size})", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Close", tint = theme.textMuted)
                     }
                 }
 
-                if (isError) {
-                    Text("Incorrect PIN. Try again.", color = theme.mildRed, fontSize = 12.sp)
-                }
-
-                // 3x4 Keypad
-                val keypadKeys = listOf(
-                    listOf("1", "2", "3"),
-                    listOf("4", "5", "6"),
-                    listOf("7", "8", "9"),
-                    listOf("C", "0", "⌫")
+                // Instant Search Bar
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    placeholder = { Text("Search text, category, party, amount...", color = theme.textMuted, fontSize = 12.sp) },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp)) },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { query = "" }, modifier = Modifier.size(20.dp)) {
+                                Icon(Icons.Default.Clear, contentDescription = null, tint = theme.textMuted, modifier = Modifier.size(14.dp))
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = theme.textBright,
+                        unfocusedTextColor = theme.textBright,
+                        focusedBorderColor = theme.accent,
+                        unfocusedBorderColor = theme.surfaceAlt
+                    ),
+                    modifier = Modifier.fillMaxWidth()
                 )
 
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    keypadKeys.forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                            row.forEach { key ->
-                                Box(
-                                    modifier = Modifier
-                                        .size(60.dp)
-                                        .clip(CircleShape)
-                                        .background(theme.surfaceAlt)
-                                        .clickable {
-                                            when (key) {
-                                                "C" -> {
-                                                    enteredPin = ""
-                                                    isError = false
-                                                }
-                                                "⌫" -> {
-                                                    if (enteredPin.isNotEmpty()) enteredPin = enteredPin.dropLast(1)
-                                                    isError = false
-                                                }
-                                                else -> {
-                                                    if (enteredPin.length < 4) {
-                                                        enteredPin += key
-                                                        isError = false
-                                                        if (enteredPin.length == 4) {
-                                                            if (enteredPin == expectedPin) {
-                                                                onSuccess()
-                                                            } else {
-                                                                isError = true
-                                                                enteredPin = ""
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(key, color = theme.textBright, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
+                // Quick Filter Chips
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("ALL", "IN", "OUT", "B/L").forEach { f ->
+                        val isSel = selectedFilter == f
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isSel) theme.accent else theme.surfaceAlt)
+                                .clickable { selectedFilter = f }
+                                .padding(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Text(f, color = if (isSel) theme.bg else theme.textMuted, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                         }
                     }
                 }
 
-                TextButton(onClick = onDismiss) {
-                    Text("Cancel", color = theme.textMuted, fontSize = 13.sp)
+                // High Density Result List
+                if (filteredList.isEmpty()) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text("No matching ledger transactions found.", color = theme.textMuted, fontSize = 13.sp)
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(filteredList) { tx ->
+                            SlimLedgerRow(tx = tx)
+                            Divider(color = theme.surfaceAlt.copy(alpha = 0.5f), thickness = 0.5.dp)
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-// ---------------- SET UP NEW PIN MODAL ----------------
-
-@Composable
-fun ThemeSetPinDialog(
-    onDismiss: () -> Unit,
-    onSavePin: (String) -> Unit
-) {
-    val theme = LocalThemeColors.current
-    var pinText by remember { mutableStateOf("") }
-
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = theme.surface,
-            modifier = Modifier.fillMaxWidth().padding(10.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Text("Set New PIN", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                Text("Enter a 4-digit security PIN for ledger actions.", color = theme.textMuted, fontSize = 12.sp)
-
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    for (i in 0 until 4) {
-                        val isFilled = i < pinText.length
-                        Box(
-                            modifier = Modifier
-                                .size(16.dp)
-                                .clip(CircleShape)
-                                .background(if (isFilled) theme.accent else theme.surfaceAlt)
-                        )
-                    }
-                }
-
-                val keypadKeys = listOf(
-                    listOf("1", "2", "3"),
-                    listOf("4", "5", "6"),
-                    listOf("7", "8", "9"),
-                    listOf("C", "0", "⌫")
-                )
-
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    keypadKeys.forEach { row ->
-                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                            row.forEach { key ->
-                                Box(
-                                    modifier = Modifier
-                                        .size(60.dp)
-                                        .clip(CircleShape)
-                                        .background(theme.surfaceAlt)
-                                        .clickable {
-                                            when (key) {
-                                                "C" -> pinText = ""
-                                                "⌫" -> if (pinText.isNotEmpty()) pinText = pinText.dropLast(1)
-                                                else -> {
-                                                    if (pinText.length < 4) {
-                                                        pinText += key
-                                                        if (pinText.length == 4) {
-                                                            onSavePin(pinText)
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(key, color = theme.textBright, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                TextButton(onClick = onDismiss) {
-                    Text("Cancel", color = theme.textMuted, fontSize = 13.sp)
-                }
-            }
-        }
-    }
-}
-
-// ---------------- THEME-ALIGNED COMPOSE DATE PICKER ----------------
+// ---------------- CREATE ACCOUNT CARD POPUP (DOUBLE ENTRY TETHERED) ----------------
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ThemedDatePickerDialog(
-    initialDateMillis: Long,
+fun CreateAccountCardDialog(
+    availableSourceAccounts: List<Account>,
     onDismiss: () -> Unit,
-    onDateSelected: (Long) -> Unit
+    onSave: (Account, Long, Long, String) -> Unit
 ) {
     val theme = LocalThemeColors.current
-    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialDateMillis)
 
-    DatePickerDialog(
+    var selectedType by remember { mutableStateOf("CASH") }
+    var name by remember { mutableStateOf("") }
+    var amount by remember { mutableStateOf("") }
+    var totalLimit by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf("") }
+    var hasEyeMask by remember { mutableStateOf(true) }
+
+    var repaymentType by remember { mutableStateOf("BULLET") }
+    var frequency by remember { mutableStateOf("MONTHLY") }
+    var installmentCount by remember { mutableStateOf("12") }
+
+    var selectedSourceAccId by remember { mutableStateOf(availableSourceAccounts.firstOrNull()?.id ?: 0L) }
+    var sourceAccExpanded by remember { mutableStateOf(false) }
+
+    var creationDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    var dueDateMillis by remember { mutableStateOf(System.currentTimeMillis() + (30 * 24 * 60 * 60 * 1000L)) }
+
+    var showCreationDatePicker by remember { mutableStateOf(false) }
+    var showDueDatePicker by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        containerColor = theme.surface,
+        titleContentColor = theme.textBright,
         onDismissRequest = onDismiss,
+        title = { Text("Create Account Card", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf("CASH", "BANK", "CREDIT", "LENDER", "BORROWER").forEach { t ->
+                        val isSel = selectedType == t
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSel) theme.accent else theme.surfaceAlt)
+                                .clickable { selectedType = t }
+                                .padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(t, color = if (isSel) theme.bg else theme.textBright, fontSize = 8.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text(when (selectedType) {
+                        "CASH" -> "Wallet Name"
+                        "BANK" -> "Bank Name"
+                        "CREDIT" -> "Card Name"
+                        "LENDER" -> "Lender Name"
+                        else -> "Borrower Name"
+                    }, color = theme.textMuted) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = { amount = it },
+                    label = { Text(when (selectedType) {
+                        "CREDIT" -> "Available Limit (₹)"
+                        "LENDER" -> "Borrowed Principal (₹)"
+                        "BORROWER" -> "Lent Principal (₹)"
+                        else -> "Initial Balance (₹)"
+                    }, color = theme.textMuted) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (selectedType == "CREDIT") {
+                    OutlinedTextField(
+                        value = totalLimit,
+                        onValueChange = { totalLimit = it },
+                        label = { Text("Total Credit Limit (₹)", color = theme.textMuted) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                // Channel Account: Where did money enter or exit from?
+                if (selectedType in listOf("LENDER", "BORROWER") && availableSourceAccounts.isNotEmpty()) {
+                    val activeSource = availableSourceAccounts.firstOrNull { it.id == selectedSourceAccId }?.name ?: "Select Funding Account"
+                    ExposedDropdownMenuBox(
+                        expanded = sourceAccExpanded,
+                        onExpandedChange = { sourceAccExpanded = !sourceAccExpanded },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        OutlinedTextField(
+                            value = activeSource,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text(if (selectedType == "LENDER") "Receive Loan In" else "Give Loan From", color = theme.textMuted) },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = sourceAccExpanded) },
+                            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
+                            modifier = Modifier.menuAnchor().fillMaxWidth()
+                        )
+                        ExposedDropdownMenu(
+                            expanded = sourceAccExpanded,
+                            onDismissRequest = { sourceAccExpanded = false },
+                            modifier = Modifier.background(theme.surface)
+                        ) {
+                            availableSourceAccounts.forEach { acc ->
+                                DropdownMenuItem(
+                                    text = { Text("${acc.name} (Bal: ₹${acc.balance.toInt()})", color = theme.textBright) },
+                                    onClick = {
+                                        selectedSourceAccId = acc.id
+                                        sourceAccExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                val cDateStr = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(creationDateMillis))
+                OutlinedButton(
+                    onClick = { showCreationDatePicker = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textBright)
+                ) {
+                    Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Date: $cDateStr", fontSize = 12.sp)
+                }
+
+                if (selectedType in listOf("CREDIT", "LENDER", "BORROWER")) {
+                    val dDateStr = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(dueDateMillis))
+                    OutlinedButton(
+                        onClick = { showDueDatePicker = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textBright)
+                    ) {
+                        Icon(Icons.Default.Event, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Due Date: $dDateStr", fontSize = 12.sp)
+                    }
+                }
+
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text("Note / Memo (Optional)", color = theme.textMuted) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Mask balance with eye toggle?", color = theme.textBright, fontSize = 12.sp)
+                    Switch(
+                        checked = hasEyeMask,
+                        onCheckedChange = { hasEyeMask = it },
+                        colors = SwitchDefaults.colors(checkedThumbColor = theme.accent, checkedTrackColor = theme.surfaceAlt)
+                    )
+                }
+            }
+        },
         confirmButton = {
             Button(
                 onClick = {
-                    datePickerState.selectedDateMillis?.let { onDateSelected(it) }
-                    onDismiss()
+                    val bal = amount.toDoubleOrNull() ?: 0.0
+                    val totLim = totalLimit.toDoubleOrNull() ?: bal
+                    if (name.isNotBlank()) {
+                        onSave(
+                            Account(
+                                name = name,
+                                balance = bal,
+                                totalLimit = totLim,
+                                type = selectedType,
+                                hasEyeMask = hasEyeMask,
+                                dueDate = dueDateMillis,
+                                repaymentType = repaymentType,
+                                frequency = frequency,
+                                installmentCount = installmentCount.toIntOrNull() ?: 1,
+                                originalAmount = bal
+                            ),
+                            selectedSourceAccId,
+                            creationDateMillis,
+                            note
+                        )
+                    }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
             ) {
-                Text("Select", color = theme.bg, fontWeight = FontWeight.Bold)
+                Text("Create Card", color = theme.bg, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel", color = theme.textMuted)
+            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
+        }
+    )
+
+    if (showCreationDatePicker) {
+        ThemedDatePickerDialog(
+            initialDateMillis = creationDateMillis,
+            onDismiss = { showCreationDatePicker = false },
+            onDateSelected = { creationDateMillis = it }
+        )
+    }
+
+    if (showDueDatePicker) {
+        ThemedDatePickerDialog(
+            initialDateMillis = dueDateMillis,
+            onDismiss = { showDueDatePicker = false },
+            onDateSelected = { dueDateMillis = it }
+        )
+    }
+}
+
+// ---------------- QUICK ACTION MODAL (+ Add, Refill, Repay, Collect) ----------------
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun QuickActionDialog(
+    account: Account,
+    action: String,
+    availableFundingAccounts: List<Account>,
+    onDismiss: () -> Unit,
+    onConfirm: (Double, Long, Long, String) -> Unit
+) {
+    val theme = LocalThemeColors.current
+    var deltaAmount by remember { mutableStateOf("") }
+    var note by remember { mutableStateOf("") }
+    var actionDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    var showActionDatePicker by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf("") }
+
+    var selectedFundingAccId by remember { mutableStateOf(availableFundingAccounts.firstOrNull()?.id ?: 0L) }
+    var fundingExpanded by remember { mutableStateOf(false) }
+
+    val needsChannel = action in listOf("REFILL", "REPAY", "COLLECT")
+
+    val title = when (action) {
+        "ADD" -> "Add Balance to ${account.name}"
+        "REFILL" -> "Refill ${account.name} Limit"
+        "REPAY" -> "Repay ${account.name}"
+        else -> "Collect from ${account.name}"
+    }
+
+    AlertDialog(
+        containerColor = theme.surface,
+        titleContentColor = theme.textBright,
+        onDismissRequest = onDismiss,
+        title = { Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = deltaAmount,
+                    onValueChange = {
+                        deltaAmount = it
+                        errorMsg = ""
+                    },
+                    label = { Text("Amount (₹)", color = theme.textMuted) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // Funding / Destination Account selection
+                if (needsChannel && availableFundingAccounts.isNotEmpty()) {
+                    val activeFunding = availableFundingAccounts.firstOrNull { it.id == selectedFundingAccId }?.name ?: "Select Linked Account"
+                    ExposedDropdownMenuBox(
+                        expanded = fundingExpanded,
+                        onExpandedChange = { fundingExpanded = !fundingExpanded },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        OutlinedTextField(
+                            value = activeFunding,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text(if (action == "COLLECT") "Deposit Collected Into" else "Fund / Pay From", color = theme.textMuted) },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = fundingExpanded) },
+                            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
+                            modifier = Modifier.menuAnchor().fillMaxWidth()
+                        )
+                        ExposedDropdownMenu(
+                            expanded = fundingExpanded,
+                            onDismissRequest = { fundingExpanded = false },
+                            modifier = Modifier.background(theme.surface)
+                        ) {
+                            availableFundingAccounts.forEach { acc ->
+                                DropdownMenuItem(
+                                    text = { Text("${acc.name} (Bal: ₹${acc.balance.toInt()})", color = theme.textBright) },
+                                    onClick = {
+                                        selectedFundingAccId = acc.id
+                                        fundingExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(actionDateMillis))
+                OutlinedButton(
+                    onClick = { showActionDatePicker = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textBright)
+                ) {
+                    Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Date: $dateFormatted", fontSize = 12.sp)
+                }
+
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text("Note / Memo (Optional)", color = theme.textMuted) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (errorMsg.isNotEmpty()) {
+                    Text(errorMsg, color = theme.mildRed, fontSize = 11.sp)
+                }
             }
         },
-        colors = DatePickerDefaults.colors(containerColor = theme.surface)
-    ) {
-        DatePicker(
-            state = datePickerState,
-            colors = DatePickerDefaults.colors(
-                containerColor = theme.surface,
-                titleContentColor = theme.textBright,
-                headlineContentColor = theme.accent,
-                weekdayContentColor = theme.textMuted,
-                subheadContentColor = theme.textBright,
-                yearContentColor = theme.textBright,
-                currentYearContentColor = theme.accent,
-                selectedYearContentColor = theme.bg,
-                selectedYearContainerColor = theme.accent,
-                dayContentColor = theme.textBright,
-                selectedDayContentColor = theme.bg,
-                selectedDayContainerColor = theme.accent,
-                todayContentColor = theme.accent,
-                todayDateBorderColor = theme.accent
-            )
+        confirmButton = {
+            Button(
+                onClick = {
+                    val amt = deltaAmount.toDoubleOrNull() ?: 0.0
+                    if (amt <= 0.0) {
+                        errorMsg = "Enter a valid amount"
+                        return@Button
+                    }
+                    if (action == "REPAY" && amt > account.balance) {
+                        errorMsg = "Repayment cannot exceed balance of ₹${account.balance}"
+                        return@Button
+                    }
+                    if (action == "COLLECT" && amt > account.balance) {
+                        errorMsg = "Collection cannot exceed receivable of ₹${account.balance}"
+                        return@Button
+                    }
+                    if (action == "REFILL" && (account.balance + amt) > account.totalLimit) {
+                        errorMsg = "Available limit cannot exceed ₹${account.totalLimit}"
+                        return@Button
+                    }
+                    onConfirm(amt, selectedFundingAccId, actionDateMillis, note)
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
+            ) {
+                Text("Confirm", color = theme.bg, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
+        }
+    )
+
+    if (showActionDatePicker) {
+        ThemedDatePickerDialog(
+            initialDateMillis = actionDateMillis,
+            onDismiss = { showActionDatePicker = false },
+            onDateSelected = { actionDateMillis = it }
+        )
+    }
+}
+
+// ---------------- EDIT ACCOUNT MODAL (WITH FULL PARITY & ADJUSTMENT LOGGING) ----------------
+
+@Composable
+fun EditAccountCardDialog(
+    account: Account,
+    onDismiss: () -> Unit,
+    onSave: (Account, Double, String) -> Unit,
+    onDelete: () -> Unit
+) {
+    val theme = LocalThemeColors.current
+
+    var name by remember { mutableStateOf(account.name) }
+    var balance by remember { mutableStateOf(account.balance.toString()) }
+    var totalLimit by remember { mutableStateOf(account.totalLimit.toString()) }
+    var hasEyeMask by remember { mutableStateOf(account.hasEyeMask) }
+    var adjustmentNote by remember { mutableStateOf("") }
+
+    var dueDateMillis by remember { mutableStateOf(if (account.dueDate > 0L) account.dueDate else System.currentTimeMillis()) }
+    var showDueDatePicker by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        containerColor = theme.surface,
+        titleContentColor = theme.textBright,
+        onDismissRequest = onDismiss,
+        title = { Text("Edit ${account.name}", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Account Name", color = theme.textMuted) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                OutlinedTextField(
+                    value = balance,
+                    onValueChange = { balance = it },
+                    label = { Text(when (account.type) {
+                        "CREDIT" -> "Available Limit (₹)"
+                        "LENDER" -> "Current Outstanding (₹)"
+                        "BORROWER" -> "Current Receivable (₹)"
+                        else -> "Current Balance (₹)"
+                    }, color = theme.textMuted) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (account.type == "CREDIT") {
+                    OutlinedTextField(
+                        value = totalLimit,
+                        onValueChange = { totalLimit = it },
+                        label = { Text("Total Limit (₹)", color = theme.textMuted) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                if (account.type in listOf("CREDIT", "LENDER", "BORROWER")) {
+                    val dDateStr = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(dueDateMillis))
+                    OutlinedButton(
+                        onClick = { showDueDatePicker = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textBright)
+                    ) {
+                        Icon(Icons.Default.Event, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Due Date: $dDateStr", fontSize = 12.sp)
+                    }
+                }
+
+                val newBal = balance.toDoubleOrNull() ?: account.balance
+                if (newBal != account.balance) {
+                    OutlinedTextField(
+                        value = adjustmentNote,
+                        onValueChange = { adjustmentNote = it },
+                        label = { Text("Reason for balance change (Optional)", color = theme.textMuted) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Mask balance with eye toggle?", color = theme.textBright, fontSize = 12.sp)
+                    Switch(
+                        checked = hasEyeMask,
+                        onCheckedChange = { hasEyeMask = it },
+                        colors = SwitchDefaults.colors(checkedThumbColor = theme.accent, checkedTrackColor = theme.surfaceAlt)
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val bal = balance.toDoubleOrNull() ?: account.balance
+                    val totLim = totalLimit.toDoubleOrNull() ?: account.totalLimit
+                    val diff = bal - account.balance
+                    onSave(
+                        account.copy(name = name, balance = bal, totalLimit = totLim, dueDate = dueDateMillis, hasEyeMask = hasEyeMask),
+                        diff,
+                        adjustmentNote
+                    )
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
+            ) {
+                Text("Save Changes", color = theme.bg, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onDelete) { Text("Delete", color = theme.mildRed) }
+                TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
+            }
+        }
+    )
+
+    if (showDueDatePicker) {
+        ThemedDatePickerDialog(
+            initialDateMillis = dueDateMillis,
+            onDismiss = { showDueDatePicker = false },
+            onDateSelected = { dueDateMillis = it }
         )
     }
 }
@@ -1358,7 +1995,7 @@ fun MainLedgerTransactionDialog(
     var amount by remember { mutableStateOf(if (prefilled != null && prefilled.amount > 0) prefilled.amount.toString() else "") }
     var note by remember { mutableStateOf(prefilled?.note ?: "") }
     var selectedDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
-    var showThemedDatePicker by remember { mutableStateOf(false) }
+    var showDatePicker by remember { mutableStateOf(false) }
 
     val inCategories = listOf("Salary", "Freelance", "Capital Gain", "Gift", "Interest", "Other")
     val outCategories = listOf("Food", "Groceries", "Transport", "Shopping", "Bills", "Health", "Fuel", "Other")
@@ -1372,12 +2009,16 @@ fun MainLedgerTransactionDialog(
 
     var isRecurring by remember { mutableStateOf(false) }
     var recurringFrequency by remember { mutableStateOf("MONTHLY") }
+    var freqExpanded by remember { mutableStateOf(false) }
+    var hasEndDate by remember { mutableStateOf(false) }
+    var recurringEndDateMillis by remember { mutableStateOf(System.currentTimeMillis() + (180 * 24 * 60 * 60 * 1000L)) }
+    var showEndDatePicker by remember { mutableStateOf(false) }
 
     AlertDialog(
         containerColor = theme.surface,
         titleContentColor = theme.textBright,
         onDismissRequest = onDismiss,
-        title = { Text("Record Entry", fontWeight = FontWeight.Bold) },
+        title = { Text("Record Cash Flow Entry", fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1414,14 +2055,14 @@ fun MainLedgerTransactionDialog(
 
                 val dateFormatted = SimpleDateFormat("EEE, dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateMillis))
                 OutlinedButton(
-                    onClick = { showThemedDatePicker = true },
+                    onClick = { showDatePicker = true },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textBright)
                 ) {
                     Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Date: $dateFormatted", fontSize = 13.sp)
+                    Text("Date: $dateFormatted", fontSize = 12.sp)
                 }
 
                 OutlinedTextField(
@@ -1504,12 +2145,68 @@ fun MainLedgerTransactionDialog(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Recurring Entry?", color = theme.textBright, fontSize = 13.sp)
+                    Text("Recurring Entry?", color = theme.textBright, fontSize = 12.sp)
                     Switch(
                         checked = isRecurring,
                         onCheckedChange = { isRecurring = it },
                         colors = SwitchDefaults.colors(checkedThumbColor = theme.accent, checkedTrackColor = theme.surfaceAlt)
                     )
+                }
+
+                AnimatedVisibility(visible = isRecurring) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ExposedDropdownMenuBox(
+                            expanded = freqExpanded,
+                            onExpandedChange = { freqExpanded = !freqExpanded },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            OutlinedTextField(
+                                value = recurringFrequency,
+                                onValueChange = {},
+                                readOnly = true,
+                                label = { Text("Repeat Frequency", color = theme.textMuted) },
+                                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = freqExpanded) },
+                                colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
+                                modifier = Modifier.menuAnchor().fillMaxWidth()
+                            )
+                            ExposedDropdownMenu(
+                                expanded = freqExpanded,
+                                onDismissRequest = { freqExpanded = false },
+                                modifier = Modifier.background(theme.surface)
+                            ) {
+                                listOf("DAILY", "WEEKLY", "MONTHLY", "YEARLY").forEach { f ->
+                                    DropdownMenuItem(text = { Text(f, color = theme.textBright) }, onClick = { recurringFrequency = f; freqExpanded = false })
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Set End / Till Date?", color = theme.textMuted, fontSize = 11.sp)
+                            Switch(
+                                checked = hasEndDate,
+                                onCheckedChange = { hasEndDate = it },
+                                colors = SwitchDefaults.colors(checkedThumbColor = theme.accent, checkedTrackColor = theme.surfaceAlt)
+                            )
+                        }
+
+                        if (hasEndDate) {
+                            val endFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(recurringEndDateMillis))
+                            OutlinedButton(
+                                onClick = { showEndDatePicker = true },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textBright)
+                            ) {
+                                Icon(Icons.Default.Event, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Ends on: $endFormatted", fontSize = 12.sp)
+                            }
+                        }
+                    }
                 }
             }
         },
@@ -1528,7 +2225,8 @@ fun MainLedgerTransactionDialog(
                                 timestamp = selectedDateMillis,
                                 note = note,
                                 isRecurring = isRecurring,
-                                frequency = if (isRecurring) recurringFrequency else "NONE"
+                                frequency = if (isRecurring) recurringFrequency else "NONE",
+                                recurringEndDate = if (isRecurring && hasEndDate) recurringEndDateMillis else 0L
                             )
                         )
                     }
@@ -1543,256 +2241,21 @@ fun MainLedgerTransactionDialog(
         }
     )
 
-    if (showThemedDatePicker) {
+    if (showDatePicker) {
         ThemedDatePickerDialog(
             initialDateMillis = selectedDateMillis,
-            onDismiss = { showThemedDatePicker = false },
+            onDismiss = { showDatePicker = false },
             onDateSelected = { selectedDateMillis = it }
         )
     }
-}
 
-// ---------------- CREATE ACCOUNT CARD POPUP ----------------
-
-@Composable
-fun CreateAccountCardDialog(
-    onDismiss: () -> Unit,
-    onSave: (Account) -> Unit
-) {
-    val theme = LocalThemeColors.current
-
-    var selectedType by remember { mutableStateOf("CASH") }
-    var name by remember { mutableStateOf("") }
-    var amount by remember { mutableStateOf("") }
-    var totalLimit by remember { mutableStateOf("") }
-    var hasEyeMask by remember { mutableStateOf(true) }
-    var repaymentType by remember { mutableStateOf("BULLET") }
-    var frequency by remember { mutableStateOf("MONTHLY") }
-    var installmentCount by remember { mutableStateOf("12") }
-
-    var dueDateMillis by remember { mutableStateOf(System.currentTimeMillis() + (30 * 24 * 60 * 60 * 1000L)) }
-    var showThemedDueDatePicker by remember { mutableStateOf(false) }
-
-    AlertDialog(
-        containerColor = theme.surface,
-        titleContentColor = theme.textBright,
-        onDismissRequest = onDismiss,
-        title = { Text("New Account Card", fontWeight = FontWeight.Bold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf("CASH", "BANK", "CREDIT", "LENDER", "BORROWER").forEach { t ->
-                        val isSel = selectedType == t
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (isSel) theme.accent else theme.surfaceAlt)
-                                .clickable { selectedType = t }
-                                .padding(vertical = 6.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(t, color = if (isSel) theme.bg else theme.textBright, fontSize = 8.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text(when (selectedType) {
-                        "CASH" -> "Wallet Name"
-                        "BANK" -> "Bank Name"
-                        "CREDIT" -> "Card Name"
-                        "LENDER" -> "Lender Name"
-                        else -> "Borrower Name"
-                    }, color = theme.textMuted) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                OutlinedTextField(
-                    value = amount,
-                    onValueChange = { amount = it },
-                    label = { Text(when (selectedType) {
-                        "CREDIT" -> "Available Limit (₹)"
-                        "LENDER" -> "Borrowed Amount (₹)"
-                        "BORROWER" -> "Lent Amount (₹)"
-                        else -> "Starting Balance (₹)"
-                    }, color = theme.textMuted) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                    modifier = Modifier.fillMaxWidth()
-                )
-
-                if (selectedType == "CREDIT") {
-                    OutlinedTextField(
-                        value = totalLimit,
-                        onValueChange = { totalLimit = it },
-                        label = { Text("Total Limit (₹)", color = theme.textMuted) },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-
-                if (selectedType in listOf("CREDIT", "LENDER", "BORROWER")) {
-                    val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(dueDateMillis))
-                    OutlinedButton(
-                        onClick = { showThemedDueDatePicker = true },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textBright)
-                    ) {
-                        Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Due Date: $dateFormatted", fontSize = 12.sp)
-                    }
-                }
-
-                if (selectedType in listOf("LENDER", "BORROWER")) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("BULLET", "INSTALLMENTS").forEach { rType ->
-                            val isSel = repaymentType == rType
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isSel) theme.accent else theme.surfaceAlt)
-                                    .clickable { repaymentType = rType }
-                                    .padding(vertical = 6.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(rType, color = if (isSel) theme.bg else theme.textBright, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Mask balance with eye toggle?", color = theme.textBright, fontSize = 12.sp)
-                    Switch(
-                        checked = hasEyeMask,
-                        onCheckedChange = { hasEyeMask = it },
-                        colors = SwitchDefaults.colors(checkedThumbColor = theme.accent, checkedTrackColor = theme.surfaceAlt)
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val bal = amount.toDoubleOrNull() ?: 0.0
-                    val totLim = totalLimit.toDoubleOrNull() ?: bal
-                    if (name.isNotBlank()) {
-                        onSave(
-                            Account(
-                                name = name,
-                                balance = bal,
-                                totalLimit = totLim,
-                                type = selectedType,
-                                hasEyeMask = hasEyeMask,
-                                dueDate = dueDateMillis,
-                                repaymentType = repaymentType,
-                                frequency = frequency,
-                                installmentCount = installmentCount.toIntOrNull() ?: 1
-                            )
-                        )
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-            ) {
-                Text("Create Card", color = theme.bg, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
-        }
-    )
-
-    if (showThemedDueDatePicker) {
+    if (showEndDatePicker) {
         ThemedDatePickerDialog(
-            initialDateMillis = dueDateMillis,
-            onDismiss = { showThemedDueDatePicker = false },
-            onDateSelected = { dueDateMillis = it }
+            initialDateMillis = recurringEndDateMillis,
+            onDismiss = { showEndDatePicker = false },
+            onDateSelected = { recurringEndDateMillis = it }
         )
     }
-}
-
-// ---------------- QUICK ACTION MODAL ----------------
-
-@Composable
-fun QuickActionDialog(account: Account, action: String, onDismiss: () -> Unit, onConfirm: (Double) -> Unit) {
-    val theme = LocalThemeColors.current
-    var deltaAmount by remember { mutableStateOf("") }
-    var errorMsg by remember { mutableStateOf("") }
-
-    val title = when (action) {
-        "ADD" -> "Add Balance to ${account.name}"
-        "REFILL" -> "Refill ${account.name} Limit"
-        "REPAY" -> "Repay ${account.name}"
-        else -> "Collect from ${account.name}"
-    }
-
-    AlertDialog(
-        containerColor = theme.surface,
-        titleContentColor = theme.textBright,
-        onDismissRequest = onDismiss,
-        title = { Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = deltaAmount,
-                    onValueChange = {
-                        deltaAmount = it
-                        errorMsg = ""
-                    },
-                    label = { Text("Amount (₹)", color = theme.textMuted) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                if (errorMsg.isNotEmpty()) {
-                    Text(errorMsg, color = theme.mildRed, fontSize = 11.sp)
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val amt = deltaAmount.toDoubleOrNull() ?: 0.0
-                    if (amt <= 0.0) {
-                        errorMsg = "Enter a valid amount"
-                        return@Button
-                    }
-                    if (action == "REPAY" && amt > account.balance) {
-                        errorMsg = "Repayment cannot exceed outstanding of ₹${account.balance}"
-                        return@Button
-                    }
-                    if (action == "COLLECT" && amt > account.balance) {
-                        errorMsg = "Collection cannot exceed receivable of ₹${account.balance}"
-                        return@Button
-                    }
-                    if (action == "REFILL" && (account.balance + amt) > account.totalLimit) {
-                        errorMsg = "Available limit cannot exceed total limit of ₹${account.totalLimit}"
-                        return@Button
-                    }
-                    onConfirm(amt)
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-            ) {
-                Text("Confirm", color = theme.bg, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
-        }
-    )
 }
 
 // ---------------- INTRA-ACCOUNT TRANSFER MODAL ----------------
@@ -1802,12 +2265,14 @@ fun QuickActionDialog(account: Account, action: String, onDismiss: () -> Unit, o
 fun IntraAccountTransferDialog(
     accounts: List<Account>,
     onDismiss: () -> Unit,
-    onTransfer: (Account, Account, Double) -> Unit
+    onTransfer: (Account, Account, Double, Long) -> Unit
 ) {
     val theme = LocalThemeColors.current
     var fromAccId by remember { mutableStateOf(accounts.firstOrNull()?.id ?: 0L) }
     var toAccId by remember { mutableStateOf(accounts.getOrNull(1)?.id ?: accounts.firstOrNull()?.id ?: 0L) }
     var amount by remember { mutableStateOf("") }
+    var transferDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    var showTransferDatePicker by remember { mutableStateOf(false) }
 
     var fromExpanded by remember { mutableStateOf(false) }
     var toExpanded by remember { mutableStateOf(false) }
@@ -1847,6 +2312,18 @@ fun IntraAccountTransferDialog(
                     colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
                     modifier = Modifier.fillMaxWidth()
                 )
+
+                val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(transferDateMillis))
+                OutlinedButton(
+                    onClick = { showTransferDatePicker = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textBright)
+                ) {
+                    Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Date: $dateFormatted", fontSize = 12.sp)
+                }
             }
         },
         confirmButton = {
@@ -1856,7 +2333,7 @@ fun IntraAccountTransferDialog(
                     val fAcc = accounts.firstOrNull { it.id == fromAccId }
                     val tAcc = accounts.firstOrNull { it.id == toAccId }
                     if (amt > 0.0 && fAcc != null && tAcc != null && fAcc.id != tAcc.id) {
-                        onTransfer(fAcc, tAcc, amt)
+                        onTransfer(fAcc, tAcc, amt, transferDateMillis)
                     }
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
@@ -1868,119 +2345,196 @@ fun IntraAccountTransferDialog(
             TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
         }
     )
+
+    if (showTransferDatePicker) {
+        ThemedDatePickerDialog(
+            initialDateMillis = transferDateMillis,
+            onDismiss = { showTransferDatePicker = false },
+            onDateSelected = { transferDateMillis = it }
+        )
+    }
 }
 
-// ---------------- EDIT ACCOUNT MODAL ----------------
+// ---------------- THEMED DATE PICKER ----------------
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun EditAccountCardDialog(
-    account: Account,
+fun ThemedDatePickerDialog(
+    initialDateMillis: Long,
     onDismiss: () -> Unit,
-    onSave: (Account) -> Unit,
-    onDelete: () -> Unit
+    onDateSelected: (Long) -> Unit
 ) {
     val theme = LocalThemeColors.current
-    var name by remember { mutableStateOf(account.name) }
-    var balance by remember { mutableStateOf(account.balance.toString()) }
-    var hasEyeMask by remember { mutableStateOf(account.hasEyeMask) }
+    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialDateMillis)
 
-    AlertDialog(
-        containerColor = theme.surface,
-        titleContentColor = theme.textBright,
+    DatePickerDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Edit ${account.name}", fontWeight = FontWeight.Bold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Name", color = theme.textMuted) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                OutlinedTextField(
-                    value = balance,
-                    onValueChange = { balance = it },
-                    label = { Text("Current Amount (₹)", color = theme.textMuted) },
-                    singleLine = true,
-                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = theme.textBright, unfocusedTextColor = theme.textBright, focusedBorderColor = theme.accent, unfocusedBorderColor = theme.surfaceAlt),
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Eye mask toggle?", color = theme.textBright, fontSize = 12.sp)
-                    Switch(
-                        checked = hasEyeMask,
-                        onCheckedChange = { hasEyeMask = it },
-                        colors = SwitchDefaults.colors(checkedThumbColor = theme.accent, checkedTrackColor = theme.surfaceAlt)
-                    )
-                }
-            }
-        },
         confirmButton = {
             Button(
                 onClick = {
-                    val bal = balance.toDoubleOrNull() ?: account.balance
-                    onSave(account.copy(name = name, balance = bal, hasEyeMask = hasEyeMask))
+                    datePickerState.selectedDateMillis?.let { onDateSelected(it) }
+                    onDismiss()
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
             ) {
-                Text("Save", color = theme.bg, fontWeight = FontWeight.Bold)
+                Text("Select", color = theme.bg, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
-            Row {
-                TextButton(onClick = onDelete) { Text("Delete", color = theme.mildRed) }
-                TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
-            }
-        }
-    )
+            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
+        },
+        colors = DatePickerDefaults.colors(containerColor = theme.surface)
+    ) {
+        DatePicker(
+            state = datePickerState,
+            colors = DatePickerDefaults.colors(
+                containerColor = theme.surface,
+                titleContentColor = theme.textBright,
+                headlineContentColor = theme.accent,
+                weekdayContentColor = theme.textMuted,
+                subheadContentColor = theme.textBright,
+                yearContentColor = theme.textBright,
+                currentYearContentColor = theme.accent,
+                selectedYearContentColor = theme.bg,
+                selectedYearContainerColor = theme.accent,
+                dayContentColor = theme.textBright,
+                selectedDayContentColor = theme.bg,
+                selectedDayContainerColor = theme.accent,
+                todayContentColor = theme.accent,
+                todayDateBorderColor = theme.accent
+            )
+        )
+    }
 }
 
-// ---------------- B/L HISTORY MODAL ----------------
+// ---------------- THEMED PIN KEYPADS ----------------
 
 @Composable
-fun BorrowLendHistoryDialog(
-    transactions: List<Transaction>,
-    onDismiss: () -> Unit
-) {
+fun ThemePinPadDialog(title: String, subtitle: String, expectedPin: String, onDismiss: () -> Unit, onSuccess: () -> Unit) {
     val theme = LocalThemeColors.current
+    var enteredPin by remember { mutableStateOf("") }
+    var isError by remember { mutableStateOf(false) }
 
-    AlertDialog(
-        containerColor = theme.surface,
-        titleContentColor = theme.textBright,
-        onDismissRequest = onDismiss,
-        title = { Text("Borrow & Lend History", fontWeight = FontWeight.Bold) },
-        text = {
-            if (transactions.isEmpty()) {
-                Text("No recorded B/L transactions yet.", color = theme.textMuted, fontSize = 12.sp)
-            } else {
-                LazyColumn(modifier = Modifier.height(280.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(transactions) { tx ->
-                        val dStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(tx.timestamp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).padding(8.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text("${tx.flowType} • ${tx.partyName}", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                Text("$dStr • ${tx.note.ifBlank { "No notes" }}", color = theme.textMuted, fontSize = 10.sp)
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(20.dp), color = theme.surface, modifier = Modifier.fillMaxWidth().padding(10.dp)) {
+            Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text(title, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text(subtitle, color = theme.textMuted, fontSize = 12.sp, textAlign = TextAlign.Center)
+
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    for (i in 0 until 4) {
+                        val isFilled = i < enteredPin.length
+                        Box(
+                            modifier = Modifier.size(16.dp).clip(CircleShape).background(
+                                when {
+                                    isError -> theme.mildRed
+                                    isFilled -> theme.accent
+                                    else -> theme.surfaceAlt
+                                }
+                            )
+                        )
+                    }
+                }
+
+                if (isError) {
+                    Text("Incorrect PIN. Try again.", color = theme.mildRed, fontSize = 12.sp)
+                }
+
+                val keypadKeys = listOf(
+                    listOf("1", "2", "3"),
+                    listOf("4", "5", "6"),
+                    listOf("7", "8", "9"),
+                    listOf("C", "0", "⌫")
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    keypadKeys.forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            row.forEach { key ->
+                                Box(
+                                    modifier = Modifier.size(60.dp).clip(CircleShape).background(theme.surfaceAlt).clickable {
+                                        when (key) {
+                                            "C" -> { enteredPin = ""; isError = false }
+                                            "⌫" -> { if (enteredPin.isNotEmpty()) enteredPin = enteredPin.dropLast(1); isError = false }
+                                            else -> {
+                                                if (enteredPin.length < 4) {
+                                                    enteredPin += key
+                                                    isError = false
+                                                    if (enteredPin.length == 4) {
+                                                        if (enteredPin == expectedPin) onSuccess() else { isError = true; enteredPin = "" }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(key, color = theme.textBright, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
-                            Text("₹ ${String.format("%.0f", tx.amount)}", color = if (tx.flowType in listOf("LEND", "COLLECT")) theme.mildGreen else theme.mildRed, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                     }
                 }
-            }
-        },
-        confirmButton = {
-            Button(onClick = onDismiss, colors = ButtonDefaults.buttonColors(containerColor = theme.accent)) {
-                Text("Close", color = theme.bg, fontWeight = FontWeight.Bold)
+
+                TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted, fontSize = 13.sp) }
             }
         }
-    )
+    }
+}
+
+@Composable
+fun ThemeSetPinDialog(onDismiss: () -> Unit, onSavePin: (String) -> Unit) {
+    val theme = LocalThemeColors.current
+    var pinText by remember { mutableStateOf("") }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(shape = RoundedCornerShape(20.dp), color = theme.surface, modifier = Modifier.fillMaxWidth().padding(10.dp)) {
+            Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Text("Set New PIN", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text("Enter a 4-digit security PIN for ledger actions.", color = theme.textMuted, fontSize = 12.sp)
+
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                    for (i in 0 until 4) {
+                        val isFilled = i < pinText.length
+                        Box(modifier = Modifier.size(16.dp).clip(CircleShape).background(if (isFilled) theme.accent else theme.surfaceAlt))
+                    }
+                }
+
+                val keypadKeys = listOf(
+                    listOf("1", "2", "3"),
+                    listOf("4", "5", "6"),
+                    listOf("7", "8", "9"),
+                    listOf("C", "0", "⌫")
+                )
+
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    keypadKeys.forEach { row ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            row.forEach { key ->
+                                Box(
+                                    modifier = Modifier.size(60.dp).clip(CircleShape).background(theme.surfaceAlt).clickable {
+                                        when (key) {
+                                            "C" -> pinText = ""
+                                            "⌫" -> if (pinText.isNotEmpty()) pinText = pinText.dropLast(1)
+                                            else -> {
+                                                if (pinText.length < 4) {
+                                                    pinText += key
+                                                    if (pinText.length == 4) onSavePin(pinText)
+                                                }
+                                            }
+                                        }
+                                    },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(key, color = theme.textBright, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted, fontSize = 13.sp) }
+            }
+        }
+    }
 }
