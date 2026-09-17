@@ -3,6 +3,16 @@ package com.personal.inout.data
 import androidx.room.*
 import kotlinx.coroutines.flow.Flow
 
+data class TransactionDisplayRow(
+    val id: Long,
+    val timestamp: Long,
+    val description: String,
+    val amount: Double,
+    val categoryOrAccount: String,
+    val isRecurring: Boolean,
+    val recurringFrequency: String
+)
+
 @Dao
 interface LedgerDao {
 
@@ -54,11 +64,6 @@ interface LedgerDao {
         return txId
     }
 
-    /**
-     * Mathematical balance invariant:
-     * Assets & Expenses normally carry Debit balances: Balance = (Debits - Credits)
-     * Liabilities, Equity & Revenues carry Credit balances: Balance = (Credits - Debits)
-     */
     @Query("""
         SELECT 
             a.id AS accountId,
@@ -92,6 +97,23 @@ interface LedgerDao {
         ORDER BY t.timestamp DESC
     """)
     fun observeAllTransactions(): Flow<List<LedgerTransaction>>
+
+    @Query("""
+        SELECT 
+            t.id AS id,
+            t.timestamp AS timestamp,
+            t.description AS description,
+            e.amount AS amount,
+            a.name AS categoryOrAccount,
+            t.isRecurring AS isRecurring,
+            t.recurringFrequency AS recurringFrequency
+        FROM ledger_transactions t
+        JOIN ledger_entries e ON t.id = e.transactionId
+        JOIN ledger_accounts a ON e.accountId = a.id
+        WHERE e.direction = 'DEBIT'
+        ORDER BY t.timestamp DESC
+    """)
+    fun observeTransactionDisplayRows(): Flow<List<TransactionDisplayRow>>
 
     @Query("DELETE FROM ledger_transactions WHERE id = :txId")
     suspend fun deleteTransactionById(txId: Long)
