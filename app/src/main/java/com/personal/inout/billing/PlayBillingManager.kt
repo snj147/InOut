@@ -4,10 +4,8 @@ import android.app.Activity
 import android.content.Context
 import com.android.billingclient.api.*
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.launch
 
 class PlayBillingManager(
     private val context: Context,
@@ -17,10 +15,22 @@ class PlayBillingManager(
     private val prefs = context.getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE)
 
     private val _isProUnlocked = MutableStateFlow(
-        checkInitialTrialOrPro()
+        prefs.getBoolean("is_lifetime_pro_purchased", false)
     )
     val isProUnlocked: StateFlow<Boolean> = _isProUnlocked
 
+    // Local Test Simulation Methods
+    fun simulatePurchaseSuccess() {
+        prefs.edit().putBoolean("is_lifetime_pro_purchased", true).apply()
+        _isProUnlocked.value = true
+    }
+
+    fun simulateRevokePro() {
+        prefs.edit().putBoolean("is_lifetime_pro_purchased", false).apply()
+        _isProUnlocked.value = false
+    }
+
+    // Play Billing Client initialization (Safe even when offline or without Play Console)
     private var billingClient: BillingClient = BillingClient.newBuilder(context)
         .setListener(this)
         .enablePendingPurchases()
@@ -30,22 +40,6 @@ class PlayBillingManager(
 
     init {
         startConnection()
-    }
-
-    private fun checkInitialTrialOrPro(): Boolean {
-        // 1. Is permanently purchased?
-        if (prefs.getBoolean("is_lifetime_pro_purchased", false)) return true
-
-        // 2. 7-Day Free Trial check
-        val installTime = prefs.getLong("first_install_timestamp", 0L)
-        val now = System.currentTimeMillis()
-        if (installTime == 0L) {
-            prefs.edit().putLong("first_install_timestamp", now).apply()
-            return true
-        }
-
-        val sevenDaysMillis = 7L * 24 * 60 * 60 * 1000
-        return (now - installTime) < sevenDaysMillis
     }
 
     private fun startConnection() {
@@ -58,7 +52,7 @@ class PlayBillingManager(
             }
 
             override fun onBillingServiceDisconnected() {
-                // Retry connection on next launch
+                // Dormant until network or retry
             }
         })
     }
@@ -79,41 +73,28 @@ class PlayBillingManager(
     }
 
     fun launchBillingFlow(activity: Activity) {
-        val details = productDetails ?: return
-        val productDetailsParamsList = listOf(
-            BillingFlowParams.ProductDetailsParams.newBuilder()
-                .setProductDetails(details)
+        val details = productDetails
+        if (details != null) {
+            val productDetailsParamsList = listOf(
+                BillingFlowParams.ProductDetailsParams.newBuilder()
+                    .setProductDetails(details)
+                    .build()
+            )
+
+            val billingFlowParams = BillingFlowParams.newBuilder()
+                .setProductDetailsParamsList(productDetailsParamsList)
                 .build()
-        )
 
-        val billingFlowParams = BillingFlowParams.newBuilder()
-            .setProductDetailsParamsList(productDetailsParamsList)
-            .build()
-
-        billingClient.launchBillingFlow(activity, billingFlowParams)
+            billingClient.launchBillingFlow(activity, billingFlowParams)
+        }
     }
 
     override fun onPurchasesUpdated(billingResult: BillingResult, purchases: MutableList<Purchase>?) {
         if (billingResult.responseCode == BillingClient.BillingResponseCode.OK && purchases != null) {
             for (purchase in purchases) {
-                handlePurchase(purchase)
-            }
-        }
-    }
-
-    private fun handlePurchase(purchase: Purchase) {
-        if (purchase.purchaseState == Purchase.PurchaseState.PURCHASED) {
-            if (!purchase.isAcknowledged) {
-                val acknowledgePurchaseParams = AcknowledgePurchaseParams.newBuilder()
-                    .setPurchaseToken(purchase.purchaseToken)
-                    .build()
-                billingClient.acknowledgePurchase(acknowledgePurchaseParams) { result ->
-                    if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                        grantLifetimePro()
-                    }
+                if (purchase.purchaseState == Purchase.PurchaseState.PURCHASED) {
+                    simulatePurchaseSuccess()
                 }
-            } else {
-                grantLifetimePro()
             }
         }
     }
@@ -125,13 +106,8 @@ class PlayBillingManager(
 
         billingClient.queryPurchasesAsync(params) { _, purchases ->
             if (purchases.any { it.purchaseState == Purchase.PurchaseState.PURCHASED }) {
-                grantLifetimePro()
+                simulatePurchaseSuccess()
             }
         }
-    }
-
-    private fun grantLifetimePro() {
-        prefs.edit().putBoolean("is_lifetime_pro_purchased", true).apply()
-        _isProUnlocked.value = true
     }
 }
