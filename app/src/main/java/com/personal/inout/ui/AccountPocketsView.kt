@@ -1,11 +1,17 @@
 package com.personal.inout.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,7 +25,9 @@ import com.personal.inout.data.MovementNature
 import com.personal.inout.data.PocketBalanceSummary
 import com.personal.inout.data.PocketType
 import com.personal.inout.data.VaultPocket
+import kotlin.math.abs
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AccountPocketsView(
     pocketBalances: List<PocketBalanceSummary>,
@@ -38,12 +46,14 @@ fun AccountPocketsView(
 
     var settlingCard by remember { mutableStateOf<PocketBalanceSummary?>(null) }
     var peerModalTarget by remember { mutableStateOf<PocketBalanceSummary?>(null) }
+    var selectedPocketForMenu by remember { mutableStateOf<Pair<VaultPocket, Double>?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp)
     ) {
+        // Liquid Wallets
         item {
             PocketGroupHeader(title = "Liquid Reserves", count = liquidAccounts.size, theme = theme)
         }
@@ -54,12 +64,14 @@ fun AccountPocketsView(
                 isPrivacyMode = isPrivacyMode,
                 theme = theme,
                 onTap = { raw?.let { onEditPocket(it) } },
+                onLongClick = { raw?.let { selectedPocketForMenu = it to acc.currentBalance } },
                 actionLabel = "Edit",
                 actionColor = theme.accent,
                 onAction = { raw?.let { onEditPocket(it) } }
             )
         }
 
+        // Credit Cards
         item {
             PocketGroupHeader(title = "Credit Facilities", count = creditCards.size, theme = theme)
         }
@@ -74,12 +86,14 @@ fun AccountPocketsView(
                 isPrivacyMode = isPrivacyMode,
                 theme = theme,
                 onTap = { raw?.let { onEditPocket(it) } },
+                onLongClick = { raw?.let { selectedPocketForMenu = it to card.currentBalance } },
                 actionLabel = if (dues > 0) "Pay Bill" else "Cleared",
                 actionColor = if (dues > 0) theme.mildRed else theme.textMuted,
                 onAction = { if (dues > 0) settlingCard = card }
             )
         }
 
+        // Counterparties
         item {
             PocketGroupHeader(title = "Counterparties (Tethers)", count = counterparties.size, theme = theme)
         }
@@ -92,13 +106,14 @@ fun AccountPocketsView(
             GenericPocketRow(
                 summary = peer,
                 subLabel = when {
-                    isEven -> "Even • No dues"
+                    isEven -> "Even • Settled"
                     isOwedToYou -> "They owe you"
                     else -> "You owe them"
                 },
                 isPrivacyMode = isPrivacyMode,
                 theme = theme,
                 onTap = { raw?.let { onEditPocket(it) } },
+                onLongClick = { raw?.let { selectedPocketForMenu = it to peer.currentBalance } },
                 actionLabel = if (isEven) "Record" else if (isOwedToYou) "Collect" else "Settle",
                 actionColor = if (isEven) theme.accent else if (isOwedToYou) theme.mildGreen else theme.mildRed,
                 onAction = { peerModalTarget = peer }
@@ -106,6 +121,60 @@ fun AccountPocketsView(
         }
     }
 
+    // Long Press Context Menu
+    selectedPocketForMenu?.let { (pocket, balance) ->
+        AlertDialog(
+            containerColor = theme.surface,
+            onDismissRequest = { selectedPocketForMenu = null },
+            title = { Text(pocket.name, color = theme.textBright, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                selectedPocketForMenu = null
+                                onEditPocket(pocket)
+                            }
+                            .padding(vertical = 10.dp, horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(Icons.Default.Edit, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
+                        Text("Edit Pocket Details", color = theme.textBright, fontSize = 13.sp)
+                    }
+
+                    Divider(color = theme.surfaceAlt, thickness = 0.5.dp)
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                val target = pocket
+                                selectedPocketForMenu = null
+                                onDeletePocketSafe(target, balance)
+                            }
+                            .padding(vertical = 10.dp, horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null, tint = theme.mildRed, modifier = Modifier.size(18.dp))
+                        Text("Delete / Archive Pocket", color = theme.mildRed, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { selectedPocketForMenu = null }) {
+                    Text("Close", color = theme.textMuted)
+                }
+            }
+        )
+    }
+
+    // Capped Card Settlement Dialog
     settlingCard?.let { card ->
         CardPayDialog(
             card = card,
@@ -119,6 +188,7 @@ fun AccountPocketsView(
         )
     }
 
+    // Bilateral Counterparty Action Dialog
     peerModalTarget?.let { peer ->
         PeerActionDialog(
             peer = peer,
@@ -133,6 +203,7 @@ fun AccountPocketsView(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun GenericPocketRow(
     summary: PocketBalanceSummary,
@@ -140,6 +211,7 @@ private fun GenericPocketRow(
     isPrivacyMode: Boolean,
     theme: ThemeColors,
     onTap: () -> Unit,
+    onLongClick: () -> Unit,
     actionLabel: String,
     actionColor: Color,
     onAction: () -> Unit
@@ -148,7 +220,10 @@ private fun GenericPocketRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
-            .clickable { onTap() },
+            .combinedClickable(
+                onClick = onTap,
+                onLongClick = onLongClick
+            ),
         colors = CardDefaults.cardColors(containerColor = theme.surface)
     ) {
         Row(
@@ -162,7 +237,7 @@ private fun GenericPocketRow(
             }
 
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                val balanceText = if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", Math.abs(summary.currentBalance))}"
+                val balanceText = if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", abs(summary.currentBalance))}"
                 Text(
                     text = balanceText,
                     color = if (summary.currentBalance < 0 || summary.pocketType == PocketType.CREDIT_LINE) theme.mildRed else theme.textBright,
