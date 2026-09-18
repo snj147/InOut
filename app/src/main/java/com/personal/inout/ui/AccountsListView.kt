@@ -26,7 +26,6 @@ import androidx.compose.ui.unit.sp
 import com.personal.inout.data.AccountBalanceResult
 import com.personal.inout.data.AccountClassification
 import com.personal.inout.data.LedgerAccount
-import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -70,7 +69,6 @@ fun AccountsListView(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp)
     ) {
-        // Wallets & Banks
         item {
             AccountSectionHeader(
                 title = "Wallets & Bank Accounts",
@@ -101,7 +99,6 @@ fun AccountsListView(
             }
         }
 
-        // Credit Cards & Dues
         item {
             Spacer(Modifier.height(6.dp))
             AccountSectionHeader(
@@ -136,7 +133,6 @@ fun AccountsListView(
             }
         }
 
-        // People (Lent & Borrowed)
         item {
             Spacer(Modifier.height(6.dp))
             AccountSectionHeader(
@@ -220,7 +216,7 @@ private fun AccountVerticalRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .combinedClickable(
-                onClick = onAction,
+                onClick = { onEdit() },
                 onLongClick = { showActionMenu = true }
             ),
         colors = CardDefaults.cardColors(containerColor = theme.surface)
