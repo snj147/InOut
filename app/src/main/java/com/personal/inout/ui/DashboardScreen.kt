@@ -1,6 +1,15 @@
 package com.personal.inout.ui
 
+import android.Manifest
+import android.app.Activity
 import android.content.Context
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -19,8 +28,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.personal.inout.billing.PlayBillingManager
 import com.personal.inout.data.*
+import com.personal.inout.ocr.ReceiptScanner
+import com.personal.inout.util.CsvExporter
+import com.personal.inout.util.InAppUpdateHelper
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -30,7 +43,13 @@ import java.util.*
 fun DashboardScreen(db: AppDatabase) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val activity = context as? Activity
     val prefs = remember { context.getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE) }
+
+    // Trigger in-app update check on start
+    LaunchedEffect(Unit) {
+        activity?.let { InAppUpdateHelper.checkForUpdate(it) }
+    }
 
     val billingManager = remember { PlayBillingManager(context, scope) }
     val isProUnlocked by billingManager.isProUnlocked.collectAsState()
@@ -55,8 +74,52 @@ fun DashboardScreen(db: AppDatabase) {
     var showCommandHud by remember { mutableStateOf(false) }
     var editingPocket by remember { mutableStateOf<VaultPocket?>(null) }
     var showCreatePocketDialog by remember { mutableStateOf(false) }
+    var showAllRecordsSheet by remember { mutableStateOf(false) }
     var showMockPaywall by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // Prefill state for OCR
+    var ocrPrefilledNote by remember { mutableStateOf("") }
+    var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
+
+    // Camera & Gallery launchers
+    val cameraSnapLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap: Bitmap? ->
+        if (bitmap != null) {
+            scope.launch {
+                try {
+                    val parsed = ReceiptScanner.processReceiptBitmap(bitmap)
+                    ocrPrefilledNote = parsed.merchant
+                    ocrPrefilledAmount = parsed.total
+                    showCommandHud = true
+                } catch (e: Exception) {
+                    Toast.makeText(context, "OCR parse error: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            cameraSnapLauncher.launch(null)
+        } else {
+            Toast.makeText(context, "Camera permission needed for receipt OCR", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                try {
+                    val parsed = ReceiptScanner.processReceipt(context, uri)
+                    ocrPrefilledNote = parsed.merchant
+                    ocrPrefilledAmount = parsed.total
+                    showCommandHud = true
+                } catch (e: Exception) {
+                    Toast.makeText(context, "Receipt parse error: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
 
     CompositionLocalProvider(LocalThemeColors provides theme) {
         Scaffold(
@@ -108,7 +171,13 @@ fun DashboardScreen(db: AppDatabase) {
             floatingActionButton = {
                 FloatingActionButton(
                     onClick = {
-                        if (selectedTab == 1) showCreatePocketDialog = true else showCommandHud = true
+                        if (selectedTab == 1) {
+                            showCreatePocketDialog = true
+                        } else {
+                            ocrPrefilledNote = ""
+                            ocrPrefilledAmount = null
+                            showCommandHud = true
+                        }
                     },
                     containerColor = theme.accent,
                     contentColor = theme.bg,
@@ -129,8 +198,62 @@ fun DashboardScreen(db: AppDatabase) {
                         ) {
                             item { DynamicCockpit(pockets = pocketBalances, isPrivacyMode = isPrivacyMode) }
 
+                            // Receipt Scan Buttons
                             item {
-                                Text("Real-Time Flow Stream", color = theme.textBright, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                                                cameraSnapLauncher.launch(null)
+                                            } else {
+                                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f).height(40.dp),
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt)
+                                    ) {
+                                        Icon(Icons.Default.PhotoCamera, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Scan Receipt", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                        },
+                                        modifier = Modifier.weight(1f).height(40.dp),
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent)
+                                    ) {
+                                        Icon(Icons.Default.Image, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("From Gallery", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+
+                            // Flow Stream Header + View All
+                            item {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("Real-Time Flow Stream", color = theme.textBright, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
+                                    if (flowRecords.isNotEmpty()) {
+                                        Text(
+                                            "View All (${flowRecords.size}) →",
+                                            color = theme.accent,
+                                            fontSize = 11.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.clickable { showAllRecordsSheet = true }
+                                        )
+                                    }
+                                }
                             }
 
                             if (flowRecords.isEmpty()) {
@@ -146,7 +269,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
                             } else {
-                                items(flowRecords, key = { it.id }) { flow ->
+                                items(flowRecords.take(8), key = { it.id }) { flow ->
                                     FlowRecordDisplayRow(flow = flow, isPrivacyMode = isPrivacyMode, theme = theme)
                                     Divider(color = theme.surfaceAlt.copy(alpha = 0.5f), thickness = 0.5.dp)
                                 }
@@ -227,6 +350,8 @@ fun DashboardScreen(db: AppDatabase) {
             if (showCommandHud) {
                 FloatingCommandHud(
                     activePockets = rawPockets,
+                    prefilledNote = ocrPrefilledNote,
+                    prefilledAmount = ocrPrefilledAmount,
                     onDismiss = { showCommandHud = false },
                     onSubmit = { nature, srcId, tgtId, amt, cat, note, date, isRec, freq ->
                         scope.launch {
@@ -245,6 +370,31 @@ fun DashboardScreen(db: AppDatabase) {
                             )
                             showCommandHud = false
                         }
+                    }
+                )
+            }
+
+            if (showAllRecordsSheet) {
+                AllTransactionsSearchSheet(
+                    flowRecords = flowRecords,
+                    isPrivacyMode = isPrivacyMode,
+                    onDismiss = { showAllRecordsSheet = false },
+                    onExportCsv = {
+                        val compatList = flowRecords.map {
+                            Transaction(
+                                id = it.id,
+                                accountId = it.sourcePocketId ?: it.targetPocketId ?: 0L,
+                                flowType = if (it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.CARD_PAYMENT)) "OUT" else "IN",
+                                type = it.nature.name,
+                                category = it.category,
+                                amount = it.amount,
+                                timestamp = it.timestamp,
+                                note = it.note,
+                                isRecurring = it.isRecurring,
+                                frequency = it.frequency
+                            )
+                        }
+                        CsvExporter.exportAndShareTransactions(context, compatList)
                     }
                 )
             }
