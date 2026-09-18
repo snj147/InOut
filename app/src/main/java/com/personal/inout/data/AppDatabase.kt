@@ -7,16 +7,15 @@ import androidx.room.RoomDatabase
 
 @Database(
     entities = [
-        LedgerAccount::class,
-        LedgerTransaction::class,
-        LedgerEntry::class
+        VaultPocket::class,
+        FlowRecord::class
     ],
-    version = 1,
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
 
-    abstract fun ledgerDao(): LedgerDao
+    abstract fun stateFlowDao(): StateFlowDao
 
     companion object {
         @Volatile
@@ -27,7 +26,7 @@ abstract class AppDatabase : RoomDatabase() {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
-                    "inout_ledger.db"
+                    "inout_vault.db"
                 )
                 .fallbackToDestructiveMigration()
                 .build()
