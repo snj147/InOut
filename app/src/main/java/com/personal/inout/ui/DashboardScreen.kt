@@ -65,7 +65,6 @@ enum class CockpitStyle(val label: String) {
     VAULT_ORBIT("Vault & Orbit")
 }
 
-// Concrete data model for display rows combining transaction and leg amounts
 data class DisplayTransaction(
     val id: Long,
     val timestamp: Long,
@@ -73,7 +72,7 @@ data class DisplayTransaction(
     val categoryName: String,
     val accountName: String,
     val amount: Double,
-    val flowType: String, // IN, OUT, TRANSFER
+    val flowType: String,
     val isRecurring: Boolean,
     val frequency: String
 )
@@ -86,16 +85,13 @@ fun DashboardScreen(db: AppDatabase) {
     val prefs = remember { context.getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE) }
     val activity = context as? Activity
 
-    // Play Store In-App Updates check
     LaunchedEffect(Unit) {
         activity?.let { InAppUpdateHelper.checkForUpdate(it) }
     }
 
-    // Play Billing Manager & Lifetime Pro state
     val billingManager = remember { PlayBillingManager(context, scope) }
     val isProUnlocked by billingManager.isProUnlocked.collectAsState()
 
-    // Themes & Cockpit preferences
     var activeThemeMode by remember {
         val savedTheme = prefs.getString("selected_theme", AppThemeMode.AMBER_OCHRE.name)
         mutableStateOf(AppThemeMode.valueOf(savedTheme ?: AppThemeMode.AMBER_OCHRE.name))
@@ -112,21 +108,19 @@ fun DashboardScreen(db: AppDatabase) {
         AppThemeMode.SAND_DUNE -> SandDuneTheme
     }
 
-    // Double-Entry Reactive Data Streams
     val accountsWithBalances by db.ledgerDao().observeAccountBalances().collectAsState(initial = emptyList())
     val rawAccounts by db.ledgerDao().getAllActiveAccounts().collectAsState(initial = emptyList())
-    val allTransactions by db.ledgerDao().observeAllTransactions().collectAsState(initial = emptyList())
+    val transactionRows by db.ledgerDao().observeTransactionDisplayRows().collectAsState(initial = emptyList())
 
-    // UI state
     var selectedTab by remember { mutableStateOf(0) }
     var isPrivacyMode by remember { mutableStateOf(false) }
     var showUnifiedEntrySheet by remember { mutableStateOf(false) }
     var showCreateCardDialog by remember { mutableStateOf(false) }
     var editingAccount by remember { mutableStateOf<LedgerAccount?>(null) }
     var showAllRecordsSheet by remember { mutableStateOf(false) }
+    var showMockPaywall by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Prefilled data for receipt OCR
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
 
@@ -168,25 +162,22 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    // Map raw ledger transactions to display rows with realistic amounts
-    val displayTransactions = remember(allTransactions, accountsWithBalances) {
-        allTransactions.map { tx ->
-            // In double-entry, display note or category
+    val displayTransactions = remember(transactionRows) {
+        transactionRows.map { row ->
             DisplayTransaction(
-                id = tx.id,
-                timestamp = tx.timestamp,
-                description = tx.description,
-                categoryName = if (tx.description.contains("•")) tx.description.substringBefore("•").trim() else "General",
-                accountName = "Wallet",
-                amount = 0.0, // Fallback; actual ledger legs are balanced
-                flowType = if (tx.description.startsWith("Deposit") || tx.description.startsWith("Income")) "IN" else "OUT",
-                isRecurring = tx.isRecurring,
-                frequency = tx.recurringFrequency
+                id = row.id,
+                timestamp = row.timestamp,
+                description = row.description,
+                categoryName = row.categoryOrAccount,
+                accountName = row.categoryOrAccount,
+                amount = row.amount,
+                flowType = if (row.description.startsWith("Deposit") || row.description.startsWith("Income")) "IN" else "OUT",
+                isRecurring = row.isRecurring,
+                frequency = row.recurringFrequency
             )
         }
     }
 
-    // Aggregate monthly Inflow & Outflow for persistent status header
     val totalIn = remember(accountsWithBalances) {
         accountsWithBalances.filter { it.classification == AccountClassification.REVENUE }.sumOf { it.netBalance }
     }
@@ -199,13 +190,19 @@ fun DashboardScreen(db: AppDatabase) {
             containerColor = theme.bg,
             snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
-                DashboardHeader(
-                    totalIn = totalIn,
-                    totalOut = totalOut,
-                    isProUser = isProUnlocked,
-                    isPrivacyMode = isPrivacyMode,
-                    onTogglePrivacy = { isPrivacyMode = !isPrivacyMode }
-                )
+                Column {
+                    DashboardHeader(
+                        totalIn = totalIn,
+                        totalOut = totalOut,
+                        isProUser = isProUnlocked,
+                        isPrivacyMode = isPrivacyMode,
+                        onTogglePrivacy = { isPrivacyMode = !isPrivacyMode }
+                    )
+                    DevSandboxTogglePill(
+                        isProUnlocked = isProUnlocked,
+                        onOpenPaywall = { showMockPaywall = true }
+                    )
+                }
             },
             bottomBar = {
                 NavigationBar(
@@ -320,16 +317,19 @@ fun DashboardScreen(db: AppDatabase) {
                         }
                     )
 
-                    2 -> IntelligenceScreen(
-                        accountsWithBalances = accountsWithBalances,
-                        rawAccounts = rawAccounts,
-                        transactions = allTransactions,
-                        isProUser = isProUnlocked,
-                        onUnlockPro = { activity?.let { billingManager.launchBillingFlow(it) } },
-                        onGeneratePdfDossier = {
-                            PdfDossierGenerator.generateAndShare(context, accountsWithBalances, allTransactions, isProUnlocked)
-                        }
-                    )
+                    2 -> {
+                        val transactionsForInsights by db.ledgerDao().observeAllTransactions().collectAsState(initial = emptyList())
+                        IntelligenceScreen(
+                            accountsWithBalances = accountsWithBalances,
+                            rawAccounts = rawAccounts,
+                            transactions = transactionsForInsights,
+                            isProUser = isProUnlocked,
+                            onUnlockPro = { showMockPaywall = true },
+                            onGeneratePdfDossier = {
+                                PdfDossierGenerator.generateAndShare(context, accountsWithBalances, transactionsForInsights, isProUnlocked)
+                            }
+                        )
+                    }
 
                     3 -> SettingsScreen(
                         currentTheme = activeThemeMode,
@@ -343,18 +343,18 @@ fun DashboardScreen(db: AppDatabase) {
                             activeCockpitStyle = style
                             prefs.edit().putString("cockpit_style", style.name).apply()
                         },
-                        onTriggerProPurchase = { activity?.let { billingManager.launchBillingFlow(it) } },
+                        onTriggerProPurchase = { showMockPaywall = true },
                         onClearLedger = {
                             scope.launch {
-                                allTransactions.forEach { db.ledgerDao().deleteTransactionById(it.id) }
-                                snackbarHostState.showSnackbar("All ledger entries wiped")
+                                val txList = transactionRows
+                                txList.forEach { db.ledgerDao().deleteTransactionById(it.id) }
+                                snackbarHostState.showSnackbar("All ledger records cleared")
                             }
                         }
                     )
                 }
             }
 
-            // Unified + Entry Sheet
             if (showUnifiedEntrySheet) {
                 UnifiedEntrySheet(
                     allAccounts = rawAccounts,
@@ -380,11 +380,10 @@ fun DashboardScreen(db: AppDatabase) {
                 )
             }
 
-            // Create Account Dialog
             if (showCreateCardDialog) {
                 CreateAccountCardDialog(
                     availableSourceAccounts = rawAccounts.filter { it.classification == AccountClassification.ASSET }.map {
-                        Account(id = it.id, name = it.name, balance = 0.0, type = it.subType)
+                        Account(id = it.id, name = it.name, balance = 0.0, type = it.subType, totalLimit = it.creditLimit, dueDate = it.dueDateMillis)
                     },
                     onDismiss = { showCreateCardDialog = false },
                     onSave = { acc, _, _, _ ->
@@ -409,7 +408,6 @@ fun DashboardScreen(db: AppDatabase) {
                 )
             }
 
-            // Edit Account Dialog
             editingAccount?.let { acc ->
                 EditAccountCardDialog(
                     account = Account(
@@ -443,13 +441,14 @@ fun DashboardScreen(db: AppDatabase) {
                 )
             }
 
-            // All Records Instant Search Sheet
             if (showAllRecordsSheet) {
                 AllTransactionsSearchSheet(
                     transactions = displayTransactions.map {
                         Transaction(
                             id = it.id,
+                            accountId = 0L,
                             flowType = it.flowType,
+                            type = if (it.flowType == "IN") "INCOME" else "EXPENSE",
                             category = it.categoryName,
                             amount = it.amount,
                             timestamp = it.timestamp,
@@ -463,14 +462,31 @@ fun DashboardScreen(db: AppDatabase) {
                         val compatList = displayTransactions.map {
                             Transaction(
                                 id = it.id,
+                                accountId = 0L,
                                 flowType = it.flowType,
+                                type = if (it.flowType == "IN") "INCOME" else "EXPENSE",
                                 category = it.categoryName,
                                 amount = it.amount,
                                 timestamp = it.timestamp,
-                                note = it.description
+                                note = it.description,
+                                isRecurring = it.isRecurring,
+                                frequency = it.frequency
                             )
                         }
                         CsvExporter.exportAndShareTransactions(context, compatList)
+                    }
+                )
+            }
+
+            if (showMockPaywall) {
+                MockPaywallBottomSheet(
+                    currentProState = isProUnlocked,
+                    onDismiss = { showMockPaywall = false },
+                    onSimulatePurchaseSuccess = {
+                        billingManager.simulatePurchaseSuccess()
+                    },
+                    onSimulateRevokePro = {
+                        billingManager.simulateRevokePro()
                     }
                 )
             }
@@ -478,7 +494,7 @@ fun DashboardScreen(db: AppDatabase) {
     }
 }
 
-// ---------------- LEDGER TAB SCREEN WITH THE 3 COCKPITS ----------------
+// ---------------- LEDGER TAB & CANVAS IMPLEMENTATIONS ----------------
 
 @Composable
 fun LedgerTabScreen(
@@ -500,7 +516,6 @@ fun LedgerTabScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(top = 6.dp, bottom = 96.dp)
     ) {
-        // Cockpit Insight Window
         item {
             CockpitInsightCard(
                 style = cockpitStyle,
@@ -509,7 +524,6 @@ fun LedgerTabScreen(
             )
         }
 
-        // Quick Receipt OCR Action Banner
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -539,7 +553,6 @@ fun LedgerTabScreen(
             }
         }
 
-        // Recent Activity Header
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -587,8 +600,6 @@ fun LedgerTabScreen(
     }
 }
 
-// ---------------- DUAL-PANEL COCKPIT CONTAINER ----------------
-
 @Composable
 fun CockpitInsightCard(
     style: CockpitStyle,
@@ -632,7 +643,6 @@ fun CockpitInsightCard(
         ) {
             when (style) {
                 CockpitStyle.BATTERY_EQUALIZER -> {
-                    // Left: Battery Cell
                     Column(
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                         verticalArrangement = Arrangement.SpaceBetween
@@ -648,7 +658,6 @@ fun CockpitInsightCard(
 
                     Divider(color = theme.surfaceAlt, modifier = Modifier.fillMaxHeight().width(1.dp).padding(vertical = 4.dp))
 
-                    // Right: 7-Day Equalizer Bars
                     Column(
                         modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 12.dp),
                         verticalArrangement = Arrangement.SpaceBetween
@@ -660,7 +669,6 @@ fun CockpitInsightCard(
                 }
 
                 CockpitStyle.ECLIPSE_SPOTLIGHT -> {
-                    // Left: Eclipse Speedometer Dial
                     Column(
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                         verticalArrangement = Arrangement.SpaceBetween
@@ -679,7 +687,6 @@ fun CockpitInsightCard(
 
                     Divider(color = theme.surfaceAlt, modifier = Modifier.fillMaxHeight().width(1.dp).padding(vertical = 4.dp))
 
-                    // Right: Category Spotlight Tile
                     Column(
                         modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 12.dp),
                         verticalArrangement = Arrangement.SpaceBetween
@@ -702,7 +709,6 @@ fun CockpitInsightCard(
                 }
 
                 CockpitStyle.VAULT_ORBIT -> {
-                    // Left: Vault Stash
                     Column(
                         modifier = Modifier.weight(1f).fillMaxHeight(),
                         verticalArrangement = Arrangement.SpaceBetween
@@ -721,7 +727,6 @@ fun CockpitInsightCard(
 
                     Divider(color = theme.surfaceAlt, modifier = Modifier.fillMaxHeight().width(1.dp).padding(vertical = 4.dp))
 
-                    // Right: Habit Orbit
                     Column(
                         modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 12.dp),
                         verticalArrangement = Arrangement.SpaceBetween
@@ -737,8 +742,6 @@ fun CockpitInsightCard(
         }
     }
 }
-
-// ---------------- CUSTOM CANVAS GRAPHICS ----------------
 
 @Composable
 fun BatteryGaugeCanvas(ratio: Float, themeColor: Color, greenColor: Color) {
@@ -859,8 +862,6 @@ fun OrbitCanvas(dailySpends: List<Double>, theme: ThemeColors) {
         }
     }
 }
-
-// ---------------- SLIM LEDGER DISPLAY ROW (~48dp) ----------------
 
 @Composable
 fun SlimLedgerDisplayRow(item: DisplayTransaction, isPrivacyMode: Boolean) {
