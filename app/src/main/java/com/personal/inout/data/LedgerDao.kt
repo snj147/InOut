@@ -28,6 +28,9 @@ interface LedgerDao {
     @Query("SELECT * FROM ledger_accounts WHERE subType = :subType AND isArchived = 0")
     fun getAccountsBySubType(subType: String): Flow<List<LedgerAccount>>
 
+    @Query("SELECT * FROM ledger_accounts WHERE name = :name LIMIT 1")
+    suspend fun getAccountByName(name: String): LedgerAccount?
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertTransactionRecord(tx: LedgerTransaction): Long
 
@@ -42,8 +45,10 @@ interface LedgerDao {
         amount: Double,
         memo: String = ""
     ): Long {
-        require(amount > 0.0) { "Transaction amount must be positive" }
-        require(debitAccountId != creditAccountId) { "Debit and Credit accounts must be distinct" }
+        if (amount <= 0.0) return -1L
+        if (debitAccountId == creditAccountId || debitAccountId == 0L || creditAccountId == 0L) {
+            return -1L
+        }
 
         val txId = insertTransactionRecord(transaction)
         val debitEntry = LedgerEntry(
@@ -62,6 +67,47 @@ interface LedgerDao {
         )
         insertEntries(listOf(debitEntry, creditEntry))
         return txId
+    }
+
+    @androidx.room.Transaction
+    suspend fun postExpenseOrIncome(
+        title: String,
+        amount: Double,
+        timestamp: Long,
+        assetAccountId: Long,
+        categoryName: String,
+        isExpense: Boolean,
+        isRecurring: Boolean,
+        frequency: String
+    ): Long {
+        val catType = if (isExpense) AccountClassification.EXPENSE else AccountClassification.REVENUE
+        var catAccount = getAccountByName(categoryName)
+        if (catAccount == null) {
+            val newId = insertAccount(
+                LedgerAccount(
+                    name = categoryName,
+                    classification = catType,
+                    subType = "CATEGORY"
+                )
+            )
+            catAccount = LedgerAccount(
+                id = newId,
+                name = categoryName,
+                classification = catType,
+                subType = "CATEGORY"
+            )
+        }
+
+        val debitId = if (isExpense) catAccount.id else assetAccountId
+        val creditId = if (isExpense) assetAccountId else catAccount.id
+
+        val tx = LedgerTransaction(
+            timestamp = timestamp,
+            description = title.ifBlank { categoryName },
+            isRecurring = isRecurring,
+            recurringFrequency = frequency
+        )
+        return recordBalancedPosting(tx, debitId, creditId, amount, categoryName)
     }
 
     @Query("""
