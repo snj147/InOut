@@ -35,6 +35,17 @@ fun DashboardScreen(db: AppDatabase) {
     val billingManager = remember { PlayBillingManager(context, scope) }
     val isProUnlocked by billingManager.isProUnlocked.collectAsState()
 
+    var activeThemeMode by remember {
+        val savedTheme = prefs.getString("selected_theme", AppThemeMode.AMBER_OCHRE.name)
+        mutableStateOf(AppThemeMode.valueOf(savedTheme ?: AppThemeMode.AMBER_OCHRE.name))
+    }
+
+    val theme = when (activeThemeMode) {
+        AppThemeMode.AMBER_OCHRE -> AmberTheme
+        AppThemeMode.OLIVE_MATCHA -> OliveMatchaTheme
+        AppThemeMode.SAND_DUNE -> SandDuneTheme
+    }
+
     val pocketBalances by db.stateFlowDao().observePocketBalances().collectAsState(initial = emptyList())
     val rawPockets by db.stateFlowDao().observeAllActivePockets().collectAsState(initial = emptyList())
     val flowRecords by db.stateFlowDao().observeAllFlowRecords().collectAsState(initial = emptyList())
@@ -44,9 +55,8 @@ fun DashboardScreen(db: AppDatabase) {
     var showCommandHud by remember { mutableStateOf(false) }
     var editingPocket by remember { mutableStateOf<VaultPocket?>(null) }
     var showCreatePocketDialog by remember { mutableStateOf(false) }
+    var showMockPaywall by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
-
-    val theme = AmberTheme
 
     CompositionLocalProvider(LocalThemeColors provides theme) {
         Scaffold(
@@ -60,6 +70,10 @@ fun DashboardScreen(db: AppDatabase) {
                         isProUser = isProUnlocked,
                         isPrivacyMode = isPrivacyMode,
                         onTogglePrivacy = { isPrivacyMode = !isPrivacyMode }
+                    )
+                    DevSandboxTogglePill(
+                        isProUnlocked = isProUnlocked,
+                        onOpenPaywall = { showMockPaywall = true }
                     )
                 }
             },
@@ -119,9 +133,23 @@ fun DashboardScreen(db: AppDatabase) {
                                 Text("Real-Time Flow Stream", color = theme.textBright, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
                             }
 
-                            items(flowRecords, key = { it.id }) { flow ->
-                                FlowRecordDisplayRow(flow = flow, isPrivacyMode = isPrivacyMode, theme = theme)
-                                Divider(color = theme.surfaceAlt.copy(alpha = 0.5f), thickness = 0.5.dp)
+                            if (flowRecords.isEmpty()) {
+                                item {
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        shape = RoundedCornerShape(16.dp),
+                                        colors = CardDefaults.cardColors(containerColor = theme.surface)
+                                    ) {
+                                        Box(Modifier.fillMaxWidth().padding(28.dp), contentAlignment = Alignment.Center) {
+                                            Text("No records yet. Tap '+' to commit an inflow or outflow.", color = theme.textMuted, fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            } else {
+                                items(flowRecords, key = { it.id }) { flow ->
+                                    FlowRecordDisplayRow(flow = flow, isPrivacyMode = isPrivacyMode, theme = theme)
+                                    Divider(color = theme.surfaceAlt.copy(alpha = 0.5f), thickness = 0.5.dp)
+                                }
                             }
                         }
                     }
@@ -170,13 +198,29 @@ fun DashboardScreen(db: AppDatabase) {
                         }
                     )
 
-                    2 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Insights Engine Active", color = theme.textMuted)
-                    }
+                    2 -> IntelligenceScreen(
+                        pocketBalances = pocketBalances,
+                        flowRecords = flowRecords,
+                        isPrivacyMode = isPrivacyMode,
+                        isProUser = isProUnlocked,
+                        onUnlockPro = { showMockPaywall = true }
+                    )
 
-                    3 -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Settings & Security Vault", color = theme.textMuted)
-                    }
+                    3 -> SettingsScreen(
+                        currentTheme = activeThemeMode,
+                        isProUser = isProUnlocked,
+                        onSelectTheme = { mode ->
+                            activeThemeMode = mode
+                            prefs.edit().putString("selected_theme", mode.name).apply()
+                        },
+                        onTriggerProPurchase = { showMockPaywall = true },
+                        onClearLedger = {
+                            scope.launch {
+                                flowRecords.forEach { db.stateFlowDao().deleteFlowRecord(it.id) }
+                                snackbarHostState.showSnackbar("All vault records cleared")
+                            }
+                        }
+                    )
                 }
             }
 
@@ -222,6 +266,15 @@ fun DashboardScreen(db: AppDatabase) {
                             showCreatePocketDialog = false
                         }
                     }
+                )
+            }
+
+            if (showMockPaywall) {
+                MockPaywallBottomSheet(
+                    currentProState = isProUnlocked,
+                    onDismiss = { showMockPaywall = false },
+                    onSimulatePurchaseSuccess = { billingManager.simulatePurchaseSuccess() },
+                    onSimulateRevokePro = { billingManager.simulateRevokePro() }
                 )
             }
         }
@@ -276,9 +329,13 @@ private fun CreatePocketDialog(
         title = { Text("Add Vault Pocket", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                CompactInputField(value = name, onValueChange = { name = it }, placeholder = "Pocket Name (e.g., Cash, SBI, Rahul)")
+                CompactInputField(value = name, onValueChange = { name = it }, placeholder = "Pocket Name (e.g. Cash, HDFC, Rahul)")
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    PocketType.values().forEach { t ->
+                    listOf(
+                        PocketType.LIQUID to "Liquid",
+                        PocketType.CREDIT_LINE to "Credit",
+                        PocketType.COUNTERPARTY to "Peer"
+                    ).forEach { (t, lbl) ->
                         val isSel = type == t
                         Box(
                             modifier = Modifier
@@ -289,12 +346,12 @@ private fun CreatePocketDialog(
                                 .padding(vertical = 6.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(t.name.take(4), color = if (isSel) theme.bg else theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text(lbl, color = if (isSel) theme.bg else theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
                 if (type == PocketType.CREDIT_LINE) {
-                    CompactInputField(value = limit, onValueChange = { limit = it }, placeholder = "Credit Limit")
+                    CompactInputField(value = limit, onValueChange = { limit = it }, placeholder = "Credit Limit (e.g. 50000)")
                 }
             }
         },
