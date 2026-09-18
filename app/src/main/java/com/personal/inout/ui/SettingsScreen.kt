@@ -1,16 +1,14 @@
 package com.personal.inout.ui
 
-import android.app.Activity
 import android.content.Context
-import android.content.Intent
-import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
@@ -19,391 +17,255 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import com.personal.inout.util.BackupManager
-import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(
     currentTheme: AppThemeMode,
-    currentCockpit: CockpitStyle,
     isProUser: Boolean,
     onSelectTheme: (AppThemeMode) -> Unit,
-    onSelectCockpit: (CockpitStyle) -> Unit,
     onTriggerProPurchase: () -> Unit,
     onClearLedger: () -> Unit
 ) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
     val theme = LocalThemeColors.current
+    val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE) }
 
-    var showPinVerifyDialog by remember { mutableStateOf(false) }
-    var showSetPinDialog by remember { mutableStateOf(false) }
-    var showFeedbackDialog by remember { mutableStateOf(false) }
+    var isBiometricEnabled by remember {
+        mutableStateOf(prefs.getBoolean("biometric_enabled", false))
+    }
 
-    val savedPin = prefs.getString("user_pin", "1234") ?: "1234"
+    var showClearConfirmation by remember { mutableStateOf(false) }
 
-    LazyColumn(
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // --- 1. Pro Membership Status Banner ---
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = theme.surface)
+        Text(
+            "Settings & Vault Control",
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Black,
+            color = theme.textBright
+        )
+
+        // VIP Lifetime Status Banner
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = theme.surface),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onTriggerProPurchase() }
+        ) {
+            Row(
+                modifier = Modifier.padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(theme.accent.copy(alpha = 0.2f)),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (isProUser) Icons.Default.WorkspacePremium else Icons.Outlined.Lock,
-                                contentDescription = null,
-                                tint = theme.accent,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Text(
-                                text = if (isProUser) "Founder Lifetime Member" else "Free Tier (7-Day Pass)",
-                                color = theme.textBright,
-                                fontSize = 15.sp,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                        }
-
-                        if (isProUser) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(theme.accent)
-                                    .padding(horizontal = 7.dp, vertical = 2.dp)
-                            ) {
-                                Text("ACTIVE", color = theme.bg, fontSize = 9.sp, fontWeight = FontWeight.Black)
-                            }
-                        }
-                    }
-
-                    Text(
-                        text = if (isProUser) {
-                            "You have unlocked unlimited accounts, all 3 Cockpit styles, watermarked-free PDF dossiers, and cloud vault exports."
-                        } else {
-                            "Early supporter offer: Unlock InOut Lifetime Pro for ₹21. Price increases to ₹51/₹99 for latecomers."
-                        },
-                        color = theme.textMuted,
-                        fontSize = 11.5.sp,
-                        lineHeight = 16.sp
+                    Icon(
+                        imageVector = if (isProUser) Icons.Default.WorkspacePremium else Icons.Outlined.Lock,
+                        contentDescription = null,
+                        tint = theme.accent
                     )
-
-                    if (!isProUser) {
-                        Button(
-                            onClick = onTriggerProPurchase,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(42.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-                        ) {
-                            Text(
-                                "Unlock Lifetime Pro — ₹21",
-                                color = theme.bg,
-                                fontWeight = FontWeight.ExtraBold,
-                                fontSize = 12.5.sp
-                            )
-                        }
-                    }
                 }
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        if (isProUser) "VIP Lifetime Unlocked" else "Unlock VIP Access (₹21)",
+                        color = theme.textBright,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        if (isProUser) "Offline vault active • No subscriptions" else "Tap to access mock paywall or restore",
+                        color = theme.textMuted,
+                        fontSize = 11.sp
+                    )
+                }
+                Icon(Icons.Default.ChevronRight, contentDescription = null, tint = theme.textMuted)
             }
         }
 
-        // --- 2. Palette & Cockpit Appearance ---
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = theme.surface)
-            ) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Text("Palette Theme", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
-
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(
-                            Triple("Amber Ochre", AppThemeMode.AMBER_OCHRE, AmberTheme.accent),
-                            Triple("Olive Matcha", AppThemeMode.OLIVE_MATCHA, OliveMatchaTheme.accent),
-                            Triple("Sand Dune", AppThemeMode.SAND_DUNE, SandDuneTheme.accent)
-                        ).forEach { (label, mode, col) ->
-                            val isSel = currentTheme == mode
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(if (isSel) col.copy(alpha = 0.25f) else theme.surfaceAlt)
-                                    .clickable { onSelectTheme(mode) }
-                                    .padding(vertical = 10.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    label,
-                                    color = if (isSel) col else theme.textMuted,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-
-                    Divider(color = theme.surfaceAlt)
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Cockpit Widget", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
-                        if (!isProUser) {
-                            Text("Default Locked", color = theme.accent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        CockpitStyle.values().forEach { style ->
-                            val isSel = currentCockpit == style
-                            val isLocked = !isProUser && style != CockpitStyle.BATTERY_EQUALIZER
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (isSel) theme.accent.copy(alpha = 0.15f) else Color.Transparent)
-                                    .clickable {
-                                        if (isLocked) {
-                                            onTriggerProPurchase()
-                                        } else {
-                                            onSelectCockpit(style)
-                                        }
-                                    }
-                                    .padding(horizontal = 10.dp, vertical = 9.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text(
-                                        style.label,
-                                        color = if (isSel) theme.accent else theme.textBright,
-                                        fontSize = 12.5.sp,
-                                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                    if (isLocked) {
-                                        Icon(Icons.Default.Lock, contentDescription = null, tint = theme.textMuted, modifier = Modifier.size(12.dp))
-                                    }
-                                }
-                                if (isSel) {
-                                    Icon(Icons.Default.Check, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // --- 3. Backup & Security ---
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = theme.surface)
-            ) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Text("Vault Backup & Storage", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
-
+        // Visual Customization Section
+        SettingsSection(title = "Appearance & Themes", theme = theme) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    Triple(AppThemeMode.AMBER_OCHRE, "Amber Ochre", "Rich obsidian and warm amber"),
+                    Triple(AppThemeMode.OLIVE_MATCHA, "Olive Matcha", "Deep forest tones with matcha green"),
+                    Triple(AppThemeMode.SAND_DUNE, "Sand Dune", "Earthy muted sands and slate")
+                ).forEach { (mode, name, desc) ->
+                    val isSelected = currentTheme == mode
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(10.dp))
-                            .background(theme.surfaceAlt)
-                            .clickable {
-                                scope.launch {
-                                    BackupManager.createAndShareEncryptedBackup(context)
-                                }
-                            }
+                            .background(if (isSelected) theme.accent.copy(alpha = 0.15f) else theme.surfaceAlt)
+                            .clickable { onSelectTheme(mode) }
                             .padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Icon(Icons.Default.CloudUpload, contentDescription = null, tint = theme.accent, modifier = Modifier.size(20.dp))
-                            Column {
-                                Text("Export Encrypted Backup", color = theme.textBright, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
-                                Text("Save .db file to Google Drive or local files", color = theme.textMuted, fontSize = 10.5.sp)
-                            }
-                        }
-                        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = theme.textMuted)
-                    }
-
-                    Divider(color = theme.surfaceAlt)
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("Security PIN", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
-                            Text("Protects ledger wipe & sensitive actions", color = theme.textMuted, fontSize = 11.sp)
+                            Text(name, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(desc, color = theme.textMuted, fontSize = 10.5.sp)
                         }
-                        Button(
-                            onClick = { showSetPinDialog = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text("Change PIN", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        if (isSelected) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
                         }
-                    }
-
-                    Divider(color = theme.surfaceAlt)
-
-                    // In-App Feedback Sheet for Closed Testing
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(theme.surfaceAlt)
-                            .clickable { showFeedbackDialog = true }
-                            .padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Icon(Icons.Default.RateReview, contentDescription = null, tint = theme.accent, modifier = Modifier.size(20.dp))
-                            Column {
-                                Text("Tester Feedback & Bug Report", color = theme.textBright, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
-                                Text("Send direct feedback to developer", color = theme.textMuted, fontSize = 10.5.sp)
-                            }
-                        }
-                        Icon(Icons.Default.ChevronRight, contentDescription = null, tint = theme.textMuted)
-                    }
-
-                    Divider(color = theme.surfaceAlt)
-
-                    TextButton(
-                        onClick = { showPinVerifyDialog = true },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.DeleteSweep, contentDescription = null, tint = theme.mildRed, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Reset & Clear All Ledger Records", color = theme.mildRed, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
             }
         }
+
+        // Vault Security Section
+        SettingsSection(title = "Privacy & Security", theme = theme) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text("Biometric / PIN Unlock", color = theme.textBright, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text("Require device auth on vault launch", color = theme.textMuted, fontSize = 11.sp)
+                }
+                Switch(
+                    checked = isBiometricEnabled,
+                    onCheckedChange = { checked ->
+                        isBiometricEnabled = checked
+                        prefs.edit().putBoolean("biometric_enabled", checked).apply()
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = theme.bg,
+                        checkedTrackColor = theme.accent,
+                        uncheckedThumbColor = theme.textMuted,
+                        uncheckedTrackColor = theme.surfaceAlt
+                    )
+                )
+            }
+        }
+
+        // Data & Diagnostics
+        SettingsSection(title = "Database & Diagnostics", theme = theme) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingsActionRow(
+                    icon = Icons.Default.HealthAndSafety,
+                    title = "Conservation Check",
+                    subtitle = "Verify all state-flow accounts are in equilibrium",
+                    theme = theme
+                ) {
+                    Toast.makeText(context, "All Vault Pockets are in conservation equilibrium", Toast.LENGTH_SHORT).show()
+                }
+
+                Divider(color = theme.surfaceAlt, thickness = 0.5.dp)
+
+                SettingsActionRow(
+                    icon = Icons.Default.DeleteForever,
+                    title = "Clear Vault Records",
+                    subtitle = "Wipe all transactions and reset balances",
+                    titleColor = theme.mildRed,
+                    theme = theme
+                ) {
+                    showClearConfirmation = true
+                }
+            }
+        }
+
+        Spacer(Modifier.height(80.dp))
     }
 
-    if (showPinVerifyDialog) {
-        ThemePinPadDialog(
-            title = "Verify Security PIN",
-            subtitle = "Enter your 4-digit PIN to authorize ledger reset.",
-            expectedPin = savedPin,
-            onDismiss = { showPinVerifyDialog = false },
-            onSuccess = {
-                showPinVerifyDialog = false
-                onClearLedger()
+    if (showClearConfirmation) {
+        AlertDialog(
+            containerColor = theme.surface,
+            onDismissRequest = { showClearConfirmation = false },
+            title = { Text("Reset Entire Vault?", color = theme.mildRed, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "This action will permanently delete all transaction history. Accounts will be retained at zero balance.",
+                    color = theme.textBright,
+                    fontSize = 12.5.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onClearLedger()
+                        showClearConfirmation = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed)
+                ) {
+                    Text("Wipe History", color = theme.bg, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirmation = false }) {
+                    Text("Cancel", color = theme.textMuted)
+                }
             }
         )
-    }
-
-    if (showSetPinDialog) {
-        ThemeSetPinDialog(
-            onDismiss = { showSetPinDialog = false },
-            onSavePin = { newPin ->
-                prefs.edit().putString("user_pin", newPin).apply()
-                showSetPinDialog = false
-                Toast.makeText(context, "New security PIN saved", Toast.LENGTH_SHORT).show()
-            }
-        )
-    }
-
-    if (showFeedbackDialog) {
-        TesterFeedbackDialog(onDismiss = { showFeedbackDialog = false })
     }
 }
 
 @Composable
-fun TesterFeedbackDialog(onDismiss: () -> Unit) {
-    val theme = LocalThemeColors.current
-    val context = LocalContext.current
-    var feedbackText by remember { mutableStateOf("") }
-
-    AlertDialog(
-        containerColor = theme.surface,
-        onDismissRequest = onDismiss,
-        title = { Text("Send Feedback", fontWeight = FontWeight.Bold, fontSize = 15.sp, color = theme.textBright) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    "Found a bug or have a suggestion? Send your notes directly to the developer during closed testing.",
-                    color = theme.textMuted,
-                    fontSize = 11.5.sp
-                )
-                CompactInputField(
-                    value = feedbackText,
-                    onValueChange = { feedbackText = it },
-                    placeholder = "Describe your issue or thought...",
-                    modifier = Modifier.fillMaxWidth().height(80.dp)
-                )
+private fun SettingsSection(
+    title: String,
+    theme: ThemeColors,
+    content: @Composable () -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            title,
+            color = theme.accent,
+            fontSize = 10.5.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 1.sp
+        )
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = theme.surface),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Box(modifier = Modifier.padding(14.dp)) {
+                content()
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    if (feedbackText.isNotBlank()) {
-                        val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
-                            data = Uri.parse("mailto:")
-                            putExtra(Intent.EXTRA_SUBJECT, "InOut Android App Feedback")
-                            putExtra(Intent.EXTRA_TEXT, feedbackText)
-                        }
-                        context.startActivity(Intent.createChooser(emailIntent, "Send Feedback"))
-                        onDismiss()
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-            ) {
-                Text("Send Email", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted, fontSize = 12.sp) }
         }
-    )
+    }
+}
+
+@Composable
+private fun SettingsActionRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    titleColor: androidx.compose.ui.graphics.Color? = null,
+    theme: ThemeColors,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Icon(icon, contentDescription = null, tint = titleColor ?: theme.accent, modifier = Modifier.size(20.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = titleColor ?: theme.textBright, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+            Text(subtitle, color = theme.textMuted, fontSize = 10.5.sp)
+        }
+    }
 }
