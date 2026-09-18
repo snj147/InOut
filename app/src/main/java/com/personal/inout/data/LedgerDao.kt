@@ -34,7 +34,7 @@ interface LedgerDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertEntries(entries: List<LedgerEntry>)
 
-    @Transaction
+    @androidx.room.Transaction
     suspend fun recordBalancedPosting(
         transaction: LedgerTransaction,
         debitAccountId: Long,
