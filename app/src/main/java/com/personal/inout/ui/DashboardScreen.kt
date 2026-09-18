@@ -10,7 +10,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -22,7 +21,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
@@ -36,16 +34,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import com.personal.inout.billing.PlayBillingManager
 import com.personal.inout.data.*
@@ -115,6 +110,8 @@ fun DashboardScreen(db: AppDatabase) {
     var selectedTab by remember { mutableStateOf(0) }
     var isPrivacyMode by remember { mutableStateOf(false) }
     var showUnifiedEntrySheet by remember { mutableStateOf(false) }
+    var entryTargetAccountId by remember { mutableStateOf<Long?>(null) }
+
     var showCreateCardDialog by remember { mutableStateOf(false) }
     var editingAccount by remember { mutableStateOf<LedgerAccount?>(null) }
     var showAllRecordsSheet by remember { mutableStateOf(false) }
@@ -131,6 +128,7 @@ fun DashboardScreen(db: AppDatabase) {
                     val parsed = ReceiptScanner.processReceiptBitmap(bitmap)
                     ocrPrefilledNote = parsed.merchant
                     ocrPrefilledAmount = parsed.total
+                    entryTargetAccountId = null
                     showUnifiedEntrySheet = true
                 } catch (e: Exception) {
                     Toast.makeText(context, "OCR parse failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
@@ -154,6 +152,7 @@ fun DashboardScreen(db: AppDatabase) {
                     val parsed = ReceiptScanner.processReceipt(context, uri)
                     ocrPrefilledNote = parsed.merchant
                     ocrPrefilledAmount = parsed.total
+                    entryTargetAccountId = null
                     showUnifiedEntrySheet = true
                 } catch (e: Exception) {
                     Toast.makeText(context, "Receipt parse failed: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
@@ -208,7 +207,9 @@ fun DashboardScreen(db: AppDatabase) {
                 NavigationBar(
                     containerColor = theme.surface,
                     tonalElevation = 6.dp,
-                    modifier = Modifier.clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                    modifier = Modifier
+                        .navigationBarsPadding()
+                        .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                 ) {
                     val navItems = listOf(
                         Triple(0, "Ledger", Icons.Filled.MenuBook),
@@ -246,11 +247,13 @@ fun DashboardScreen(db: AppDatabase) {
                         onClick = {
                             ocrPrefilledNote = ""
                             ocrPrefilledAmount = null
+                            entryTargetAccountId = null
                             showUnifiedEntrySheet = true
                         },
                         containerColor = theme.accent,
                         contentColor = theme.bg,
-                        shape = CircleShape
+                        shape = CircleShape,
+                        modifier = Modifier.navigationBarsPadding()
                     ) {
                         Icon(Icons.Default.Add, contentDescription = "New Entry", modifier = Modifier.size(28.dp))
                     }
@@ -259,7 +262,8 @@ fun DashboardScreen(db: AppDatabase) {
                         onClick = { showCreateCardDialog = true },
                         containerColor = theme.accent,
                         contentColor = theme.bg,
-                        shape = CircleShape
+                        shape = CircleShape,
+                        modifier = Modifier.navigationBarsPadding()
                     ) {
                         Icon(Icons.Default.AddCard, contentDescription = "Add Account", modifier = Modifier.size(26.dp))
                     }
@@ -310,8 +314,9 @@ fun DashboardScreen(db: AppDatabase) {
                                 }
                             }
                         },
-                        onQuickDepositOrRefill = {
-                            ocrPrefilledNote = ""
+                        onQuickDepositOrRefill = { account ->
+                            entryTargetAccountId = account.id
+                            ocrPrefilledNote = "Deposit"
                             ocrPrefilledAmount = null
                             showUnifiedEntrySheet = true
                         }
@@ -359,21 +364,32 @@ fun DashboardScreen(db: AppDatabase) {
                 UnifiedEntrySheet(
                     allAccounts = rawAccounts,
                     isProUser = isProUnlocked,
+                    prefilledAccountId = entryTargetAccountId,
+                    prefilledNote = ocrPrefilledNote,
+                    prefilledAmount = ocrPrefilledAmount,
                     onDismiss = { showUnifiedEntrySheet = false },
-                    onSubmit = { mode, debitId, creditId, amt, desc, date, isRec, freq ->
+                    onSubmitExpenseIncome = { isExpense, assetAccountId, category, amount, note, date, isRec, freq ->
                         scope.launch {
-                            db.ledgerDao().recordBalancedPosting(
-                                transaction = LedgerTransaction(
-                                    timestamp = date,
-                                    description = desc.ifBlank { mode.label },
-                                    isRecurring = isRec,
-                                    recurringFrequency = freq
-                                ),
-                                debitAccountId = debitId,
-                                creditAccountId = creditId,
-                                amount = amt,
-                                memo = mode.label
+                            db.ledgerDao().postExpenseOrIncome(
+                                title = note,
+                                amount = amount,
+                                timestamp = date,
+                                assetAccountId = assetAccountId,
+                                categoryName = category,
+                                isExpense = isExpense,
+                                isRecurring = isRec,
+                                frequency = freq
                             )
+                            showUnifiedEntrySheet = false
+                        }
+                    },
+                    onSubmitTransfer = { fromId, toId, amount, note, date ->
+                        scope.launch {
+                            val tx = LedgerTransaction(
+                                timestamp = date,
+                                description = note.ifBlank { "Intra-Account Transfer" }
+                            )
+                            db.ledgerDao().recordBalancedPosting(tx, toId, fromId, amount, "Transfer")
                             showUnifiedEntrySheet = false
                         }
                     }
