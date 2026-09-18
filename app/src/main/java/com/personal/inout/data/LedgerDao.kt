@@ -84,18 +84,7 @@ interface LedgerDao {
     """)
     fun observeAccountBalances(): Flow<List<AccountBalanceResult>>
 
-    @Query("""
-        SELECT 
-            t.id,
-            t.timestamp,
-            t.description,
-            t.isTaxDeductible,
-            t.isRecurring,
-            t.recurringFrequency,
-            t.receiptUri
-        FROM ledger_transactions t
-        ORDER BY t.timestamp DESC
-    """)
+    @Query("SELECT * FROM ledger_transactions ORDER BY timestamp DESC")
     fun observeAllTransactions(): Flow<List<LedgerTransaction>>
 
     @Query("""
