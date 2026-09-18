@@ -4,20 +4,21 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CalendarToday
-import androidx.compose.material.icons.filled.Calculate
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.personal.inout.data.AccountClassification
@@ -37,78 +38,69 @@ enum class EntryMode(val label: String) {
 fun UnifiedEntrySheet(
     allAccounts: List<LedgerAccount>,
     isProUser: Boolean,
+    prefilledAccountId: Long? = null,
+    prefilledNote: String = "",
+    prefilledAmount: Double? = null,
     onDismiss: () -> Unit,
-    onSubmit: (
-        mode: EntryMode,
-        debitAccountId: Long,
-        creditAccountId: Long,
-        amount: Double,
-        description: String,
-        timestamp: Long,
-        isRecurring: Boolean,
-        recurringFrequency: String
-    ) -> Unit
+    onSubmitExpenseIncome: (isExpense: Boolean, assetAccountId: Long, category: String, amount: Double, note: String, date: Long, isRecurring: Boolean, frequency: String) -> Unit,
+    onSubmitTransfer: (fromAccountId: Long, toAccountId: Long, amount: Double, note: String, date: Long) -> Unit
 ) {
     val theme = LocalThemeColors.current
+    val scrollState = rememberScrollState()
 
     var selectedMode by remember { mutableStateOf(EntryMode.EXPENSE) }
-    var mathInput by remember { mutableStateOf("") }
-    var note by remember { mutableStateOf("") }
+    var amountExpression by remember { mutableStateOf(prefilledAmount?.let { String.format("%.2f", it) } ?: "") }
+    var note by remember { mutableStateOf(prefilledNote) }
     var selectedDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
     var showDatePicker by remember { mutableStateOf(false) }
 
-    // Evaluated amount
-    val calculatedAmount = remember(mathInput) {
-        MathEvaluator.evaluate(mathInput)
-    }
-
-    // Filter account types
     val assetAccounts = remember(allAccounts) {
         allAccounts.filter { it.classification == AccountClassification.ASSET || it.classification == AccountClassification.LIABILITY }
     }
-    val expenseCategories = remember(allAccounts) {
-        allAccounts.filter { it.classification == AccountClassification.EXPENSE }
-    }
-    val revenueCategories = remember(allAccounts) {
-        allAccounts.filter { it.classification == AccountClassification.REVENUE }
-    }
 
-    // Selection IDs
-    var primaryAccountId by remember(assetAccounts) {
-        mutableStateOf(assetAccounts.firstOrNull()?.id ?: 0L)
-    }
-    var targetAccountId by remember(assetAccounts) {
-        mutableStateOf(assetAccounts.getOrNull(1)?.id ?: assetAccounts.firstOrNull()?.id ?: 0L)
-    }
-    var selectedCategoryId by remember(expenseCategories, revenueCategories, selectedMode) {
+    var selectedAssetAccount by remember(assetAccounts, prefilledAccountId) {
         mutableStateOf(
-            if (selectedMode == EntryMode.EXPENSE) expenseCategories.firstOrNull()?.id ?: 0L
-            else revenueCategories.firstOrNull()?.id ?: 0L
+            assetAccounts.firstOrNull { it.id == prefilledAccountId }
+                ?: assetAccounts.firstOrNull { it.subType == "BANK" }
+                ?: assetAccounts.firstOrNull()
         )
     }
 
-    var primaryAccExpanded by remember { mutableStateOf(false) }
-    var targetAccExpanded by remember { mutableStateOf(false) }
-    var catExpanded by remember { mutableStateOf(false) }
+    var selectedDestinationAccount by remember(assetAccounts) {
+        mutableStateOf(assetAccounts.firstOrNull { it.id != selectedAssetAccount?.id } ?: assetAccounts.firstOrNull())
+    }
 
-    // Recurring (gated by Pro)
+    val categories = listOf("Food & Dining", "Groceries", "Transport", "Shopping", "Rent & Utilities", "Entertainment", "Health", "Salary", "Investment", "General")
+    var selectedCategory by remember { mutableStateOf("Food & Dining") }
+
     var isRecurring by remember { mutableStateOf(false) }
     var recurringFrequency by remember { mutableStateOf("MONTHLY") }
-    var freqExpanded by remember { mutableStateOf(false) }
+
+    var showAccountPicker by remember { mutableStateOf(false) }
+    var showDestAccountPicker by remember { mutableStateOf(false) }
+    var showCategoryPicker by remember { mutableStateOf(false) }
+
+    val evaluatedAmount = remember(amountExpression) {
+        MathEvaluator.evaluate(amountExpression)
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = theme.surface,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        dragHandle = { BottomSheetDefaults.DragHandle(color = theme.textMuted.copy(alpha = 0.4f)) }
+        dragHandle = { BottomSheetDefaults.DragHandle(color = theme.textMuted.copy(alpha = 0.4f)) },
+        windowInsets = WindowInsets(0, 0, 0, 0)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .navigationBarsPadding()
+                .imePadding()
+                .verticalScroll(scrollState)
                 .padding(horizontal = 20.dp, vertical = 6.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // Segmented Mode Switcher
+            // Segmented Header
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -124,8 +116,6 @@ fun UnifiedEntrySheet(
                         EntryMode.INCOME -> theme.mildGreen
                         EntryMode.TRANSFER -> theme.accent
                     }
-                    val activeTextColor = if (mode == EntryMode.INCOME) Color.Black else Color.White
-
                     Box(
                         modifier = Modifier
                             .weight(1f)
@@ -136,410 +126,176 @@ fun UnifiedEntrySheet(
                         contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = mode.label,
-                            color = if (isSel) activeTextColor else theme.textMuted,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
+                            mode.label,
+                            color = if (isSel) theme.bg else theme.textMuted,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
                         )
                     }
                 }
             }
 
-            // In-Field Calculator + Date Row
+            // Amount Input & Date Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Calculator Input Box
                 Column(modifier = Modifier.weight(1.3f)) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(44.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(theme.surfaceAlt)
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        if (mathInput.isEmpty()) {
-                            Text("Amount (e.g. 450+60)", color = theme.textMuted, fontSize = 12.5.sp)
-                        }
-                        BasicTextField(
-                            value = mathInput,
-                            onValueChange = { mathInput = it },
-                            singleLine = true,
-                            textStyle = TextStyle(
-                                color = theme.textBright,
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            cursorBrush = SolidColor(theme.accent),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-
-                    // Live evaluation preview
-                    if (calculatedAmount != null && mathInput.any { it in "+-*/" }) {
+                    CompactInputField(
+                        value = amountExpression,
+                        onValueChange = { amountExpression = it },
+                        placeholder = "Amount (e.g. 450+60)",
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    if (evaluatedAmount != null && amountExpression.any { it in "+-*/" }) {
                         Text(
-                            text = "= ₹ ${String.format("%,.2f", calculatedAmount)}",
+                            "= ₹ ${String.format("%.2f", evaluatedAmount)}",
                             color = theme.accent,
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
+                            fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(start = 6.dp, top = 2.dp)
                         )
                     }
                 }
 
-                // Compact Date Box
-                val dateLabel = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateMillis))
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .height(44.dp)
                         .clip(RoundedCornerShape(10.dp))
                         .background(theme.surfaceAlt)
                         .clickable { showDatePicker = true }
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    contentAlignment = Alignment.CenterStart
+                        .padding(horizontal = 10.dp, vertical = 13.dp),
+                    contentAlignment = Alignment.Center
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(14.dp))
-                        Text(dateLabel, color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        val dStr = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateMillis))
+                        Text(dStr, color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
 
-            // Dynamic Account / Category Selectors
-            when (selectedMode) {
-                EntryMode.EXPENSE -> {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // Source Account (Debit source)
-                        ExposedDropdownMenuBox(
-                            expanded = primaryAccExpanded,
-                            onExpandedChange = { primaryAccExpanded = !primaryAccExpanded },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            val accName = assetAccounts.firstOrNull { it.id == primaryAccountId }?.name ?: "Wallet"
-                            Box(
-                                modifier = Modifier
-                                    .menuAnchor()
-                                    .fillMaxWidth()
-                                    .height(44.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(theme.surfaceAlt)
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                Text("Paid via: $accName", color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                            ExposedDropdownMenu(
-                                expanded = primaryAccExpanded,
-                                onDismissRequest = { primaryAccExpanded = false },
-                                modifier = Modifier.background(theme.surface)
-                            ) {
-                                assetAccounts.forEach { acc ->
-                                    DropdownMenuItem(
-                                        text = { Text(acc.name, color = theme.textBright, fontSize = 12.sp) },
-                                        onClick = {
-                                            primaryAccountId = acc.id
-                                            primaryAccExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-
-                        // Expense Category
-                        ExposedDropdownMenuBox(
-                            expanded = catExpanded,
-                            onExpandedChange = { catExpanded = !catExpanded },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            val catName = expenseCategories.firstOrNull { it.id == selectedCategoryId }?.name ?: "Category"
-                            Box(
-                                modifier = Modifier
-                                    .menuAnchor()
-                                    .fillMaxWidth()
-                                    .height(44.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(theme.surfaceAlt)
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                Text("Bucket: $catName", color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                            ExposedDropdownMenu(
-                                expanded = catExpanded,
-                                onDismissRequest = { catExpanded = false },
-                                modifier = Modifier.background(theme.surface)
-                            ) {
-                                expenseCategories.forEach { cat ->
-                                    DropdownMenuItem(
-                                        text = { Text(cat.name, color = theme.textBright, fontSize = 12.sp) },
-                                        onClick = {
-                                            selectedCategoryId = cat.id
-                                            catExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
+            // Accounts / Category Selectors
+            if (selectedMode == EntryMode.TRANSFER) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SelectorTile(
+                        label = "From: ${selectedAssetAccount?.name ?: "Select"}",
+                        modifier = Modifier.weight(1f),
+                        theme = theme,
+                        onClick = { showAccountPicker = true }
+                    )
+                    SelectorTile(
+                        label = "To: ${selectedDestinationAccount?.name ?: "Select"}",
+                        modifier = Modifier.weight(1f),
+                        theme = theme,
+                        onClick = { showDestAccountPicker = true }
+                    )
                 }
-
-                EntryMode.INCOME -> {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // Deposit Destination
-                        ExposedDropdownMenuBox(
-                            expanded = primaryAccExpanded,
-                            onExpandedChange = { primaryAccExpanded = !primaryAccExpanded },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            val accName = assetAccounts.firstOrNull { it.id == primaryAccountId }?.name ?: "Deposit Account"
-                            Box(
-                                modifier = Modifier
-                                    .menuAnchor()
-                                    .fillMaxWidth()
-                                    .height(44.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(theme.surfaceAlt)
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                Text("Deposit to: $accName", color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                            ExposedDropdownMenu(
-                                expanded = primaryAccExpanded,
-                                onDismissRequest = { primaryAccExpanded = false },
-                                modifier = Modifier.background(theme.surface)
-                            ) {
-                                assetAccounts.forEach { acc ->
-                                    DropdownMenuItem(
-                                        text = { Text(acc.name, color = theme.textBright, fontSize = 12.sp) },
-                                        onClick = {
-                                            primaryAccountId = acc.id
-                                            primaryAccExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-
-                        // Income Source Category
-                        ExposedDropdownMenuBox(
-                            expanded = catExpanded,
-                            onExpandedChange = { catExpanded = !catExpanded },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            val catName = revenueCategories.firstOrNull { it.id == selectedCategoryId }?.name ?: "Source"
-                            Box(
-                                modifier = Modifier
-                                    .menuAnchor()
-                                    .fillMaxWidth()
-                                    .height(44.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(theme.surfaceAlt)
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                Text("From: $catName", color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                            ExposedDropdownMenu(
-                                expanded = catExpanded,
-                                onDismissRequest = { catExpanded = false },
-                                modifier = Modifier.background(theme.surface)
-                            ) {
-                                revenueCategories.forEach { cat ->
-                                    DropdownMenuItem(
-                                        text = { Text(cat.name, color = theme.textBright, fontSize = 12.sp) },
-                                        onClick = {
-                                            selectedCategoryId = cat.id
-                                            catExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                EntryMode.TRANSFER -> {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        // From Account
-                        ExposedDropdownMenuBox(
-                            expanded = primaryAccExpanded,
-                            onExpandedChange = { primaryAccExpanded = !primaryAccExpanded },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            val fromName = assetAccounts.firstOrNull { it.id == primaryAccountId }?.name ?: "Source"
-                            Box(
-                                modifier = Modifier
-                                    .menuAnchor()
-                                    .fillMaxWidth()
-                                    .height(44.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(theme.surfaceAlt)
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                Text("From: $fromName", color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                            ExposedDropdownMenu(
-                                expanded = primaryAccExpanded,
-                                onDismissRequest = { primaryAccExpanded = false },
-                                modifier = Modifier.background(theme.surface)
-                            ) {
-                                assetAccounts.forEach { acc ->
-                                    DropdownMenuItem(
-                                        text = { Text(acc.name, color = theme.textBright, fontSize = 12.sp) },
-                                        onClick = {
-                                            primaryAccountId = acc.id
-                                            primaryAccExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-
-                        // To Account
-                        ExposedDropdownMenuBox(
-                            expanded = targetAccExpanded,
-                            onExpandedChange = { targetAccExpanded = !targetAccExpanded },
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            val toName = assetAccounts.firstOrNull { it.id == targetAccountId }?.name ?: "Target"
-                            Box(
-                                modifier = Modifier
-                                    .menuAnchor()
-                                    .fillMaxWidth()
-                                    .height(44.dp)
-                                    .clip(RoundedCornerShape(10.dp))
-                                    .background(theme.surfaceAlt)
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                                contentAlignment = Alignment.CenterStart
-                            ) {
-                                Text("To: $toName", color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                            ExposedDropdownMenu(
-                                expanded = targetAccExpanded,
-                                onDismissRequest = { targetAccExpanded = false },
-                                modifier = Modifier.background(theme.surface)
-                            ) {
-                                assetAccounts.filter { it.id != primaryAccountId }.forEach { acc ->
-                                    DropdownMenuItem(
-                                        text = { Text(acc.name, color = theme.textBright, fontSize = 12.sp) },
-                                        onClick = {
-                                            targetAccountId = acc.id
-                                            targetAccExpanded = false
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    }
+            } else {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    SelectorTile(
+                        label = "Via: ${selectedAssetAccount?.name ?: "Select Asset"}",
+                        modifier = Modifier.weight(1f),
+                        theme = theme,
+                        onClick = { showAccountPicker = true }
+                    )
+                    SelectorTile(
+                        label = "Bucket: $selectedCategory",
+                        modifier = Modifier.weight(1f),
+                        theme = theme,
+                        onClick = { showCategoryPicker = true }
+                    )
                 }
             }
 
-            // Note / Merchant Input
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(44.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(theme.surfaceAlt)
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                contentAlignment = Alignment.CenterStart
-            ) {
-                if (note.isEmpty()) {
-                    Text("Note / Merchant / Narration", color = theme.textMuted, fontSize = 12.sp)
-                }
-                BasicTextField(
-                    value = note,
-                    onValueChange = { note = it },
-                    singleLine = true,
-                    textStyle = TextStyle(color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold),
-                    cursorBrush = SolidColor(theme.accent),
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
+            // Description / Merchant
+            CompactInputField(
+                value = note,
+                onValueChange = { note = it },
+                placeholder = "Note / Merchant / Narration",
+                modifier = Modifier.fillMaxWidth()
+            )
 
-            // Recurring Entry Toggle
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Recurring Schedule?", color = theme.textBright, fontSize = 12.sp)
-                Switch(
-                    checked = isRecurring,
-                    onCheckedChange = { isRecurring = it },
-                    colors = SwitchDefaults.colors(checkedThumbColor = theme.accent, checkedTrackColor = theme.surfaceAlt)
-                )
-            }
-
-            AnimatedVisibility(visible = isRecurring) {
-                ExposedDropdownMenuBox(
-                    expanded = freqExpanded,
-                    onExpandedChange = { freqExpanded = !freqExpanded },
-                    modifier = Modifier.fillMaxWidth()
+            // Recurring Schedule Toggle
+            if (selectedMode != EntryMode.TRANSFER) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(
+                    Text("Recurring Schedule?", color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Switch(
+                        checked = isRecurring,
+                        onCheckedChange = { isRecurring = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = theme.bg,
+                            checkedTrackColor = theme.accent,
+                            uncheckedThumbColor = theme.textMuted,
+                            uncheckedTrackColor = theme.surfaceAlt
+                        )
+                    )
+                }
+
+                AnimatedVisibility(visible = isRecurring) {
+                    Row(
                         modifier = Modifier
-                            .menuAnchor()
                             .fillMaxWidth()
-                            .height(42.dp)
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .background(theme.surfaceAlt)
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        contentAlignment = Alignment.CenterStart
+                            .padding(3.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Text("Frequency: $recurringFrequency", color = theme.textBright, fontSize = 12.sp)
+                        listOf("DAILY", "WEEKLY", "MONTHLY").forEach { freq ->
+                            val isSel = recurringFrequency == freq
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isSel) theme.accent else Color.Transparent)
+                                    .clickable { recurringFrequency = freq }
+                                    .padding(vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(freq, color = if (isSel) theme.bg else theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
-                    ExposedDropdownMenu(
-                        expanded = freqExpanded,
-                        onDismissRequest = { freqExpanded = false },
-                        modifier = Modifier.background(theme.surface)
-                    ) {
-                        listOf("DAILY", "WEEKLY", "MONTHLY", "YEARLY").forEach { freq ->
-                            DropdownMenuItem(
-                                text = { Text(freq, color = theme.textBright, fontSize = 12.sp) },
-                                onClick = {
-                                    recurringFrequency = freq
-                                    freqExpanded = false
-                                }
+                }
+            }
+
+            // Post Button
+            Button(
+                onClick = {
+                    val finalAmount = evaluatedAmount ?: 0.0
+                    if (finalAmount > 0.0 && selectedAssetAccount != null) {
+                        if (selectedMode == EntryMode.TRANSFER) {
+                            val dest = selectedDestinationAccount
+                            if (dest != null && dest.id != selectedAssetAccount!!.id) {
+                                onSubmitTransfer(
+                                    selectedAssetAccount!!.id,
+                                    dest.id,
+                                    finalAmount,
+                                    note,
+                                    selectedDateMillis
+                                )
+                            }
+                        } else {
+                            onSubmitExpenseIncome(
+                                selectedMode == EntryMode.EXPENSE,
+                                selectedAssetAccount!!.id,
+                                selectedCategory,
+                                finalAmount,
+                                note,
+                                selectedDateMillis,
+                                isRecurring,
+                                recurringFrequency
                             )
                         }
                     }
-                }
-            }
-
-            Spacer(Modifier.height(4.dp))
-
-            // Action Buttons
-            Button(
-                onClick = {
-                    val finalAmt = calculatedAmount ?: return@Button
-                    if (finalAmt <= 0.0) return@Button
-
-                    val (debitAccId, creditAccId) = when (selectedMode) {
-                        EntryMode.EXPENSE -> Pair(selectedCategoryId, primaryAccountId)
-                        EntryMode.INCOME -> Pair(primaryAccountId, selectedCategoryId)
-                        EntryMode.TRANSFER -> Pair(targetAccountId, primaryAccountId)
-                    }
-
-                    onSubmit(
-                        selectedMode,
-                        debitAccId,
-                        creditAccId,
-                        finalAmt,
-                        note,
-                        selectedDateMillis,
-                        isRecurring,
-                        recurringFrequency
-                    )
                 },
                 modifier = Modifier
                     .fillMaxWidth()
@@ -547,15 +303,10 @@ fun UnifiedEntrySheet(
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
             ) {
-                Text(
-                    text = "Post to Ledger",
-                    color = theme.bg,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 13.5.sp
-                )
+                Text("Post to Ledger", color = theme.bg, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(12.dp))
         }
     }
 
@@ -569,4 +320,121 @@ fun UnifiedEntrySheet(
             }
         )
     }
+
+    if (showAccountPicker) {
+        AccountSelectionDialog(
+            title = "Select Source Asset",
+            accounts = assetAccounts,
+            onDismiss = { showAccountPicker = false },
+            onSelect = {
+                selectedAssetAccount = it
+                showAccountPicker = false
+            }
+        )
+    }
+
+    if (showDestAccountPicker) {
+        AccountSelectionDialog(
+            title = "Select Destination Asset",
+            accounts = assetAccounts.filter { it.id != selectedAssetAccount?.id },
+            onDismiss = { showDestAccountPicker = false },
+            onSelect = {
+                selectedDestinationAccount = it
+                showDestAccountPicker = false
+            }
+        )
+    }
+
+    if (showCategoryPicker) {
+        GenericListDialog(
+            title = "Select Category",
+            items = categories,
+            onDismiss = { showCategoryPicker = false },
+            onSelect = {
+                selectedCategory = it
+                showCategoryPicker = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun SelectorTile(label: String, modifier: Modifier, theme: ThemeColors, onClick: () -> Unit) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(theme.surfaceAlt)
+            .clickable { onClick() }
+            .padding(horizontal = 12.dp, vertical = 12.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Text(label, color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+    }
+}
+
+@Composable
+private fun AccountSelectionDialog(
+    title: String,
+    accounts: List<LedgerAccount>,
+    onDismiss: () -> Unit,
+    onSelect: (LedgerAccount) -> Unit
+) {
+    val theme = LocalThemeColors.current
+    AlertDialog(
+        containerColor = theme.surface,
+        onDismissRequest = onDismiss,
+        title = { Text(title, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                accounts.forEach { acc ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(theme.surfaceAlt)
+                            .clickable { onSelect(acc) }
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(acc.name, color = theme.textBright, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Text(acc.subType, color = theme.textMuted, fontSize = 10.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) } }
+    )
+}
+
+@Composable
+private fun GenericListDialog(
+    title: String,
+    items: List<String>,
+    onDismiss: () -> Unit,
+    onSelect: (String) -> Unit
+) {
+    val theme = LocalThemeColors.current
+    AlertDialog(
+        containerColor = theme.surface,
+        onDismissRequest = onDismiss,
+        title = { Text(title, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                items.forEach { item ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { onSelect(item) }
+                            .padding(vertical = 10.dp, horizontal = 8.dp)
+                    ) {
+                        Text(item, color = theme.textBright, fontSize = 12.5.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) } }
+    )
 }
