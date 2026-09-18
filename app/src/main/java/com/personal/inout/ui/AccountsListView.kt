@@ -3,6 +3,7 @@ package com.personal.inout.ui
 import androidx.compose.animation.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -42,7 +43,6 @@ fun AccountsListView(
 ) {
     val theme = LocalThemeColors.current
 
-    // Grouping into 3 clear vertical buckets
     val walletAccounts = remember(accountsWithBalances) {
         accountsWithBalances.filter {
             it.classification == AccountClassification.ASSET &&
@@ -70,7 +70,7 @@ fun AccountsListView(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp)
     ) {
-        // --- Section 1: Wallets & Banks ---
+        // Wallets & Banks
         item {
             AccountSectionHeader(
                 title = "Wallets & Bank Accounts",
@@ -101,7 +101,7 @@ fun AccountsListView(
             }
         }
 
-        // --- Section 2: Credit Cards & Dues ---
+        // Credit Cards & Dues
         item {
             Spacer(Modifier.height(6.dp))
             AccountSectionHeader(
@@ -136,7 +136,7 @@ fun AccountsListView(
             }
         }
 
-        // --- Section 3: People / Informal Borrow & Lend ---
+        // People (Lent & Borrowed)
         item {
             Spacer(Modifier.height(6.dp))
             AccountSectionHeader(
@@ -173,8 +173,6 @@ fun AccountsListView(
         }
     }
 }
-
-// ---------------- SUB-COMPONENTS ----------------
 
 @Composable
 private fun AccountSectionHeader(
@@ -234,7 +232,6 @@ private fun AccountVerticalRow(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Left details
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -292,7 +289,6 @@ private fun AccountVerticalRow(
                 }
             }
 
-            // Right amount & action button
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -321,7 +317,6 @@ private fun AccountVerticalRow(
                     }
                 }
 
-                // Quick Action Pill
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
@@ -340,7 +335,6 @@ private fun AccountVerticalRow(
         }
     }
 
-    // Two-row action sheet on long press (No PIN)
     if (showActionMenu) {
         AlertDialog(
             containerColor = theme.surface,
