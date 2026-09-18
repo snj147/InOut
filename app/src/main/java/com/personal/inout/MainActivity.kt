@@ -9,7 +9,7 @@ import com.personal.inout.ui.DashboardScreen
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val database = (application as InOutApp).database
+        val database = AppDatabase.getInstance(applicationContext)
         setContent {
             DashboardScreen(db = database)
         }
