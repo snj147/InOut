@@ -7,11 +7,9 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -40,9 +38,9 @@ fun AccountPocketsView(
 ) {
     val theme = LocalThemeColors.current
 
-    val liquidAccounts = remember(pocketBalances) { pocketBalances.filter { it.pocketType == PocketType.LIQUID } }
-    val creditCards = remember(pocketBalances) { pocketBalances.filter { it.pocketType == PocketType.CREDIT_LINE } }
-    val counterparties = remember(pocketBalances) { pocketBalances.filter { it.pocketType == PocketType.COUNTERPARTY } }
+    val cashAndBank = remember(pocketBalances) { pocketBalances.filter { it.pocketType == PocketType.LIQUID } }
+    val creditAndLoans = remember(pocketBalances) { pocketBalances.filter { it.pocketType == PocketType.CREDIT_LINE } }
+    val people = remember(pocketBalances) { pocketBalances.filter { it.pocketType == PocketType.COUNTERPARTY } }
 
     var settlingCard by remember { mutableStateOf<PocketBalanceSummary?>(null) }
     var peerModalTarget by remember { mutableStateOf<PocketBalanceSummary?>(null) }
@@ -53,57 +51,54 @@ fun AccountPocketsView(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp)
     ) {
-        // Liquid Wallets
         item {
-            PocketGroupHeader(title = "Liquid Reserves", count = liquidAccounts.size, theme = theme)
+            AccountSectionHeader(title = "Cash & Bank Accounts", count = cashAndBank.size, theme = theme)
         }
-        items(liquidAccounts, key = { it.pocketId }) { acc ->
+        items(cashAndBank, key = { it.pocketId }) { acc ->
             val raw = rawPockets.firstOrNull { it.id == acc.pocketId }
-            GenericPocketRow(
+            AccountCardRow(
                 summary = acc,
                 isPrivacyMode = isPrivacyMode,
                 theme = theme,
                 onTap = { raw?.let { onEditPocket(it) } },
-                onLongClick = { raw?.let { selectedPocketForMenu = it to acc.currentBalance } },
+                onLongPress = { raw?.let { selectedPocketForMenu = it to acc.currentBalance } },
                 actionLabel = "Edit",
                 actionColor = theme.accent,
-                onAction = { raw?.let { onEditPocket(it) } }
+                onActionClick = { raw?.let { onEditPocket(it) } }
             )
         }
 
-        // Credit Cards
         item {
-            PocketGroupHeader(title = "Credit Facilities", count = creditCards.size, theme = theme)
+            AccountSectionHeader(title = "Cards & Loans (CC / Dues)", count = creditAndLoans.size, theme = theme)
         }
-        items(creditCards, key = { it.pocketId }) { card ->
+        items(creditAndLoans, key = { it.pocketId }) { card ->
             val raw = rawPockets.firstOrNull { it.id == card.pocketId }
             val dues = card.currentBalance.coerceAtLeast(0.0)
             val available = (card.creditLimit - dues).coerceIn(0.0, card.creditLimit)
 
-            GenericPocketRow(
+            AccountCardRow(
                 summary = card,
                 subLabel = if (isPrivacyMode) "Avail: ₹ •••" else "Avail: ₹${String.format("%,.0f", available)} / Limit: ₹${String.format("%,.0f", card.creditLimit)}",
                 isPrivacyMode = isPrivacyMode,
                 theme = theme,
                 onTap = { raw?.let { onEditPocket(it) } },
-                onLongClick = { raw?.let { selectedPocketForMenu = it to card.currentBalance } },
-                actionLabel = if (dues > 0) "Pay Bill" else "Cleared",
+                onLongPress = { raw?.let { selectedPocketForMenu = it to card.currentBalance } },
+                actionLabel = if (dues > 0) "Pay Bill" else "Settled",
                 actionColor = if (dues > 0) theme.mildRed else theme.textMuted,
-                onAction = { if (dues > 0) settlingCard = card }
+                onActionClick = { if (dues > 0) settlingCard = card }
             )
         }
 
-        // Counterparties
         item {
-            PocketGroupHeader(title = "Counterparties (Tethers)", count = counterparties.size, theme = theme)
+            AccountSectionHeader(title = "People (Owed & Lent)", count = people.size, theme = theme)
         }
-        items(counterparties, key = { it.pocketId }) { peer ->
+        items(people, key = { it.pocketId }) { peer ->
             val raw = rawPockets.firstOrNull { it.id == peer.pocketId }
             val net = peer.currentBalance
             val isOwedToYou = net > 0
             val isEven = net == 0.0
 
-            GenericPocketRow(
+            AccountCardRow(
                 summary = peer,
                 subLabel = when {
                     isEven -> "Even • Settled"
@@ -113,10 +108,10 @@ fun AccountPocketsView(
                 isPrivacyMode = isPrivacyMode,
                 theme = theme,
                 onTap = { raw?.let { onEditPocket(it) } },
-                onLongClick = { raw?.let { selectedPocketForMenu = it to peer.currentBalance } },
+                onLongPress = { raw?.let { selectedPocketForMenu = it to peer.currentBalance } },
                 actionLabel = if (isEven) "Record" else if (isOwedToYou) "Collect" else "Settle",
                 actionColor = if (isEven) theme.accent else if (isOwedToYou) theme.mildGreen else theme.mildRed,
-                onAction = { peerModalTarget = peer }
+                onActionClick = { peerModalTarget = peer }
             )
         }
     }
@@ -142,7 +137,7 @@ fun AccountPocketsView(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Icon(Icons.Default.Edit, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
-                        Text("Edit Pocket Details", color = theme.textBright, fontSize = 13.sp)
+                        Text("Edit Account Details", color = theme.textBright, fontSize = 13.sp)
                     }
 
                     Divider(color = theme.surfaceAlt, thickness = 0.5.dp)
@@ -161,7 +156,7 @@ fun AccountPocketsView(
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Icon(Icons.Default.Delete, contentDescription = null, tint = theme.mildRed, modifier = Modifier.size(18.dp))
-                        Text("Delete / Archive Pocket", color = theme.mildRed, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Delete / Archive Account", color = theme.mildRed, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             },
@@ -174,7 +169,6 @@ fun AccountPocketsView(
         )
     }
 
-    // Capped Card Settlement Dialog
     settlingCard?.let { card ->
         CardPayDialog(
             card = card,
@@ -188,7 +182,6 @@ fun AccountPocketsView(
         )
     }
 
-    // Bilateral Counterparty Action Dialog
     peerModalTarget?.let { peer ->
         PeerActionDialog(
             peer = peer,
@@ -205,16 +198,16 @@ fun AccountPocketsView(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GenericPocketRow(
+private fun AccountCardRow(
     summary: PocketBalanceSummary,
     subLabel: String? = null,
     isPrivacyMode: Boolean,
     theme: ThemeColors,
     onTap: () -> Unit,
-    onLongClick: () -> Unit,
+    onLongPress: () -> Unit,
     actionLabel: String,
     actionColor: Color,
-    onAction: () -> Unit
+    onActionClick: () -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -222,7 +215,7 @@ private fun GenericPocketRow(
             .clip(RoundedCornerShape(14.dp))
             .combinedClickable(
                 onClick = onTap,
-                onLongClick = onLongClick
+                onLongClick = onLongPress
             ),
         colors = CardDefaults.cardColors(containerColor = theme.surface)
     ) {
@@ -249,7 +242,7 @@ private fun GenericPocketRow(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
                         .background(actionColor.copy(alpha = 0.2f))
-                        .clickable { onAction() }
+                        .clickable { onActionClick() }
                         .padding(horizontal = 10.dp, vertical = 6.dp)
                 ) {
                     Text(actionLabel, color = actionColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -260,7 +253,7 @@ private fun GenericPocketRow(
 }
 
 @Composable
-private fun PocketGroupHeader(title: String, count: Int, theme: ThemeColors) {
+private fun AccountSectionHeader(title: String, count: Int, theme: ThemeColors) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -286,7 +279,7 @@ private fun CardPayDialog(
     AlertDialog(
         containerColor = theme.surface,
         onDismissRequest = onDismiss,
-        title = { Text("Pay Credit Bill: ${card.name}", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+        title = { Text("Pay Credit Dues: ${card.name}", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text("Outstanding Dues: ₹${String.format("%,.2f", maxDues)}", color = theme.mildRed, fontSize = 12.sp, fontWeight = FontWeight.Bold)
