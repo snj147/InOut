@@ -44,7 +44,7 @@ fun FloatingCommandHud(
     var expression by remember { mutableStateOf(prefilledAmount?.let { String.format("%.2f", it) } ?: "") }
     var note by remember { mutableStateOf(prefilledNote) }
     var selectedDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
-    var showDatePicker by remember { mutableStateOf(false) }
+    var showCustomDatePicker by remember { mutableStateOf(false) }
 
     val liquidPockets = remember(activePockets) { activePockets.filter { it.pocketType == PocketType.LIQUID } }
     val creditPockets = remember(activePockets) { activePockets.filter { it.pocketType == PocketType.CREDIT_LINE } }
@@ -54,12 +54,20 @@ fun FloatingCommandHud(
         mutableStateOf(spendOptions.firstOrNull { it.id == prefilledPocketId } ?: spendOptions.firstOrNull())
     }
 
-    var selectedTransferTarget by remember(liquidPockets) {
-        mutableStateOf(liquidPockets.firstOrNull { it.id != selectedSpendPocket?.id } ?: liquidPockets.firstOrNull())
+    // Safeguard: Filter out identical source pocket for transfers
+    val validTransferTargets = remember(liquidPockets, selectedSpendPocket) {
+        liquidPockets.filter { it.id != selectedSpendPocket?.id }
+    }
+    var selectedTransferTarget by remember(validTransferTargets) {
+        mutableStateOf(validTransferTargets.firstOrNull())
     }
 
-    val categories = listOf("Food & Dining", "Groceries", "Transport", "Shopping", "Bills", "Health", "Leisure", "General")
-    var selectedCategory by remember { mutableStateOf("Food & Dining") }
+    // Context-Aware Category Sets
+    val expenseCategories = listOf("Food & Dining", "Groceries", "Transport", "Shopping", "Bills", "Health", "Leisure", "General")
+    val incomeCategories = listOf("Salary", "Freelance", "Investments", "Gifts", "Rental", "Refunds", "General")
+    var selectedCategory by remember(primaryNature) {
+        mutableStateOf(if (primaryNature == MovementNature.INFLOW) "Salary" else "Food & Dining")
+    }
 
     var isRecurring by remember { mutableStateOf(false) }
     var frequency by remember { mutableStateOf("MONTHLY") }
@@ -76,7 +84,7 @@ fun FloatingCommandHud(
             colors = CardDefaults.cardColors(containerColor = theme.surface),
             modifier = Modifier
                 .fillMaxWidth(0.92f)
-                .padding(vertical = 24.dp)
+                .padding(vertical = 20.dp)
                 .imePadding()
         ) {
             Column(
@@ -85,6 +93,7 @@ fun FloatingCommandHud(
                     .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
+                // Flow Nature Pill Selector (Spent / Received / Transfer)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -94,8 +103,8 @@ fun FloatingCommandHud(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     listOf(
-                        MovementNature.OUTFLOW to "Expense",
-                        MovementNature.INFLOW to "Income",
+                        MovementNature.OUTFLOW to "Spent",
+                        MovementNature.INFLOW to "Received",
                         MovementNature.TRANSFER to "Transfer"
                     ).forEach { (nat, label) ->
                         val isSel = primaryNature == nat
@@ -110,7 +119,7 @@ fun FloatingCommandHud(
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(if (isSel) activeColor else Color.Transparent)
                                 .clickable { primaryNature = nat }
-                                .padding(vertical = 7.dp),
+                                .padding(vertical = 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
@@ -123,6 +132,7 @@ fun FloatingCommandHud(
                     }
                 }
 
+                // Amount Field
                 Column {
                     CompactInputField(
                         value = expression,
@@ -141,20 +151,24 @@ fun FloatingCommandHud(
                     }
                 }
 
+                // Accounts & Category Pickers
                 if (primaryNature == MovementNature.TRANSFER) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         PillDropdown(
                             label = "From: ${selectedSpendPocket?.name ?: "Select"}",
                             modifier = Modifier.weight(1f),
                             items = liquidPockets.map { it.name },
-                            onSelect = { name -> selectedSpendPocket = liquidPockets.firstOrNull { it.name == name } },
+                            onSelect = { name ->
+                                selectedSpendPocket = liquidPockets.firstOrNull { it.name == name }
+                                selectedTransferTarget = liquidPockets.firstOrNull { it.id != selectedSpendPocket?.id }
+                            },
                             theme = theme
                         )
                         PillDropdown(
-                            label = "To: ${selectedTransferTarget?.name ?: "Select"}",
+                            label = "To: ${selectedTransferTarget?.name ?: "None"}",
                             modifier = Modifier.weight(1f),
-                            items = liquidPockets.filter { it.id != selectedSpendPocket?.id }.map { it.name },
-                            onSelect = { name -> selectedTransferTarget = liquidPockets.firstOrNull { it.name == name } },
+                            items = validTransferTargets.map { it.name },
+                            onSelect = { name -> selectedTransferTarget = validTransferTargets.firstOrNull { it.name == name } },
                             theme = theme
                         )
                     }
@@ -162,29 +176,57 @@ fun FloatingCommandHud(
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         val sourcePockets = if (primaryNature == MovementNature.OUTFLOW) spendOptions else liquidPockets
                         PillDropdown(
-                            label = "Pocket: ${selectedSpendPocket?.name ?: "Select"}",
+                            label = "Account: ${selectedSpendPocket?.name ?: "Select"}",
                             modifier = Modifier.weight(1f),
                             items = sourcePockets.map { it.name },
                             onSelect = { name -> selectedSpendPocket = sourcePockets.firstOrNull { it.name == name } },
                             theme = theme
                         )
+                        val activeCategoryList = if (primaryNature == MovementNature.INFLOW) incomeCategories else expenseCategories
                         PillDropdown(
                             label = selectedCategory,
                             modifier = Modifier.weight(1f),
-                            items = categories,
+                            items = activeCategoryList,
                             onSelect = { selectedCategory = it },
                             theme = theme
                         )
                     }
                 }
 
+                // Narration Note
                 CompactInputField(
                     value = note,
                     onValueChange = { note = it },
-                    placeholder = "Merchant / Note / Narration",
+                    placeholder = "Merchant / Note (e.g. Starbucks, Client Payment)",
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                // High-Contrast Date Quick-Select Strip
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Transaction Date", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        val todayMillis = remember { System.currentTimeMillis() }
+                        val yesterdayMillis = remember { todayMillis - (1000 * 60 * 60 * 24) }
+
+                        val isToday = isSameDay(selectedDateMillis, todayMillis)
+                        val isYesterday = isSameDay(selectedDateMillis, yesterdayMillis)
+                        val isCustom = !isToday && !isYesterday
+
+                        DateQuickPill("Today", isToday, theme, Modifier.weight(1f)) { selectedDateMillis = todayMillis }
+                        DateQuickPill("Yesterday", isYesterday, theme, Modifier.weight(1f)) { selectedDateMillis = yesterdayMillis }
+                        DateQuickPill(
+                            if (isCustom) SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(selectedDateMillis)) else "Custom",
+                            isCustom,
+                            theme,
+                            Modifier.weight(1f)
+                        ) { showCustomDatePicker = true }
+                    }
+                }
+
+                // Recurring Accordion
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -193,49 +235,31 @@ fun FloatingCommandHud(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    val dStr = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateMillis))
-                    Text("Date: $dStr", color = theme.textMuted, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        if (showMoreOptions) "Fewer Options ▲" else "More Options ▼",
-                        color = theme.accent,
-                        fontSize = 11.5.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text("Auto Recurring & Notes", color = theme.textMuted, fontSize = 11.5.sp)
+                    Text(if (showMoreOptions) "▲ Less" else "▼ More", color = theme.accent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                 }
 
                 AnimatedVisibility(visible = showMoreOptions) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(
-                            onClick = { showDatePicker = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
+                    if (primaryNature != MovementNature.TRANSFER) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.CalendarMonth, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Change Date", color = theme.textBright, fontSize = 11.sp)
-                        }
-
-                        if (primaryNature != MovementNature.TRANSFER) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text("Auto Recurring?", color = theme.textBright, fontSize = 12.sp)
-                                Switch(
-                                    checked = isRecurring,
-                                    onCheckedChange = { isRecurring = it },
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = theme.bg,
-                                        checkedTrackColor = theme.accent
-                                    )
+                            Text("Repeat Every Month", color = theme.textBright, fontSize = 12.sp)
+                            Switch(
+                                checked = isRecurring,
+                                onCheckedChange = { isRecurring = it },
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = theme.bg,
+                                    checkedTrackColor = theme.accent
                                 )
-                            }
+                            )
                         }
                     }
                 }
 
+                // Commit Button
                 Button(
                     onClick = {
                         val amt = computedAmount ?: 0.0
@@ -252,7 +276,7 @@ fun FloatingCommandHud(
                                     }
                                 }
                                 MovementNature.TRANSFER -> {
-                                    if (selectedSpendPocket != null && selectedTransferTarget != null) {
+                                    if (selectedSpendPocket != null && selectedTransferTarget != null && selectedSpendPocket!!.id != selectedTransferTarget!!.id) {
                                         onSubmit(MovementNature.TRANSFER, selectedSpendPocket!!.id, selectedTransferTarget!!.id, amt, "Transfer", note, selectedDateMillis, false, "NONE")
                                     }
                                 }
@@ -262,29 +286,48 @@ fun FloatingCommandHud(
                     },
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
-                    modifier = Modifier.fillMaxWidth().height(46.dp)
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
                 ) {
-                    Text("Commit to Vault", color = theme.bg, fontWeight = FontWeight.Black, fontSize = 13.5.sp)
+                    Text("Commit to Vault", color = theme.bg, fontWeight = FontWeight.Black, fontSize = 14.sp)
                 }
             }
         }
     }
 
-    if (showDatePicker) {
-        HighContrastDatePicker(
+    if (showCustomDatePicker) {
+        ReadableCalendarDialog(
             initialDateMillis = selectedDateMillis,
-            onDismiss = { showDatePicker = false },
+            onDismiss = { showCustomDatePicker = false },
             onDateSelected = {
                 selectedDateMillis = it
-                showDatePicker = false
+                showCustomDatePicker = false
             }
+        )
+    }
+}
+
+@Composable
+private fun DateQuickPill(label: String, isSelected: Boolean, theme: ThemeColors, modifier: Modifier, onClick: () -> Unit) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (isSelected) theme.accent else theme.surfaceAlt)
+            .clickable { onClick() }
+            .padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            label,
+            color = if (isSelected) theme.bg else theme.textBright,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.Bold
         )
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun HighContrastDatePicker(
+fun ReadableCalendarDialog(
     initialDateMillis: Long,
     onDismiss: () -> Unit,
     onDateSelected: (Long) -> Unit
@@ -304,13 +347,13 @@ fun HighContrastDatePicker(
             containerColor = theme.surface,
             titleContentColor = theme.textBright,
             headlineContentColor = theme.accent,
-            weekdayContentColor = theme.textMuted,
+            weekdayContentColor = theme.accent,
             subheadContentColor = theme.textBright,
             yearContentColor = theme.textBright,
             currentYearContentColor = theme.accent,
             selectedYearContentColor = theme.bg,
             selectedYearContainerColor = theme.accent,
-            dayContentColor = theme.textBright,
+            dayContentColor = Color.White,
             selectedDayContentColor = theme.bg,
             selectedDayContainerColor = theme.accent,
             todayContentColor = theme.accent,
@@ -319,6 +362,11 @@ fun HighContrastDatePicker(
     ) {
         DatePicker(state = pickerState)
     }
+}
+
+private fun isSameDay(d1: Long, d2: Long): Boolean {
+    val f = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
+    return f.format(Date(d1)) == f.format(Date(d2))
 }
 
 @Composable
