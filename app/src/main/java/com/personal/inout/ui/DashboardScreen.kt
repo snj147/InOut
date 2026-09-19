@@ -32,6 +32,7 @@ import androidx.core.content.ContextCompat
 import com.personal.inout.billing.PlayBillingManager
 import com.personal.inout.data.*
 import com.personal.inout.ocr.ReceiptScanner
+import com.personal.inout.util.AppIconManager
 import com.personal.inout.util.CsvExporter
 import com.personal.inout.util.InAppUpdateHelper
 import com.personal.inout.util.PdfDossierExporter
@@ -53,6 +54,12 @@ fun DashboardScreen(db: AppDatabase) {
 
     val billingManager = remember { PlayBillingManager(context, scope) }
     val isProUnlocked by billingManager.isProUnlocked.collectAsState()
+
+    LaunchedEffect(isProUnlocked) {
+        try {
+            AppIconManager.setProIconEnabled(context, isProUnlocked)
+        } catch (_: Exception) {}
+    }
 
     var activeThemeMode by remember {
         val saved = prefs.getString("selected_theme", AppThemeMode.AMBER_OCHRE.name)
@@ -89,6 +96,83 @@ fun DashboardScreen(db: AppDatabase) {
 
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
+
+    // Multi-Account Auto-Split execution engine
+    suspend fun executeDebitWithAutoSplit(
+        nature: MovementNature,
+        primaryLiquidId: Long,
+        targetPocketId: Long?,
+        amount: Double,
+        category: String,
+        note: String
+    ): Boolean {
+        val autoSplitEnabled = prefs.getBoolean("auto_split_debit", false)
+        val liquidBalances = pocketBalances.filter { it.pocketType == PocketType.LIQUID }
+        val primaryBal = liquidBalances.firstOrNull { it.pocketId == primaryLiquidId }?.currentBalance ?: 0.0
+
+        if (primaryBal >= amount) {
+            // Normal single debit
+            db.stateFlowDao().insertFlowRecord(
+                FlowRecord(
+                    nature = nature,
+                    sourcePocketId = primaryLiquidId,
+                    targetPocketId = targetPocketId,
+                    amount = amount,
+                    category = category,
+                    note = note
+                )
+            )
+            return true
+        } else if (autoSplitEnabled) {
+            val totalCombinedLiquid = liquidBalances.sumOf { it.currentBalance }
+            if (totalCombinedLiquid < amount) {
+                snackbarHostState.showSnackbar("Total combined liquid cash (₹${totalCombinedLiquid.toInt()}) is insufficient for ₹${amount.toInt()}")
+                return false
+            }
+
+            var remainingToDebit = amount
+            // 1. Debit all available from primary
+            if (primaryBal > 0.0) {
+                db.stateFlowDao().insertFlowRecord(
+                    FlowRecord(
+                        nature = nature,
+                        sourcePocketId = primaryLiquidId,
+                        targetPocketId = targetPocketId,
+                        amount = primaryBal,
+                        category = category,
+                        note = "$note (Primary Auto-Split)"
+                    )
+                )
+                remainingToDebit -= primaryBal
+            }
+
+            // 2. Sweep across other bank accounts
+            val otherPockets = liquidBalances.filter { it.pocketId != primaryLiquidId }
+            for (p in otherPockets) {
+                if (remainingToDebit <= 0.0) break
+                val availableInP = p.currentBalance.coerceAtLeast(0.0)
+                if (availableInP <= 0.0) continue
+
+                val takeAmt = Math.min(availableInP, remainingToDebit)
+                db.stateFlowDao().insertFlowRecord(
+                    FlowRecord(
+                        nature = nature,
+                        sourcePocketId = p.pocketId,
+                        targetPocketId = targetPocketId,
+                        amount = takeAmt,
+                        category = category,
+                        note = "$note (Secondary Auto-Split from ${p.name})"
+                    )
+                )
+                remainingToDebit -= takeAmt
+            }
+            snackbarHostState.showSnackbar("Auto-Split completed across bank accounts")
+            return true
+        } else {
+            snackbarHostState.showSnackbar("Insufficient funds in selected account (₹${primaryBal.toInt()}). Enable Auto-Split in Settings to share debit.")
+            return false
+        }
+    }
 
     val cameraSnapLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap: Bitmap? ->
         if (bitmap != null) {
@@ -306,38 +390,38 @@ fun DashboardScreen(db: AppDatabase) {
                             }
                         },
                         onRecordCardSettlement = { cardId, liquidId, amt ->
-                            val liquidBal = pocketBalances.firstOrNull { it.pocketId == liquidId }?.currentBalance ?: 0.0
-                            if (amt > liquidBal) {
-                                scope.launch { snackbarHostState.showSnackbar("Insufficient liquid balance (₹${liquidBal.toInt()}) to pay card bill") }
-                            } else {
-                                scope.launch {
-                                    db.stateFlowDao().insertFlowRecord(
-                                        FlowRecord(
-                                            nature = MovementNature.CARD_PAYMENT,
-                                            sourcePocketId = liquidId,
-                                            targetPocketId = cardId,
-                                            amount = amt,
-                                            category = "Bill Payment",
-                                            note = "Card Dues Clearance"
-                                        )
-                                    )
-                                }
+                            scope.launch {
+                                executeDebitWithAutoSplit(
+                                    nature = MovementNature.CARD_PAYMENT,
+                                    primaryLiquidId = liquidId,
+                                    targetPocketId = cardId,
+                                    amount = amt,
+                                    category = "Bill Payment",
+                                    note = "Card Dues Clearance"
+                                )
                             }
                         },
                         onPeerAction = { nature, peerId, liquidId, amt ->
-                            val liquidBal = pocketBalances.firstOrNull { it.pocketId == liquidId }?.currentBalance ?: 0.0
-                            // If spending cash to Lend or Repay, ensure balance doesn't go below 0
-                            if ((nature == MovementNature.PEER_LEND || nature == MovementNature.PEER_REPAY) && amt > liquidBal) {
-                                scope.launch { snackbarHostState.showSnackbar("Insufficient cash/bank balance to transfer ₹$amt") }
-                            } else {
-                                scope.launch {
+                            scope.launch {
+                                if (nature == MovementNature.PEER_LEND || nature == MovementNature.PEER_REPAY) {
+                                    executeDebitWithAutoSplit(
+                                        nature = nature,
+                                        primaryLiquidId = liquidId,
+                                        targetPocketId = peerId,
+                                        amount = amt,
+                                        category = "Peer Transfer",
+                                        note = if (nature == MovementNature.PEER_LEND) "Lent" else "Repaid"
+                                    )
+                                } else {
+                                    // Collect / Borrow -> Inflow into bank
                                     db.stateFlowDao().insertFlowRecord(
                                         FlowRecord(
                                             nature = nature,
-                                            sourcePocketId = if (nature == MovementNature.PEER_LEND || nature == MovementNature.PEER_REPAY) liquidId else peerId,
-                                            targetPocketId = if (nature == MovementNature.PEER_LEND || nature == MovementNature.PEER_REPAY) peerId else liquidId,
+                                            sourcePocketId = peerId,
+                                            targetPocketId = liquidId,
                                             amount = amt,
-                                            category = "Peer Transfer"
+                                            category = "Peer Transfer",
+                                            note = if (nature == MovementNature.PEER_COLLECT) "Collected" else "Borrowed"
                                         )
                                     )
                                 }
@@ -370,14 +454,16 @@ fun DashboardScreen(db: AppDatabase) {
                         },
                         onTriggerProPurchase = { showMockPaywall = true },
                         onExportPdfDossier = {
-                            PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords)
+                            scope.launch {
+                                PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords)
+                            }
                         },
                         onExportCsv = {
                             val compatList = flowRecords.map {
                                 Transaction(
                                     id = it.id,
                                     accountId = it.sourcePocketId ?: it.targetPocketId ?: 0L,
-                                    flowType = if (it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.CARD_PAYMENT)) "OUT" else "IN",
+                                    flowType = if (it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.CARD_PAYMENT)) "OUT" else "IN",
                                     type = it.nature.name,
                                     category = it.category,
                                     amount = it.amount,
@@ -408,28 +494,41 @@ fun DashboardScreen(db: AppDatabase) {
                     onSubmit = { nature, srcId, tgtId, amt, cat, note, date, isRec, freq ->
                         val srcBal = pocketBalances.firstOrNull { it.pocketId == srcId }
                         val isSrcLiquid = srcBal?.pocketType == PocketType.LIQUID
-                        // Overdraft Prevention Lock
-                        if (nature == MovementNature.OUTFLOW && isSrcLiquid && amt > (srcBal?.currentBalance ?: 0.0)) {
-                            scope.launch {
-                                snackbarHostState.showSnackbar("Insufficient funds in ${srcBal?.name}. Balance cannot go negative.")
+
+                        // Strict Overdraft Protection on Outflow
+                        if (nature == MovementNature.OUTFLOW && isSrcLiquid) {
+                            val autoSplit = prefs.getBoolean("auto_split_debit", false)
+                            val totalLiquid = pocketBalances.filter { it.pocketType == PocketType.LIQUID }.sumOf { it.currentBalance }
+                            val avail = srcBal?.currentBalance ?: 0.0
+
+                            if (avail < amt && !autoSplit) {
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("Insufficient balance in ${srcBal?.name}. Balance cannot go negative.")
+                                }
+                                return@FloatingCommandHud
+                            } else if (totalLiquid < amt && autoSplit) {
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("Total combined liquid cash (₹${totalLiquid.toInt()}) is insufficient.")
+                                }
+                                return@FloatingCommandHud
                             }
-                        } else {
-                            scope.launch {
-                                db.stateFlowDao().insertFlowRecord(
-                                    FlowRecord(
-                                        nature = nature,
-                                        sourcePocketId = srcId,
-                                        targetPocketId = tgtId,
-                                        amount = amt,
-                                        category = cat,
-                                        note = note,
-                                        timestamp = date,
-                                        isRecurring = isRec,
-                                        frequency = freq
-                                    )
+                        }
+
+                        scope.launch {
+                            db.stateFlowDao().insertFlowRecord(
+                                FlowRecord(
+                                    nature = nature,
+                                    sourcePocketId = srcId,
+                                    targetPocketId = tgtId,
+                                    amount = amt,
+                                    category = cat,
+                                    note = note,
+                                    timestamp = date,
+                                    isRecurring = isRec,
+                                    frequency = freq
                                 )
-                                showCommandHud = false
-                            }
+                            )
+                            showCommandHud = false
                         }
                     }
                 )
@@ -446,7 +545,7 @@ fun DashboardScreen(db: AppDatabase) {
                             Transaction(
                                 id = it.id,
                                 accountId = it.sourcePocketId ?: it.targetPocketId ?: 0L,
-                                flowType = if (it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.CARD_PAYMENT)) "OUT" else "IN",
+                                flowType = if (it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.CARD_PAYMENT)) "OUT" else "IN",
                                 type = it.nature.name,
                                 category = it.category,
                                 amount = it.amount,
@@ -459,7 +558,9 @@ fun DashboardScreen(db: AppDatabase) {
                         CsvExporter.exportAndShareTransactions(context, compatList)
                     },
                     onExportPdfDossier = {
-                        PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords)
+                        scope.launch {
+                            PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords)
+                        }
                     }
                 )
             }
@@ -479,6 +580,27 @@ fun DashboardScreen(db: AppDatabase) {
                                 )
                             )
                             showCreatePocketDialog = false
+                        }
+                    }
+                )
+            }
+
+            // Edit Account Dialog
+            editingPocket?.let { pocket ->
+                EditAccountDialog(
+                    account = pocket,
+                    theme = theme,
+                    onDismiss = { editingPocket = null },
+                    onSave = { updatedName, updatedLimit ->
+                        scope.launch {
+                            db.stateFlowDao().updatePocket(
+                                pocket.copy(
+                                    name = updatedName,
+                                    creditLimit = updatedLimit
+                                )
+                            )
+                            editingPocket = null
+                            snackbarHostState.showSnackbar("${pocket.name} updated")
                         }
                     }
                 )
@@ -559,7 +681,7 @@ private fun CleanVaultHeader(
 
 @Composable
 private fun FlowRecordDisplayRow(flow: FlowRecord, isPrivacyMode: Boolean, theme: ThemeColors) {
-    val isOut = flow.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.CARD_PAYMENT)
+    val isOut = flow.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.CARD_PAYMENT)
     val flowColor = if (isOut) theme.mildRed else theme.mildGreen
     val dStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(flow.timestamp))
 
@@ -649,6 +771,42 @@ private fun CreateAccountDialog(
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
             ) {
                 Text("Save Account", color = theme.bg, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) } }
+    )
+}
+
+@Composable
+private fun EditAccountDialog(
+    account: VaultPocket,
+    theme: ThemeColors,
+    onDismiss: () -> Unit,
+    onSave: (String, Double) -> Unit
+) {
+    var name by remember { mutableStateOf(account.name) }
+    var limit by remember { mutableStateOf(if (account.creditLimit > 0) String.format("%.0f", account.creditLimit) else "") }
+
+    AlertDialog(
+        containerColor = theme.surface,
+        onDismissRequest = onDismiss,
+        title = { Text("Edit Account", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                CompactInputField(value = name, onValueChange = { name = it }, placeholder = "Account Name")
+                if (account.pocketType == PocketType.CREDIT_LINE) {
+                    CompactInputField(value = limit, onValueChange = { limit = it }, placeholder = "Credit Limit")
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (name.isNotBlank()) onSave(name, limit.toDoubleOrNull() ?: account.creditLimit)
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
+            ) {
+                Text("Save Changes", color = theme.bg, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) } }
