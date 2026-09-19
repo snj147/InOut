@@ -16,7 +16,8 @@ import kotlin.coroutines.resumeWithException
 
 data class ParsedReceipt(
     val merchant: String,
-    val total: Double?
+    val total: Double? = null,
+    val lineItems: List<String> = emptyList()
 )
 
 object ReceiptScanner {
@@ -46,19 +47,15 @@ object ReceiptScanner {
     }
 
     private fun extractReceiptData(visionText: Text): ParsedReceipt {
-        val fullText = visionText.text
         val lines = visionText.textBlocks.flatMap { it.lines }.map { it.text.trim() }.filter { it.isNotBlank() }
 
-        // 1. EXTRACT TOTAL USING KEYWORD ANCHORS (NOT RAW LARGEST NUMBERS)
         val totalKeywords = listOf("GRAND TOTAL", "TOTAL AMOUNT", "NET PAYABLE", "TOTAL", "AMOUNT DUE", "SUBTOTAL", "BALANCE DUE")
         var detectedTotal: Double? = null
 
-        // Pass 1: Scan for lines explicitly containing total keywords
         for (line in lines.reversed()) {
             val upper = line.uppercase()
             for (kw in totalKeywords) {
                 if (upper.contains(kw)) {
-                    // Extract valid currency amount from this line (e.g. ₹ 707.70 or 850)
                     val priceMatch = Regex("""(?:₹|INR|RS\.?|TOTAL\s*[:\-])?\s*(\d{1,6}(?:,\d{3})*(?:\.\d{1,2})?)""").find(upper)
                     val candidate = priceMatch?.groupValues?.get(1)?.replace(",", "")?.toDoubleOrNull()
                     if (candidate != null && candidate > 0 && candidate < 500000) {
@@ -70,7 +67,6 @@ object ReceiptScanner {
             if (detectedTotal != null) break
         }
 
-        // Pass 2: Fallback if keywords weren't on the same line (Look at lines right after the keyword)
         if (detectedTotal == null) {
             for (i in lines.indices) {
                 val upper = lines[i].uppercase()
@@ -88,7 +84,6 @@ object ReceiptScanner {
             }
         }
 
-        // 2. EXTRACT CLEAN MERCHANT NAME (Ignore UI elements, timestamps, and Bill labels)
         val ignoreList = listOf("EXIT", "POS", "ESC", "BILL", "NO", "DATE", "TIME", "WELCOME", "TAX", "INVOICE", "CASH", "CARD")
         var detectedMerchant = "Receipt"
 
@@ -97,7 +92,7 @@ object ReceiptScanner {
             val upper = clean.uppercase()
             val isIgnored = ignoreList.any { upper.startsWith(it) || upper == it }
             val hasDigitsOnly = clean.all { it.isDigit() || it.isWhitespace() }
-            
+
             if (!isIgnored && !hasDigitsOnly && clean.length in 3..35) {
                 detectedMerchant = clean
                 break
@@ -106,7 +101,8 @@ object ReceiptScanner {
 
         return ParsedReceipt(
             merchant = detectedMerchant,
-            total = detectedTotal
+            total = detectedTotal,
+            lineItems = lines.take(10)
         )
     }
 }
