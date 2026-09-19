@@ -51,6 +51,7 @@ fun AccountPocketsView(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp)
     ) {
+        // Cash & Bank
         item {
             AccountSectionHeader(title = "Cash & Bank Accounts", count = cashAndBank.size, theme = theme)
         }
@@ -60,7 +61,6 @@ fun AccountPocketsView(
                 summary = acc,
                 isPrivacyMode = isPrivacyMode,
                 theme = theme,
-                onTap = { raw?.let { onEditPocket(it) } },
                 onLongPress = { raw?.let { selectedPocketForMenu = it to acc.currentBalance } },
                 actionLabel = "Edit",
                 actionColor = theme.accent,
@@ -68,6 +68,7 @@ fun AccountPocketsView(
             )
         }
 
+        // Cards & Loans
         item {
             AccountSectionHeader(title = "Cards & Loans (CC / Dues)", count = creditAndLoans.size, theme = theme)
         }
@@ -81,7 +82,6 @@ fun AccountPocketsView(
                 subLabel = if (isPrivacyMode) "Avail: ₹ •••" else "Avail: ₹${String.format("%,.0f", available)} / Limit: ₹${String.format("%,.0f", card.creditLimit)}",
                 isPrivacyMode = isPrivacyMode,
                 theme = theme,
-                onTap = { raw?.let { onEditPocket(it) } },
                 onLongPress = { raw?.let { selectedPocketForMenu = it to card.currentBalance } },
                 actionLabel = if (dues > 0) "Pay Bill" else "Settled",
                 actionColor = if (dues > 0) theme.mildRed else theme.textMuted,
@@ -89,6 +89,7 @@ fun AccountPocketsView(
             )
         }
 
+        // People
         item {
             AccountSectionHeader(title = "People (Owed & Lent)", count = people.size, theme = theme)
         }
@@ -107,7 +108,6 @@ fun AccountPocketsView(
                 },
                 isPrivacyMode = isPrivacyMode,
                 theme = theme,
-                onTap = { raw?.let { onEditPocket(it) } },
                 onLongPress = { raw?.let { selectedPocketForMenu = it to peer.currentBalance } },
                 actionLabel = if (isEven) "Transact" else if (isOwedToYou) "Collect" else "Repay",
                 actionColor = if (isEven) theme.accent else if (isOwedToYou) theme.mildGreen else theme.mildRed,
@@ -116,6 +116,7 @@ fun AccountPocketsView(
         }
     }
 
+    // Long Press Context Menu
     selectedPocketForMenu?.let { (pocket, balance) ->
         AlertDialog(
             containerColor = theme.surface,
@@ -202,7 +203,6 @@ private fun AccountCardRow(
     subLabel: String? = null,
     isPrivacyMode: Boolean,
     theme: ThemeColors,
-    onTap: () -> Unit,
     onLongPress: () -> Unit,
     actionLabel: String,
     actionColor: Color,
@@ -213,7 +213,7 @@ private fun AccountCardRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(14.dp))
             .combinedClickable(
-                onClick = onTap,
+                onClick = {},
                 onLongClick = onLongPress
             ),
         colors = CardDefaults.cardColors(containerColor = theme.surface)
@@ -237,14 +237,15 @@ private fun AccountCardRow(
                     fontSize = 14.sp
                 )
 
+                // Dedicated standalone clickable pill so touch events don't clash with Card
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
                         .background(actionColor.copy(alpha = 0.2f))
                         .clickable { onActionClick() }
-                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
-                    Text(actionLabel, color = actionColor, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text(actionLabel, color = actionColor, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -317,16 +318,16 @@ private fun PeerActionDialog(
 ) {
     var amount by remember { mutableStateOf("") }
     val net = peer.currentBalance
-    val theyOweYou = net > 0
 
-    // Logic:
-    // If they owe you: Collect (recovers your loan) or Lend (you give them more)
-    // If you owe them: Repay (clears what you owe) or Borrow (you take more)
-    val pairOptions = remember(theyOweYou) {
-        if (theyOweYou) {
-            listOf(MovementNature.PEER_COLLECT to "Collect", MovementNature.PEER_LEND to "Lend More")
-        } else {
-            listOf(MovementNature.PEER_REPAY to "Repay", MovementNature.PEER_BORROW to "Borrow More")
+    // Fixed logic for Neutral (0), Positive, and Negative accounts:
+    // 1. Balance = 0: "Lend" (you give) or "Borrow" (you take)
+    // 2. Balance > 0: "Collect" (they return) or "Lend More" (you give more)
+    // 3. Balance < 0: "Repay" (you return) or "Borrow More" (you take more)
+    val pairOptions = remember(net) {
+        when {
+            net == 0.0 -> listOf(MovementNature.PEER_LEND to "Lend", MovementNature.PEER_BORROW to "Borrow")
+            net > 0.0 -> listOf(MovementNature.PEER_COLLECT to "Collect", MovementNature.PEER_LEND to "Lend More")
+            else -> listOf(MovementNature.PEER_REPAY to "Repay", MovementNature.PEER_BORROW to "Borrow More")
         }
     }
 
