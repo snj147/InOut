@@ -23,7 +23,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.personal.inout.util.AppIconManager
 
 @Composable
 fun SettingsScreen(
@@ -46,6 +45,11 @@ fun SettingsScreen(
     var isBiometricEnabled by remember {
         mutableStateOf(prefs.getBoolean("biometric_enabled", false))
     }
+
+    var isAutoSplitDebitEnabled by remember {
+        mutableStateOf(prefs.getBoolean("auto_split_debit", false))
+    }
+
     var showClearConfirmation by remember { mutableStateOf(false) }
 
     Column(
@@ -105,6 +109,33 @@ fun SettingsScreen(
             }
         }
 
+        // Smart Bank Debit Automation (Auto-Split)
+        SettingsSection(title = "Debit Automation", theme = theme) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text("Smart Multi-Bank Auto-Split", color = theme.textBright, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Text("If primary bank lacks funds, debit remaining amount from other bank accounts automatically.", color = theme.textMuted, fontSize = 10.5.sp)
+                }
+                Switch(
+                    checked = isAutoSplitDebitEnabled,
+                    onCheckedChange = { checked ->
+                        isAutoSplitDebitEnabled = checked
+                        prefs.edit().putBoolean("auto_split_debit", checked).apply()
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = theme.bg,
+                        checkedTrackColor = theme.accent
+                    )
+                )
+            }
+        }
+
         // Cockpit Style Selector
         SettingsSection(title = "Cockpit Instrument Style", theme = theme) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -136,7 +167,6 @@ fun SettingsScreen(
 
                 Divider(color = theme.surfaceAlt, thickness = 0.5.dp, modifier = Modifier.padding(vertical = 4.dp))
 
-                // Custom Daily Spending Burn Rate Slider
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -156,7 +186,7 @@ fun SettingsScreen(
             }
         }
 
-        // 3 Distinct Visual Themes
+        // 3 Themes
         SettingsSection(title = "Appearance & Color Palette", theme = theme) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(
@@ -187,7 +217,7 @@ fun SettingsScreen(
             }
         }
 
-        // Exports (CSV & PDF Dossiers)
+        // Statements & Reports
         SettingsSection(title = "Statements & Reports", theme = theme) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SettingsActionRow(
