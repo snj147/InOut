@@ -7,9 +7,9 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@drawable/ic_vault_launcher"
         android:label="InOut"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:roundIcon="@drawable/ic_vault_launcher"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
 
@@ -24,13 +24,13 @@
             </intent-filter>
         </activity>
 
-        <!-- VIP Gold Dynamic Icon Alias (Disabled by default, enabled when Pro is active) -->
+        <!-- VIP Gold Dynamic Icon Alias -->
         <activity-alias
             android:name=".MainActivityProGold"
             android:enabled="false"
             android:exported="true"
-            android:icon="@mipmap/ic_launcher"
-            android:roundIcon="@mipmap/ic_launcher_round"
+            android:icon="@drawable/ic_vault_launcher_pro"
+            android:roundIcon="@drawable/ic_vault_launcher_pro"
             android:targetActivity=".MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
