@@ -109,14 +109,13 @@ fun AccountPocketsView(
                 theme = theme,
                 onTap = { raw?.let { onEditPocket(it) } },
                 onLongPress = { raw?.let { selectedPocketForMenu = it to peer.currentBalance } },
-                actionLabel = if (isEven) "Record" else if (isOwedToYou) "Collect" else "Settle",
+                actionLabel = if (isEven) "Transact" else if (isOwedToYou) "Collect" else "Repay",
                 actionColor = if (isEven) theme.accent else if (isOwedToYou) theme.mildGreen else theme.mildRed,
                 onActionClick = { peerModalTarget = peer }
             )
         }
     }
 
-    // Long Press Context Menu
     selectedPocketForMenu?.let { (pocket, balance) ->
         AlertDialog(
             containerColor = theme.surface,
@@ -317,7 +316,21 @@ private fun PeerActionDialog(
     onConfirm: (nature: MovementNature, liquidId: Long, amount: Double) -> Unit
 ) {
     var amount by remember { mutableStateOf("") }
-    var selectedNature by remember { mutableStateOf(if (peer.currentBalance >= 0) MovementNature.PEER_LEND else MovementNature.PEER_REPAY) }
+    val net = peer.currentBalance
+    val theyOweYou = net > 0
+
+    // Logic:
+    // If they owe you: Collect (recovers your loan) or Lend (you give them more)
+    // If you owe them: Repay (clears what you owe) or Borrow (you take more)
+    val pairOptions = remember(theyOweYou) {
+        if (theyOweYou) {
+            listOf(MovementNature.PEER_COLLECT to "Collect", MovementNature.PEER_LEND to "Lend More")
+        } else {
+            listOf(MovementNature.PEER_REPAY to "Repay", MovementNature.PEER_BORROW to "Borrow More")
+        }
+    }
+
+    var selectedNature by remember(pairOptions) { mutableStateOf(pairOptions.first().first) }
     var selectedLiquidId by remember { mutableStateOf(liquidOptions.firstOrNull()?.id ?: 0L) }
 
     AlertDialog(
@@ -327,18 +340,18 @@ private fun PeerActionDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf(MovementNature.PEER_LEND to "Lend", MovementNature.PEER_COLLECT to "Collect").forEach { (nat, lbl) ->
+                    pairOptions.forEach { (nat, lbl) ->
                         val isSel = selectedNature == nat
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .clip(RoundedCornerShape(6.dp))
+                                .clip(RoundedCornerShape(8.dp))
                                 .background(if (isSel) theme.accent else theme.surfaceAlt)
                                 .clickable { selectedNature = nat }
-                                .padding(vertical = 6.dp),
+                                .padding(vertical = 8.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(lbl, color = if (isSel) theme.bg else theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text(lbl, color = if (isSel) theme.bg else theme.textMuted, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
