@@ -33,6 +33,9 @@ fun AllTransactionsSearchSheet(
     val theme = LocalThemeColors.current
     var searchQuery by remember { mutableStateOf("") }
 
+    // skipPartiallyExpanded = true forces sheet to open to full height in a single tap!
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
     val filteredRecords = remember(flowRecords, searchQuery) {
         if (searchQuery.isBlank()) flowRecords
         else {
@@ -46,10 +49,11 @@ fun AllTransactionsSearchSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = theme.surface,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
         dragHandle = { BottomSheetDefaults.DragHandle(color = theme.textMuted.copy(alpha = 0.4f)) },
-        modifier = Modifier.fillMaxHeight(0.92f) // Opens at full 92% immediately
+        modifier = Modifier.fillMaxHeight(0.92f)
     ) {
         Column(
             modifier = Modifier
@@ -138,8 +142,11 @@ fun AllTransactionsSearchSheet(
                                         MovementNature.OUTFLOW -> "Spent"
                                         MovementNature.INFLOW -> "Received"
                                         MovementNature.CARD_PAYMENT -> "Card Bill Paid"
+                                        MovementNature.PEER_LEND -> "Lent"
+                                        MovementNature.PEER_COLLECT -> "Collected"
+                                        MovementNature.PEER_BORROW -> "Borrowed"
+                                        MovementNature.PEER_REPAY -> "Repaid"
                                         MovementNature.TRANSFER -> "Transferred"
-                                        else -> flow.nature.name
                                     }
                                     Text("$flowLabel • $dStr", color = theme.textMuted, fontSize = 10.5.sp)
                                 }
