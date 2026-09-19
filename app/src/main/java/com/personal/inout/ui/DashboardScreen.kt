@@ -32,7 +32,6 @@ import androidx.core.content.ContextCompat
 import com.personal.inout.billing.PlayBillingManager
 import com.personal.inout.data.*
 import com.personal.inout.ocr.ReceiptScanner
-import com.personal.inout.util.AppIconManager
 import com.personal.inout.util.CsvExporter
 import com.personal.inout.util.InAppUpdateHelper
 import com.personal.inout.util.PdfDossierExporter
@@ -54,13 +53,6 @@ fun DashboardScreen(db: AppDatabase) {
 
     val billingManager = remember { PlayBillingManager(context, scope) }
     val isProUnlocked by billingManager.isProUnlocked.collectAsState()
-
-    // Sync app icon with Pro status
-    LaunchedEffect(isProUnlocked) {
-        try {
-            AppIconManager.setProIconEnabled(context, isProUnlocked)
-        } catch (_: Exception) {}
-    }
 
     var activeThemeMode by remember {
         val saved = prefs.getString("selected_theme", AppThemeMode.AMBER_OCHRE.name)
@@ -181,7 +173,6 @@ fun DashboardScreen(db: AppDatabase) {
                     }
                 }
             },
-            // FAB strictly on Vault (0) and Accounts (1) tabs to avoid covering data
             floatingActionButton = {
                 if (selectedTab == 0 || selectedTab == 1) {
                     FloatingActionButton(
@@ -315,30 +306,41 @@ fun DashboardScreen(db: AppDatabase) {
                             }
                         },
                         onRecordCardSettlement = { cardId, liquidId, amt ->
-                            scope.launch {
-                                db.stateFlowDao().insertFlowRecord(
-                                    FlowRecord(
-                                        nature = MovementNature.CARD_PAYMENT,
-                                        sourcePocketId = liquidId,
-                                        targetPocketId = cardId,
-                                        amount = amt,
-                                        category = "Bill Payment",
-                                        note = "Card Dues Clearance"
+                            val liquidBal = pocketBalances.firstOrNull { it.pocketId == liquidId }?.currentBalance ?: 0.0
+                            if (amt > liquidBal) {
+                                scope.launch { snackbarHostState.showSnackbar("Insufficient liquid balance (₹${liquidBal.toInt()}) to pay card bill") }
+                            } else {
+                                scope.launch {
+                                    db.stateFlowDao().insertFlowRecord(
+                                        FlowRecord(
+                                            nature = MovementNature.CARD_PAYMENT,
+                                            sourcePocketId = liquidId,
+                                            targetPocketId = cardId,
+                                            amount = amt,
+                                            category = "Bill Payment",
+                                            note = "Card Dues Clearance"
+                                        )
                                     )
-                                )
+                                }
                             }
                         },
                         onPeerAction = { nature, peerId, liquidId, amt ->
-                            scope.launch {
-                                db.stateFlowDao().insertFlowRecord(
-                                    FlowRecord(
-                                        nature = nature,
-                                        sourcePocketId = if (nature == MovementNature.PEER_LEND) liquidId else peerId,
-                                        targetPocketId = if (nature == MovementNature.PEER_LEND) peerId else liquidId,
-                                        amount = amt,
-                                        category = "Peer Transfer"
+                            val liquidBal = pocketBalances.firstOrNull { it.pocketId == liquidId }?.currentBalance ?: 0.0
+                            // If spending cash to Lend or Repay, ensure balance doesn't go below 0
+                            if ((nature == MovementNature.PEER_LEND || nature == MovementNature.PEER_REPAY) && amt > liquidBal) {
+                                scope.launch { snackbarHostState.showSnackbar("Insufficient cash/bank balance to transfer ₹$amt") }
+                            } else {
+                                scope.launch {
+                                    db.stateFlowDao().insertFlowRecord(
+                                        FlowRecord(
+                                            nature = nature,
+                                            sourcePocketId = if (nature == MovementNature.PEER_LEND || nature == MovementNature.PEER_REPAY) liquidId else peerId,
+                                            targetPocketId = if (nature == MovementNature.PEER_LEND || nature == MovementNature.PEER_REPAY) peerId else liquidId,
+                                            amount = amt,
+                                            category = "Peer Transfer"
+                                        )
                                     )
-                                )
+                                }
                             }
                         }
                     )
@@ -404,21 +406,30 @@ fun DashboardScreen(db: AppDatabase) {
                     prefilledAmount = ocrPrefilledAmount,
                     onDismiss = { showCommandHud = false },
                     onSubmit = { nature, srcId, tgtId, amt, cat, note, date, isRec, freq ->
-                        scope.launch {
-                            db.stateFlowDao().insertFlowRecord(
-                                FlowRecord(
-                                    nature = nature,
-                                    sourcePocketId = srcId,
-                                    targetPocketId = tgtId,
-                                    amount = amt,
-                                    category = cat,
-                                    note = note,
-                                    timestamp = date,
-                                    isRecurring = isRec,
-                                    frequency = freq
+                        val srcBal = pocketBalances.firstOrNull { it.pocketId == srcId }
+                        val isSrcLiquid = srcBal?.pocketType == PocketType.LIQUID
+                        // Overdraft Prevention Lock
+                        if (nature == MovementNature.OUTFLOW && isSrcLiquid && amt > (srcBal?.currentBalance ?: 0.0)) {
+                            scope.launch {
+                                snackbarHostState.showSnackbar("Insufficient funds in ${srcBal?.name}. Balance cannot go negative.")
+                            }
+                        } else {
+                            scope.launch {
+                                db.stateFlowDao().insertFlowRecord(
+                                    FlowRecord(
+                                        nature = nature,
+                                        sourcePocketId = srcId,
+                                        targetPocketId = tgtId,
+                                        amount = amt,
+                                        category = cat,
+                                        note = note,
+                                        timestamp = date,
+                                        isRecurring = isRec,
+                                        frequency = freq
+                                    )
                                 )
-                            )
-                            showCommandHud = false
+                                showCommandHud = false
+                            }
                         }
                     }
                 )
@@ -516,7 +527,6 @@ private fun CleanVaultHeader(
                     }
                 }
             }
-            // Punchy tagline
             Text("THE VAULT", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.8.sp)
         }
 
@@ -571,8 +581,11 @@ private fun FlowRecordDisplayRow(flow: FlowRecord, isPrivacyMode: Boolean, theme
                     MovementNature.OUTFLOW -> "Spent"
                     MovementNature.INFLOW -> "Received"
                     MovementNature.CARD_PAYMENT -> "Card Bill Paid"
+                    MovementNature.PEER_LEND -> "Lent"
+                    MovementNature.PEER_COLLECT -> "Collected"
+                    MovementNature.PEER_BORROW -> "Borrowed"
+                    MovementNature.PEER_REPAY -> "Repaid"
                     MovementNature.TRANSFER -> "Transferred"
-                    else -> flow.nature.name
                 }
                 Text(label, color = theme.textMuted, fontSize = 10.sp)
             }
