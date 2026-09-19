@@ -32,7 +32,6 @@ import androidx.core.content.ContextCompat
 import com.personal.inout.billing.PlayBillingManager
 import com.personal.inout.data.*
 import com.personal.inout.ocr.ReceiptScanner
-import com.personal.inout.util.AppIconManager
 import com.personal.inout.util.CsvExporter
 import com.personal.inout.util.InAppUpdateHelper
 import com.personal.inout.util.PdfDossierExporter
@@ -48,18 +47,14 @@ fun DashboardScreen(db: AppDatabase) {
     val activity = context as? Activity
     val prefs = remember { context.getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE) }
 
+    val ledgerEngine = remember { VaultLedgerEngine(db.stateFlowDao()) }
+
     LaunchedEffect(Unit) {
         activity?.let { InAppUpdateHelper.checkForUpdate(it) }
     }
 
     val billingManager = remember { PlayBillingManager(context, scope) }
     val isProUnlocked by billingManager.isProUnlocked.collectAsState()
-
-    LaunchedEffect(isProUnlocked) {
-        try {
-            AppIconManager.setProIconEnabled(context, isProUnlocked)
-        } catch (_: Exception) {}
-    }
 
     var activeThemeMode by remember {
         val saved = prefs.getString("selected_theme", AppThemeMode.AMBER_OCHRE.name)
@@ -96,83 +91,6 @@ fun DashboardScreen(db: AppDatabase) {
 
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
-
-    // Multi-Account Auto-Split execution engine
-    suspend fun executeDebitWithAutoSplit(
-        nature: MovementNature,
-        primaryLiquidId: Long,
-        targetPocketId: Long?,
-        amount: Double,
-        category: String,
-        note: String
-    ): Boolean {
-        val autoSplitEnabled = prefs.getBoolean("auto_split_debit", false)
-        val liquidBalances = pocketBalances.filter { it.pocketType == PocketType.LIQUID }
-        val primaryBal = liquidBalances.firstOrNull { it.pocketId == primaryLiquidId }?.currentBalance ?: 0.0
-
-        if (primaryBal >= amount) {
-            // Normal single debit
-            db.stateFlowDao().insertFlowRecord(
-                FlowRecord(
-                    nature = nature,
-                    sourcePocketId = primaryLiquidId,
-                    targetPocketId = targetPocketId,
-                    amount = amount,
-                    category = category,
-                    note = note
-                )
-            )
-            return true
-        } else if (autoSplitEnabled) {
-            val totalCombinedLiquid = liquidBalances.sumOf { it.currentBalance }
-            if (totalCombinedLiquid < amount) {
-                snackbarHostState.showSnackbar("Total combined liquid cash (₹${totalCombinedLiquid.toInt()}) is insufficient for ₹${amount.toInt()}")
-                return false
-            }
-
-            var remainingToDebit = amount
-            // 1. Debit all available from primary
-            if (primaryBal > 0.0) {
-                db.stateFlowDao().insertFlowRecord(
-                    FlowRecord(
-                        nature = nature,
-                        sourcePocketId = primaryLiquidId,
-                        targetPocketId = targetPocketId,
-                        amount = primaryBal,
-                        category = category,
-                        note = "$note (Primary Auto-Split)"
-                    )
-                )
-                remainingToDebit -= primaryBal
-            }
-
-            // 2. Sweep across other bank accounts
-            val otherPockets = liquidBalances.filter { it.pocketId != primaryLiquidId }
-            for (p in otherPockets) {
-                if (remainingToDebit <= 0.0) break
-                val availableInP = p.currentBalance.coerceAtLeast(0.0)
-                if (availableInP <= 0.0) continue
-
-                val takeAmt = Math.min(availableInP, remainingToDebit)
-                db.stateFlowDao().insertFlowRecord(
-                    FlowRecord(
-                        nature = nature,
-                        sourcePocketId = p.pocketId,
-                        targetPocketId = targetPocketId,
-                        amount = takeAmt,
-                        category = category,
-                        note = "$note (Secondary Auto-Split from ${p.name})"
-                    )
-                )
-                remainingToDebit -= takeAmt
-            }
-            snackbarHostState.showSnackbar("Auto-Split completed across bank accounts")
-            return true
-        } else {
-            snackbarHostState.showSnackbar("Insufficient funds in selected account (₹${primaryBal.toInt()}). Enable Auto-Split in Settings to share debit.")
-            return false
-        }
-    }
 
     val cameraSnapLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap: Bitmap? ->
         if (bitmap != null) {
@@ -391,39 +309,40 @@ fun DashboardScreen(db: AppDatabase) {
                         },
                         onRecordCardSettlement = { cardId, liquidId, amt ->
                             scope.launch {
-                                executeDebitWithAutoSplit(
+                                val autoSplit = prefs.getBoolean("auto_split_debit", false)
+                                when (val res = ledgerEngine.recordMovement(
                                     nature = MovementNature.CARD_PAYMENT,
-                                    primaryLiquidId = liquidId,
+                                    sourcePocketId = liquidId,
                                     targetPocketId = cardId,
                                     amount = amt,
                                     category = "Bill Payment",
-                                    note = "Card Dues Clearance"
-                                )
+                                    note = "Card Dues Clearance",
+                                    autoSplitEnabled = autoSplit
+                                )) {
+                                    is VaultExecutionResult.OverdraftError -> snackbarHostState.showSnackbar(res.message)
+                                    is VaultExecutionResult.Success -> Unit
+                                }
                             }
                         },
                         onPeerAction = { nature, peerId, liquidId, amt ->
                             scope.launch {
-                                if (nature == MovementNature.PEER_LEND || nature == MovementNature.PEER_REPAY) {
-                                    executeDebitWithAutoSplit(
-                                        nature = nature,
-                                        primaryLiquidId = liquidId,
-                                        targetPocketId = peerId,
-                                        amount = amt,
-                                        category = "Peer Transfer",
-                                        note = if (nature == MovementNature.PEER_LEND) "Lent" else "Repaid"
-                                    )
+                                val autoSplit = prefs.getBoolean("auto_split_debit", false)
+                                val (src, tgt) = if (nature == MovementNature.PEER_LEND || nature == MovementNature.PEER_REPAY) {
+                                    liquidId to peerId
                                 } else {
-                                    // Collect / Borrow -> Inflow into bank
-                                    db.stateFlowDao().insertFlowRecord(
-                                        FlowRecord(
-                                            nature = nature,
-                                            sourcePocketId = peerId,
-                                            targetPocketId = liquidId,
-                                            amount = amt,
-                                            category = "Peer Transfer",
-                                            note = if (nature == MovementNature.PEER_COLLECT) "Collected" else "Borrowed"
-                                        )
-                                    )
+                                    peerId to liquidId
+                                }
+                                when (val res = ledgerEngine.recordMovement(
+                                    nature = nature,
+                                    sourcePocketId = src,
+                                    targetPocketId = tgt,
+                                    amount = amt,
+                                    category = "Peer Transfer",
+                                    note = nature.name,
+                                    autoSplitEnabled = autoSplit
+                                )) {
+                                    is VaultExecutionResult.OverdraftError -> snackbarHostState.showSnackbar(res.message)
+                                    is VaultExecutionResult.Success -> Unit
                                 }
                             }
                         }
@@ -492,43 +411,20 @@ fun DashboardScreen(db: AppDatabase) {
                     prefilledAmount = ocrPrefilledAmount,
                     onDismiss = { showCommandHud = false },
                     onSubmit = { nature, srcId, tgtId, amt, cat, note, date, isRec, freq ->
-                        val srcBal = pocketBalances.firstOrNull { it.pocketId == srcId }
-                        val isSrcLiquid = srcBal?.pocketType == PocketType.LIQUID
-
-                        // Strict Overdraft Protection on Outflow
-                        if (nature == MovementNature.OUTFLOW && isSrcLiquid) {
-                            val autoSplit = prefs.getBoolean("auto_split_debit", false)
-                            val totalLiquid = pocketBalances.filter { it.pocketType == PocketType.LIQUID }.sumOf { it.currentBalance }
-                            val avail = srcBal?.currentBalance ?: 0.0
-
-                            if (avail < amt && !autoSplit) {
-                                scope.launch {
-                                    snackbarHostState.showSnackbar("Insufficient balance in ${srcBal?.name}. Balance cannot go negative.")
-                                }
-                                return@FloatingCommandHud
-                            } else if (totalLiquid < amt && autoSplit) {
-                                scope.launch {
-                                    snackbarHostState.showSnackbar("Total combined liquid cash (₹${totalLiquid.toInt()}) is insufficient.")
-                                }
-                                return@FloatingCommandHud
-                            }
-                        }
-
                         scope.launch {
-                            db.stateFlowDao().insertFlowRecord(
-                                FlowRecord(
-                                    nature = nature,
-                                    sourcePocketId = srcId,
-                                    targetPocketId = tgtId,
-                                    amount = amt,
-                                    category = cat,
-                                    note = note,
-                                    timestamp = date,
-                                    isRecurring = isRec,
-                                    frequency = freq
-                                )
-                            )
-                            showCommandHud = false
+                            val autoSplit = prefs.getBoolean("auto_split_debit", false)
+                            when (val res = ledgerEngine.recordMovement(
+                                nature = nature,
+                                sourcePocketId = srcId,
+                                targetPocketId = tgtId,
+                                amount = amt,
+                                category = cat,
+                                note = note,
+                                autoSplitEnabled = autoSplit
+                            )) {
+                                is VaultExecutionResult.OverdraftError -> snackbarHostState.showSnackbar(res.message)
+                                is VaultExecutionResult.Success -> showCommandHud = false
+                            }
                         }
                     }
                 )
@@ -585,7 +481,6 @@ fun DashboardScreen(db: AppDatabase) {
                 )
             }
 
-            // Edit Account Dialog
             editingPocket?.let { pocket ->
                 EditAccountDialog(
                     account = pocket,
