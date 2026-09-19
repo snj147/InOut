@@ -17,18 +17,26 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.personal.inout.util.AppIconManager
 
 @Composable
 fun SettingsScreen(
     currentTheme: AppThemeMode,
+    currentCockpitMode: CockpitDisplayMode,
+    configuredDailyBurn: Double,
     isProUser: Boolean,
     onSelectTheme: (AppThemeMode) -> Unit,
+    onSelectCockpitMode: (CockpitDisplayMode) -> Unit,
+    onUpdateDailyBurn: (Double) -> Unit,
     onTriggerProPurchase: () -> Unit,
+    onExportPdfDossier: () -> Unit,
+    onExportCsv: () -> Unit,
     onClearLedger: () -> Unit
 ) {
     val theme = LocalThemeColors.current
@@ -38,7 +46,6 @@ fun SettingsScreen(
     var isBiometricEnabled by remember {
         mutableStateOf(prefs.getBoolean("biometric_enabled", false))
     }
-
     var showClearConfirmation by remember { mutableStateOf(false) }
 
     Column(
@@ -55,7 +62,7 @@ fun SettingsScreen(
             color = theme.textBright
         )
 
-        // VIP Lifetime Status Banner
+        // VIP Banner
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = theme.surface),
@@ -83,13 +90,13 @@ fun SettingsScreen(
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        if (isProUser) "VIP Lifetime Unlocked" else "Unlock VIP Access (₹21)",
+                        if (isProUser) "VIP Lifetime Active" else "Unlock VIP Access (₹21)",
                         color = theme.textBright,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        if (isProUser) "Offline vault active • No subscriptions" else "Tap to access mock paywall or restore",
+                        if (isProUser) "VIP Gold Icon • PDF Dossiers • Uncapped Horizons" else "Tap to view Pro perks",
                         color = theme.textMuted,
                         fontSize = 11.sp
                     )
@@ -98,13 +105,64 @@ fun SettingsScreen(
             }
         }
 
-        // Visual Customization Section
-        SettingsSection(title = "Appearance & Themes", theme = theme) {
+        // Cockpit Style Selector
+        SettingsSection(title = "Cockpit Instrument Style", theme = theme) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(
-                    Triple(AppThemeMode.AMBER_OCHRE, "Amber Ochre", "Rich obsidian and warm amber"),
-                    Triple(AppThemeMode.OLIVE_MATCHA, "Olive Matcha", "Deep forest tones with matcha green"),
-                    Triple(AppThemeMode.SAND_DUNE, "Sand Dune", "Earthy muted sands and slate")
+                    Triple(CockpitDisplayMode.SURVIVAL_DAYS_SLIDER, "Runway Survival Slider", "Interactive days countdown with survival slider"),
+                    Triple(CockpitDisplayMode.CASH_VS_DEBT_RADAR, "Cash vs Debt Balance", "Direct comparison of cash reserves against card liabilities"),
+                    Triple(CockpitDisplayMode.WEEKLY_SPEND_PULSE, "Daily Spending Pulse", "7-day spending equalizer rhythm bars")
+                ).forEach { (mode, name, desc) ->
+                    val isSel = currentCockpitMode == mode
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(if (isSel) theme.accent.copy(alpha = 0.15f) else theme.surfaceAlt)
+                            .clickable { onSelectCockpitMode(mode) }
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(name, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text(desc, color = theme.textMuted, fontSize = 10.5.sp)
+                        }
+                        if (isSel) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                }
+
+                Divider(color = theme.surfaceAlt, thickness = 0.5.dp, modifier = Modifier.padding(vertical = 4.dp))
+
+                // Custom Daily Spending Burn Rate Slider
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Configured Daily Burn Rate", color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text("₹${configuredDailyBurn.toInt()}/day", color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.Black)
+                    }
+                    Slider(
+                        value = configuredDailyBurn.toFloat(),
+                        onValueChange = { onUpdateDailyBurn(it.toDouble()) },
+                        valueRange = 100f..5000f,
+                        steps = 48,
+                        colors = SliderDefaults.colors(thumbColor = theme.accent, activeTrackColor = theme.accent)
+                    )
+                }
+            }
+        }
+
+        // 3 Distinct Visual Themes
+        SettingsSection(title = "Appearance & Color Palette", theme = theme) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    Triple(AppThemeMode.AMBER_OCHRE, "Amber Ochre", "Obsidian and warm gold amber"),
+                    Triple(AppThemeMode.OLIVE_MATCHA, "Olive Matcha", "Forest green and fresh matcha"),
+                    Triple(AppThemeMode.NORDIC_SLATE, "Nordic Slate", "Midnight slate blue with crisp ice-cyan")
                 ).forEach { (mode, name, desc) ->
                     val isSelected = currentTheme == mode
                     Row(
@@ -129,7 +187,30 @@ fun SettingsScreen(
             }
         }
 
-        // Vault Security Section
+        // Exports (CSV & PDF Dossiers)
+        SettingsSection(title = "Statements & Reports", theme = theme) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                SettingsActionRow(
+                    icon = Icons.Default.FileDownload,
+                    title = "Export Simple CSV Spreadsheet",
+                    subtitle = "Plain spreadsheet of all transactions",
+                    theme = theme,
+                    onClick = onExportCsv
+                )
+                if (isProUser) {
+                    Divider(color = theme.surfaceAlt, thickness = 0.5.dp)
+                    SettingsActionRow(
+                        icon = Icons.Default.PictureAsPdf,
+                        title = "Generate Accountant PDF Dossier",
+                        subtitle = "Watermark-free audit report with balance sheets",
+                        theme = theme,
+                        onClick = onExportPdfDossier
+                    )
+                }
+            }
+        }
+
+        // Biometrics
         SettingsSection(title = "Privacy & Security", theme = theme) {
             Row(
                 modifier = Modifier
@@ -140,7 +221,7 @@ fun SettingsScreen(
             ) {
                 Column {
                     Text("Biometric / PIN Unlock", color = theme.textBright, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                    Text("Require device auth on vault launch", color = theme.textMuted, fontSize = 11.sp)
+                    Text("Require fingerprint or device PIN on launch", color = theme.textMuted, fontSize = 11.sp)
                 }
                 Switch(
                     checked = isBiometricEnabled,
@@ -150,32 +231,30 @@ fun SettingsScreen(
                     },
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = theme.bg,
-                        checkedTrackColor = theme.accent,
-                        uncheckedThumbColor = theme.textMuted,
-                        uncheckedTrackColor = theme.surfaceAlt
+                        checkedTrackColor = theme.accent
                     )
                 )
             }
         }
 
-        // Data & Diagnostics
+        // Diagnostics
         SettingsSection(title = "Database & Diagnostics", theme = theme) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SettingsActionRow(
                     icon = Icons.Default.HealthAndSafety,
-                    title = "Conservation Check",
-                    subtitle = "Verify all state-flow accounts are in equilibrium",
+                    title = "Ledger Equilibrium Audit",
+                    subtitle = "Confirm that every rupee balances across all accounts",
                     theme = theme
                 ) {
-                    Toast.makeText(context, "All Vault Pockets are in conservation equilibrium", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "All Vault accounts are in exact equilibrium", Toast.LENGTH_SHORT).show()
                 }
 
                 Divider(color = theme.surfaceAlt, thickness = 0.5.dp)
 
                 SettingsActionRow(
                     icon = Icons.Default.DeleteForever,
-                    title = "Clear Vault Records",
-                    subtitle = "Wipe all transactions and reset balances",
+                    title = "Clear All Vault Flows",
+                    subtitle = "Reset all transactions back to empty state",
                     titleColor = theme.mildRed,
                     theme = theme
                 ) {
@@ -184,17 +263,17 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(Modifier.height(80.dp))
+        Spacer(Modifier.height(40.dp))
     }
 
     if (showClearConfirmation) {
         AlertDialog(
             containerColor = theme.surface,
             onDismissRequest = { showClearConfirmation = false },
-            title = { Text("Reset Entire Vault?", color = theme.mildRed, fontWeight = FontWeight.Bold) },
+            title = { Text("Reset All Records?", color = theme.mildRed, fontWeight = FontWeight.Bold) },
             text = {
                 Text(
-                    "This action will permanently delete all transaction history. Accounts will be retained at zero balance.",
+                    "This permanently clears transaction history. Accounts will remain at zero balance.",
                     color = theme.textBright,
                     fontSize = 12.5.sp
                 )
@@ -207,7 +286,7 @@ fun SettingsScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed)
                 ) {
-                    Text("Wipe History", color = theme.bg, fontWeight = FontWeight.Bold)
+                    Text("Wipe Records", color = theme.bg, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -250,7 +329,7 @@ private fun SettingsActionRow(
     icon: ImageVector,
     title: String,
     subtitle: String,
-    titleColor: androidx.compose.ui.graphics.Color? = null,
+    titleColor: Color? = null,
     theme: ThemeColors,
     onClick: () -> Unit
 ) {
