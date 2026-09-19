@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#1A1815"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:gravity="center">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="SAFE RUNWAY"
+        android:textColor="#918A80"
+        android:textSize="9sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/tv_widget_runway"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Active"
+        android:textColor="#E2A755"
+        android:textSize="20sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Tap to enter"
+        android:textColor="#918A80"
+        android:textSize="9sp" />
+</LinearLayout>
