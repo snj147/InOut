@@ -52,7 +52,6 @@ fun FloatingCommandHud(
         mutableStateOf(spendOptions.firstOrNull { it.id == prefilledPocketId } ?: spendOptions.firstOrNull())
     }
 
-    // Explicit non-overlapping transfer destination
     var selectedTransferTarget by remember(liquidPockets, selectedSpendPocket) {
         mutableStateOf(liquidPockets.firstOrNull { it.id != selectedSpendPocket?.id })
     }
@@ -198,7 +197,7 @@ fun FloatingCommandHud(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // High Contrast Date Quick-Select
+                // Date Quick Select
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Transaction Date", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
                     Row(
@@ -267,6 +266,45 @@ fun FloatingCommandHud(
                 showCustomDatePicker = false
             }
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ReadableCalendarDialog(
+    initialDateMillis: Long,
+    onDismiss: () -> Unit,
+    onDateSelected: (Long) -> Unit
+) {
+    val theme = LocalThemeColors.current
+    val pickerState = rememberDatePickerState(initialSelectedDateMillis = initialDateMillis)
+
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = { pickerState.selectedDateMillis?.let { onDateSelected(it) } }) {
+                Text("Select", color = theme.accent, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) } },
+        colors = DatePickerDefaults.colors(
+            containerColor = theme.surface,
+            titleContentColor = theme.textBright,
+            headlineContentColor = theme.accent,
+            weekdayContentColor = theme.accent,
+            subheadContentColor = theme.textBright,
+            yearContentColor = theme.textBright,
+            currentYearContentColor = theme.accent,
+            selectedYearContentColor = theme.bg,
+            selectedYearContainerColor = theme.accent,
+            dayContentColor = Color.White,
+            selectedDayContentColor = theme.bg,
+            selectedDayContainerColor = theme.accent,
+            todayContentColor = theme.accent,
+            todayDateBorderColor = theme.accent
+        )
+    ) {
+        DatePicker(state = pickerState)
     }
 }
 
