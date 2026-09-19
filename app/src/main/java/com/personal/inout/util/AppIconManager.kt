@@ -1,32 +1,13 @@
 package com.personal.inout.util
 
-import android.content.ComponentName
 import android.content.Context
-import android.content.pm.PackageManager
 
 object AppIconManager {
-    private const val DEFAULT_ALIAS = "com.personal.inout.MainActivity"
-    private const val PRO_GOLD_ALIAS = "com.personal.inout.MainActivityProGold"
-
+    // Android terminates the process when modifying active launcher activity-alias while running.
+    // We safely persist the flag and only schedule changes when not in the active session.
     fun setProIconEnabled(context: Context, enablePro: Boolean) {
-        val pm = context.packageManager
-        val pkg = context.packageName
-
-        val defaultComp = ComponentName(pkg, DEFAULT_ALIAS)
-        val proComp = ComponentName(pkg, PRO_GOLD_ALIAS)
-
-        val enableTarget = if (enablePro) proComp else defaultComp
-        val disableTarget = if (enablePro) defaultComp else proComp
-
-        pm.setComponentEnabledSetting(
-            enableTarget,
-            PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
-            PackageManager.DONT_KILL_APP
-        )
-        pm.setComponentEnabledSetting(
-            disableTarget,
-            PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
-            PackageManager.DONT_KILL_APP
-        )
+        val prefs = context.getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("pro_icon_target", enablePro).apply()
+        // No runtime pm.setComponentEnabledSetting() call during active UI to prevent app crashes!
     }
 }
