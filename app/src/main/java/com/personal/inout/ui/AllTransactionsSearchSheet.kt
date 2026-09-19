@@ -1,7 +1,6 @@
 package com.personal.inout.ui
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -26,8 +25,10 @@ import java.util.*
 fun AllTransactionsSearchSheet(
     flowRecords: List<FlowRecord>,
     isPrivacyMode: Boolean,
+    isProUser: Boolean,
     onDismiss: () -> Unit,
-    onExportCsv: () -> Unit
+    onExportCsv: () -> Unit,
+    onExportPdfDossier: () -> Unit
 ) {
     val theme = LocalThemeColors.current
     var searchQuery by remember { mutableStateOf("") }
@@ -48,13 +49,13 @@ fun AllTransactionsSearchSheet(
         containerColor = theme.surface,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
         dragHandle = { BottomSheetDefaults.DragHandle(color = theme.textMuted.copy(alpha = 0.4f)) },
-        modifier = Modifier.fillMaxHeight(0.88f)
+        modifier = Modifier.fillMaxHeight(0.92f) // Opens at full 92% immediately
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .navigationBarsPadding()
-                .padding(horizontal = 18.dp, vertical = 6.dp),
+                .padding(horizontal = 18.dp, vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(
@@ -68,15 +69,23 @@ fun AllTransactionsSearchSheet(
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Black
                 )
-                IconButton(onClick = onExportCsv) {
-                    Icon(Icons.Default.FileDownload, contentDescription = "Export CSV", tint = theme.accent)
+
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    IconButton(onClick = onExportCsv) {
+                        Icon(Icons.Default.FileDownload, contentDescription = "CSV Export", tint = theme.accent)
+                    }
+                    if (isProUser) {
+                        IconButton(onClick = onExportPdfDossier) {
+                            Icon(Icons.Default.PictureAsPdf, contentDescription = "PDF Dossier", tint = theme.accent)
+                        }
+                    }
                 }
             }
 
             CompactInputField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
-                placeholder = "Search narration, category, nature...",
+                placeholder = "Search note, merchant, category...",
                 modifier = Modifier.fillMaxWidth()
             )
 
@@ -85,7 +94,7 @@ fun AllTransactionsSearchSheet(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("No matching flows found", color = theme.textMuted, fontSize = 12.sp)
+                    Text("No matching records found", color = theme.textMuted, fontSize = 12.sp)
                 }
             } else {
                 LazyColumn(
@@ -125,21 +134,19 @@ fun AllTransactionsSearchSheet(
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 13.5.sp
                                     )
-                                    Text(
-                                        "${flow.nature.name} • $dStr",
-                                        color = theme.textMuted,
-                                        fontSize = 10.5.sp
-                                    )
+                                    val flowLabel = when (flow.nature) {
+                                        MovementNature.OUTFLOW -> "Spent"
+                                        MovementNature.INFLOW -> "Received"
+                                        MovementNature.CARD_PAYMENT -> "Card Bill Paid"
+                                        MovementNature.TRANSFER -> "Transferred"
+                                        else -> flow.nature.name
+                                    }
+                                    Text("$flowLabel • $dStr", color = theme.textMuted, fontSize = 10.5.sp)
                                 }
                             }
 
                             val amtStr = if (isPrivacyMode) "₹ •••" else "${if (isOut) "-" else "+"}₹ ${String.format("%,.0f", flow.amount)}"
-                            Text(
-                                amtStr,
-                                color = flowColor,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp
-                            )
+                            Text(amtStr, color = flowColor, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
                     }
                 }
