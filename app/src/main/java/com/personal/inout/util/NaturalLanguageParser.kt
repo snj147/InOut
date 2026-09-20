@@ -17,7 +17,7 @@ data class ParsedCommand(
 
 object NaturalLanguageParser {
     private val expenseCategoryKeywords = mapOf(
-        "Groceries" to listOf("grocery", "groceries", "supermarket", "milk", "vegetables", "fruits", "dmart", "blinkit", "zepto", "instamart", "kirana", "reliance", "vegetable", "paneer", "atta", "dal", "bread", "eggs"),
+        "Groceries" to listOf("grocery", "groceries", "supermarket", "milk", "vegetables", "fruits", "dmart", "blinkit", "zepto", "instamart", "kirana", "paneer", "atta", "dal", "bread", "eggs"),
         "Food & Dining" to listOf("coffee", "cafe", "tea", "chai", "lunch", "dinner", "breakfast", "swiggy", "zomato", "restaurant", "starbucks", "burger", "pizza", "biryani", "food", "dosa", "snack"),
         "Transport" to listOf("uber", "ola", "auto", "metro", "fuel", "petrol", "diesel", "cab", "taxi", "bus", "train", "flight", "fastag", "toll"),
         "Shopping" to listOf("amazon", "flipkart", "clothes", "shoes", "zara", "myntra", "shopping", "electronics", "gadget", "croma"),
@@ -26,32 +26,11 @@ object NaturalLanguageParser {
         "Leisure" to listOf("movie", "cinema", "netflix", "spotify", "game", "party", "pub", "bar", "outing")
     )
 
-    private val actionKeywords = mapOf(
-        MovementNature.OUTFLOW to listOf("spent", "paid", "gave", "bought", "spend", "purchased", "pay"),
-        MovementNature.INFLOW to listOf("got", "received", "salary", "earned", "income", "freelance", "receive"),
-        MovementNature.PEER_LEND to listOf("lent", "loaned", "lend"),
-        MovementNature.PEER_BORROW to listOf("borrowed", "borrow"),
-        MovementNature.TRANSFER to listOf("transferred", "transfer", "moved", "sent")
-    )
-
     fun parse(input: String, activePockets: List<VaultPocket>): ParsedCommand? {
         val raw = input.trim()
         if (raw.isBlank()) return null
 
-        // 1. STRICT ACTION VERB DETECTION (Nullable: No verb = Abort parsing)
-        var detectedNature: MovementNature? = null
-        for ((nat, verbs) in actionKeywords) {
-            if (verbs.any { raw.contains(Regex("""(?i)\b$it\b""")) }) {
-                detectedNature = nat
-                break
-            }
-        }
-        if (detectedNature == null) {
-            // Rejects random text like "abc 2000 good 35"
-            return null
-        }
-
-        // 2. EXTRACT NUMERICAL AMOUNT (Handles 2000, 2.5k, ₹450)
+        // 1. EXTRACT NUMERICAL AMOUNT
         var amount: Double? = null
         val kMatch = Regex("""(?i)(?:rs\.?|inr|₹)?\s*([0-9]+(?:\.[0-9]+)?)\s*k\b""").find(raw)
         if (kMatch != null) {
@@ -64,10 +43,10 @@ object NaturalLanguageParser {
         }
         if (amount == null || amount <= 0.0) return null
 
-        // 3. PARSE OPTIONAL EXPLICIT DATE (e.g., on 25/08/2026, yesterday, today)
-        var parsedTimestamp = System.currentTimeMillis()
         var workingText = raw
 
+        // 2. PARSE OPTIONAL DATE (e.g. on 25/08/2026, yesterday)
+        var parsedTimestamp = System.currentTimeMillis()
         val dateMatch = Regex("""(?i)\bon\s+([0-3]?[0-9][/\-.][0-1]?[0-9](?:[/\-.](?:20)?[0-9]{2})?)\b""").find(workingText)
         if (dateMatch != null) {
             val rawDate = dateMatch.groupValues[1].replace("-", "/").replace(".", "/")
@@ -78,12 +57,9 @@ object NaturalLanguageParser {
                 val year = if (parts.size > 2) {
                     val y = parts[2].toInt()
                     if (y < 100) 2000 + y else y
-                } else {
-                    Calendar.getInstance().get(Calendar.YEAR)
-                }
-                val cal = Calendar.getInstance().apply {
-                    set(year, month, day, 12, 0, 0)
-                }
+                } else Calendar.getInstance().get(Calendar.YEAR)
+
+                val cal = Calendar.getInstance().apply { set(year, month, day, 12, 0, 0) }
                 parsedTimestamp = cal.timeInMillis
                 workingText = workingText.replace(dateMatch.value, " ")
             } catch (_: Exception) {}
@@ -92,7 +68,41 @@ object NaturalLanguageParser {
             workingText = workingText.replace(Regex("""(?i)\byesterday\b"""), " ")
         }
 
-        // 4. MATCH SOURCE/TARGET LIQUID WALLET
+        // 3. ACTION VERB & PEER CONTEXT DETECTION
+        var detectedNature: MovementNature? = null
+        var targetPerson: String? = null
+
+        // Check Peer Collection first: "got 2000 from Rahul", "collected 2000 from Mahesh"
+        val fromPersonMatch = Regex("""(?i)\b(?:got|received|collected|collect)\s+.*?\bfrom\s+([A-Za-z0-9_-]+)""").find(workingText)
+        if (fromPersonMatch != null) {
+            detectedNature = MovementNature.PEER_COLLECT
+            targetPerson = fromPersonMatch.groupValues[1].trim()
+            workingText = workingText.replace(fromPersonMatch.value, " ")
+        } else if (Regex("""(?i)\b(lent|loaned|lend)\b""").containsMatchIn(workingText)) {
+            detectedNature = MovementNature.PEER_LEND
+            val pMatch = Regex("""(?i)\b(?:to\s+)?([A-Za-z0-9_-]+)""").find(
+                workingText.replace(Regex("""(?i)\b(lent|loaned|lend|rs\.?|inr|₹|[0-9]+(?:\.[0-9]+)?\s*k?)\b"""), " ").trim()
+            )
+            targetPerson = pMatch?.groupValues?.get(1)?.trim()
+        } else if (Regex("""(?i)\b(borrowed|borrow)\b""").containsMatchIn(workingText)) {
+            detectedNature = MovementNature.PEER_BORROW
+            val pMatch = Regex("""(?i)\b(?:from\s+)?([A-Za-z0-9_-]+)""").find(
+                workingText.replace(Regex("""(?i)\b(borrowed|borrow|rs\.?|inr|₹|[0-9]+(?:\.[0-9]+)?\s*k?)\b"""), " ").trim()
+            )
+            targetPerson = pMatch?.groupValues?.get(1)?.trim()
+        } else if (Regex("""(?i)\b(transferred|transfer|moved|sent)\b""").containsMatchIn(workingText)) {
+            detectedNature = MovementNature.TRANSFER
+        } else if (Regex("""(?i)\b(spent|paid|gave|bought|spend|pay)\b""").containsMatchIn(workingText)) {
+            detectedNature = MovementNature.OUTFLOW
+        } else if (Regex("""(?i)\b(got|received|salary|earned|income|receive)\b""").containsMatchIn(workingText)) {
+            detectedNature = MovementNature.INFLOW
+        }
+
+        if (detectedNature == null) {
+            return null // Reject ungrammatical commands
+        }
+
+        // 4. MATCH BANK / CASH ACCOUNT
         var matchedPocket: VaultPocket? = null
         for (pocket in activePockets.filter { it.pocketType == PocketType.LIQUID }) {
             if (workingText.contains(pocket.name, ignoreCase = true)) {
@@ -105,28 +115,7 @@ object NaturalLanguageParser {
             matchedPocket = activePockets.firstOrNull { it.pocketType == PocketType.LIQUID }
         }
 
-        // 5. PEER/COUNTERPARTY LOGIC (Lent 2000 to ABC OR Lent 2000 ABC)
-        var targetPerson: String? = null
-        if (detectedNature == MovementNature.PEER_LEND || detectedNature == MovementNature.PEER_BORROW) {
-            val personWithPrep = Regex("""(?i)\b(?:to|from)\s+([A-Za-z0-9_-]+)""").find(workingText)
-            if (personWithPrep != null) {
-                targetPerson = personWithPrep.groupValues[1].trim()
-                workingText = workingText.replace(personWithPrep.value, " ")
-            } else {
-                // Fallback: Lent [Amount] [Person]
-                val tokens = workingText.split(Regex("""\s+""")).filter { it.isNotBlank() }
-                val personCandidate = tokens.firstOrNull { token ->
-                    !token.matches(Regex("""(?i)(?:rs\.?|inr|₹|[0-9]+(?:\.[0-9]+)?\s*k?)""")) &&
-                    !actionKeywords[detectedNature]!!.contains(token.lowercase())
-                }
-                if (personCandidate != null) {
-                    targetPerson = personCandidate
-                    workingText = workingText.replace(personCandidate, " ")
-                }
-            }
-        }
-
-        // 6. CATEGORY DETECTION
+        // 5. CATEGORY SELECTION
         var matchedCategory = if (detectedNature == MovementNature.INFLOW) "Salary" else "General"
         if (detectedNature == MovementNature.OUTFLOW) {
             for ((category, keywords) in expenseCategoryKeywords) {
@@ -137,10 +126,10 @@ object NaturalLanguageParser {
             }
         }
 
-        // 7. CLEAN MERCHANT / CONTEXT NARRATION
+        // 6. CLEAN NOTE NARRATION
         var cleanNote = workingText
             .replace(Regex("""(?i)\b(?:rs\.?|inr|₹|[0-9]+(?:\.[0-9]+)?\s*k?)\b"""), " ")
-            .replace(Regex("""(?i)\b(?:spent|paid|gave|bought|got|received|salary|lent|borrowed|transferred|for|at|to|from|on|via|in|today|with)\b"""), " ")
+            .replace(Regex("""(?i)\b(?:spent|paid|gave|bought|got|received|salary|lent|borrowed|collected|transferred|for|at|to|from|on|via|in|today|with)\b"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
 
