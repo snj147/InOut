@@ -1,4 +1,4 @@
-package com.inout.vault.ui
+package com.personal.inout.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
@@ -14,8 +14,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.inout.vault.data.FlowRecord
-import com.inout.vault.data.PocketBalanceSummary
+import com.personal.inout.data.FlowRecord
+import com.personal.inout.data.PocketBalanceSummary
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -30,7 +30,6 @@ fun AccountPocketsView(
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        // 100.dp padding ensures items never get covered by the FAB or bottom navigation
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 100.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -176,7 +175,6 @@ fun AccountPocketsView(
         }
     }
 
-    // Confirmation Guard: Stopping a recurring schedule requires confirmation
     selectedRecordForStop?.let { record ->
         AlertDialog(
             onDismissRequest = { selectedRecordForStop = null },
