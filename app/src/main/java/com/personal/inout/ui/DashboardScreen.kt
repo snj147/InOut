@@ -10,7 +10,9 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -37,6 +39,7 @@ import com.personal.inout.billing.PlayBillingManager
 import com.personal.inout.data.*
 import com.personal.inout.ocr.ReceiptScanner
 import com.personal.inout.util.*
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -49,6 +52,7 @@ fun DashboardScreen(db: AppDatabase) {
     val activity = context as? Activity
     val prefs = remember { context.getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE) }
 
+    val alertManager = remember { VaultAlertManager() }
     val ledgerEngine = remember { VaultLedgerEngine(db.stateFlowDao()) }
 
     LaunchedEffect(Unit) {
@@ -85,14 +89,28 @@ fun DashboardScreen(db: AppDatabase) {
     var selectedTab by remember { mutableStateOf(0) }
     var isPrivacyMode by remember { mutableStateOf(false) }
     var showCommandHud by remember { mutableStateOf(false) }
-    var hudErrorMessage by remember { mutableStateOf<String?>(null) }
+    var hudInDialogError by remember { mutableStateOf<String?>(null) }
     var editingPocket by remember { mutableStateOf<VaultPocket?>(null) }
     var showCreatePocketDialog by remember { mutableStateOf(false) }
     var showAllRecordsSheet by remember { mutableStateOf(false) }
     var showMockPaywall by remember { mutableStateOf(false) }
-    val snackbarHostState = remember { SnackbarHostState() }
 
+    // Quick Command Terminal Bar state
     var naturalLanguageInput by remember { mutableStateOf("") }
+    val placeholderHints = listOf(
+        "Spent 400 for groceries at reliance",
+        "Lent 2000 to ABC on 25/08/2026",
+        "Got 75000 salary in MyBank",
+        "Paid 140 for coffee via Cash",
+        "Borrowed 5000 from Rahul"
+    )
+    var currentHintIndex by remember { mutableIntStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(3500)
+            currentHintIndex = (currentHintIndex + 1) % placeholderHints.size
+        }
+    }
 
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
@@ -104,10 +122,11 @@ fun DashboardScreen(db: AppDatabase) {
                     val parsed = ReceiptScanner.processReceiptBitmap(bitmap)
                     ocrPrefilledNote = parsed.merchant
                     ocrPrefilledAmount = parsed.total
-                    hudErrorMessage = null
+                    hudInDialogError = null
                     showCommandHud = true
+                    alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
                 } catch (e: Exception) {
-                    Toast.makeText(context, "OCR Error: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                    alertManager.showAlert("Receipt OCR Error: ${e.localizedMessage}", AlertType.ERROR)
                 }
             }
         }
@@ -115,7 +134,7 @@ fun DashboardScreen(db: AppDatabase) {
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) cameraSnapLauncher.launch(null)
-        else Toast.makeText(context, "Camera permission needed for receipt OCR", Toast.LENGTH_SHORT).show()
+        else alertManager.showAlert("Camera permission needed for receipt scanning", AlertType.WARNING)
     }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
@@ -125,24 +144,84 @@ fun DashboardScreen(db: AppDatabase) {
                     val parsed = ReceiptScanner.processReceipt(context, uri)
                     ocrPrefilledNote = parsed.merchant
                     ocrPrefilledAmount = parsed.total
-                    hudErrorMessage = null
+                    hudInDialogError = null
                     showCommandHud = true
+                    alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
                 } catch (e: Exception) {
-                    Toast.makeText(context, "Receipt Error: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                    alertManager.showAlert("Receipt Parse Error: ${e.localizedMessage}", AlertType.ERROR)
                 }
             }
         }
     }
 
-    CompositionLocalProvider(LocalThemeColors provides theme) {
+    // Natural Language Execution Routine
+    fun executeNaturalLanguageCommand(text: String) {
+        val parsed = NaturalLanguageParser.parse(text, rawPockets)
+        if (parsed != null) {
+            scope.launch {
+                val autoSplit = prefs.getBoolean("auto_split_debit", false)
+                var sourceId = if (parsed.nature == MovementNature.OUTFLOW) parsed.matchedPocketId else null
+                var targetId = if (parsed.nature == MovementNature.INFLOW) parsed.matchedPocketId else null
+
+                // Auto-create person if Lent/Borrowed and contact does not exist
+                if (parsed.targetPersonName != null) {
+                    var personPocket = rawPockets.firstOrNull {
+                        it.pocketType == PocketType.COUNTERPARTY && it.name.equals(parsed.targetPersonName, ignoreCase = true)
+                    }
+                    if (personPocket == null) {
+                        val newId = db.stateFlowDao().insertPocket(
+                            VaultPocket(
+                                name = parsed.targetPersonName,
+                                pocketType = PocketType.COUNTERPARTY,
+                                subType = "PEER"
+                            )
+                        )
+                        personPocket = VaultPocket(id = newId, name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY)
+                        alertManager.showAlert("Created counterparty '${parsed.targetPersonName}'", AlertType.INFO)
+                    }
+
+                    if (parsed.nature == MovementNature.PEER_LEND) {
+                        sourceId = parsed.matchedPocketId
+                        targetId = personPocket.id
+                    } else {
+                        sourceId = personPocket.id
+                        targetId = parsed.matchedPocketId
+                    }
+                }
+
+                when (val res = ledgerEngine.recordMovement(
+                    nature = parsed.nature,
+                    sourcePocketId = sourceId,
+                    targetPocketId = targetId,
+                    amount = parsed.amount,
+                    category = parsed.category,
+                    note = parsed.merchant,
+                    timestamp = parsed.timestamp,
+                    autoSplitEnabled = autoSplit
+                )) {
+                    is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
+                    is VaultExecutionResult.Success -> {
+                        alertManager.showAlert(res.summary, AlertType.SUCCESS)
+                        naturalLanguageInput = ""
+                    }
+                }
+            }
+        } else {
+            alertManager.showAlert("Syntax not recognized. Try: 'Spent 400 for groceries at reliance'", AlertType.WARNING)
+        }
+    }
+
+    CompositionLocalProvider(
+        LocalThemeColors provides theme,
+        LocalVaultAlertManager provides alertManager
+    ) {
         Scaffold(
             containerColor = theme.bg,
-            snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
                 Column {
                     CleanVaultHeader(
                         totalLiquid = pocketBalances.filter { it.pocketType == PocketType.LIQUID }.sumOf { it.currentBalance }.coerceAtLeast(0.0),
-                        totalSpent = flowRecords.filter { it.nature == MovementNature.OUTFLOW }.sumOf { it.amount },
+                        totalSpent = flowRecords.filter { it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY) }.sumOf { it.amount },
                         isProUser = isProUnlocked,
                         isPrivacyMode = isPrivacyMode,
                         theme = theme,
@@ -152,6 +231,8 @@ fun DashboardScreen(db: AppDatabase) {
                         isProUnlocked = isProUnlocked,
                         onOpenPaywall = { showMockPaywall = true }
                     )
+                    // Centralized Alert Top Banner
+                    VaultAlertTopBanner(alertManager = alertManager, theme = theme)
                 }
             },
             bottomBar = {
@@ -191,7 +272,7 @@ fun DashboardScreen(db: AppDatabase) {
                             } else {
                                 ocrPrefilledNote = ""
                                 ocrPrefilledAmount = null
-                                hudErrorMessage = null
+                                hudInDialogError = null
                                 showCommandHud = true
                             }
                         },
@@ -223,89 +304,63 @@ fun DashboardScreen(db: AppDatabase) {
                                 )
                             }
 
-                            // 1-LINE QUICK NATURAL LANGUAGE ENTRY BAR
+                            // ELEVATED COMMAND TERMINAL BAR
                             item {
                                 Card(
                                     shape = RoundedCornerShape(14.dp),
                                     colors = CardDefaults.cardColors(containerColor = theme.surface),
-                                    modifier = Modifier.fillMaxWidth()
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .border(1.5.dp, theme.accent.copy(alpha = 0.75f), RoundedCornerShape(14.dp))
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Icon(Icons.Default.Bolt, contentDescription = null, tint = theme.accent, modifier = Modifier.size(20.dp))
-                                        Spacer(Modifier.width(8.dp))
-                                        TextField(
-                                            value = naturalLanguageInput,
-                                            onValueChange = { naturalLanguageInput = it },
-                                            placeholder = { Text("e.g. 400 for groceries at reliance", color = theme.textMuted, fontSize = 12.sp) },
-                                            singleLine = true,
-                                            colors = TextFieldDefaults.colors(
-                                                focusedContainerColor = Color.Transparent,
-                                                unfocusedContainerColor = Color.Transparent,
-                                                focusedIndicatorColor = Color.Transparent,
-                                                unfocusedIndicatorColor = Color.Transparent,
-                                                focusedTextColor = theme.textBright,
-                                                unfocusedTextColor = theme.textBright
-                                            ),
-                                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                            keyboardActions = KeyboardActions(onDone = {
-                                                val parsed = NaturalLanguageParser.parse(naturalLanguageInput, rawPockets)
-                                                if (parsed != null) {
-                                                    scope.launch {
-                                                        val autoSplit = prefs.getBoolean("auto_split_debit", false)
-                                                        val src = if (parsed.nature == MovementNature.OUTFLOW) parsed.matchedPocketId else null
-                                                        val tgt = if (parsed.nature == MovementNature.INFLOW) parsed.matchedPocketId else null
-                                                        when (val res = ledgerEngine.recordMovement(
-                                                            nature = parsed.nature,
-                                                            sourcePocketId = src,
-                                                            targetPocketId = tgt,
-                                                            amount = parsed.amount,
-                                                            category = parsed.category,
-                                                            note = parsed.merchant,
-                                                            autoSplitEnabled = autoSplit
-                                                        )) {
-                                                            is VaultExecutionResult.OverdraftError -> snackbarHostState.showSnackbar(res.message)
-                                                            is VaultExecutionResult.Success -> {
-                                                                snackbarHostState.showSnackbar("Recorded: ₹${parsed.amount.toInt()} for ${parsed.category}")
-                                                                naturalLanguageInput = ""
-                                                            }
-                                                        }
-                                                    }
-                                                } else {
-                                                    scope.launch { snackbarHostState.showSnackbar("Could not parse. Try: '400 groceries reliance'") }
-                                                }
-                                            }),
-                                            modifier = Modifier.weight(1f)
-                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(CircleShape)
+                                                .background(theme.accent.copy(alpha = 0.2f))
+                                                .padding(6.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(Icons.Default.Bolt, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
+                                        }
+
+                                        Spacer(Modifier.width(10.dp))
+
+                                        Box(modifier = Modifier.weight(1f)) {
+                                            if (naturalLanguageInput.isEmpty()) {
+                                                Text(
+                                                    text = placeholderHints[currentHintIndex],
+                                                    color = theme.textMuted.copy(alpha = 0.7f),
+                                                    fontSize = 12.5.sp,
+                                                    maxLines = 1
+                                                )
+                                            }
+                                            TextField(
+                                                value = naturalLanguageInput,
+                                                onValueChange = { naturalLanguageInput = it },
+                                                singleLine = true,
+                                                colors = TextFieldDefaults.colors(
+                                                    focusedContainerColor = Color.Transparent,
+                                                    unfocusedContainerColor = Color.Transparent,
+                                                    focusedIndicatorColor = Color.Transparent,
+                                                    unfocusedIndicatorColor = Color.Transparent,
+                                                    focusedTextColor = theme.textBright,
+                                                    unfocusedTextColor = theme.textBright
+                                                ),
+                                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                                keyboardActions = KeyboardActions(onDone = {
+                                                    executeNaturalLanguageCommand(naturalLanguageInput)
+                                                }),
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                        }
+
                                         if (naturalLanguageInput.isNotBlank()) {
-                                            IconButton(onClick = {
-                                                val parsed = NaturalLanguageParser.parse(naturalLanguageInput, rawPockets)
-                                                if (parsed != null) {
-                                                    scope.launch {
-                                                        val autoSplit = prefs.getBoolean("auto_split_debit", false)
-                                                        val src = if (parsed.nature == MovementNature.OUTFLOW) parsed.matchedPocketId else null
-                                                        val tgt = if (parsed.nature == MovementNature.INFLOW) parsed.matchedPocketId else null
-                                                        when (val res = ledgerEngine.recordMovement(
-                                                            nature = parsed.nature,
-                                                            sourcePocketId = src,
-                                                            targetPocketId = tgt,
-                                                            amount = parsed.amount,
-                                                            category = parsed.category,
-                                                            note = parsed.merchant,
-                                                            autoSplitEnabled = autoSplit
-                                                        )) {
-                                                            is VaultExecutionResult.OverdraftError -> snackbarHostState.showSnackbar(res.message)
-                                                            is VaultExecutionResult.Success -> {
-                                                                snackbarHostState.showSnackbar("Recorded: ₹${parsed.amount.toInt()} for ${parsed.category}")
-                                                                naturalLanguageInput = ""
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }) {
-                                                Icon(Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(18.dp))
+                                            IconButton(onClick = { executeNaturalLanguageCommand(naturalLanguageInput) }) {
+                                                Icon(Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
                                             }
                                         }
                                     }
@@ -377,7 +432,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         colors = CardDefaults.cardColors(containerColor = theme.surface)
                                     ) {
                                         Box(Modifier.fillMaxWidth().padding(28.dp), contentAlignment = Alignment.Center) {
-                                            Text("No records yet. Tap '+' to commit Spent or Received.", color = theme.textMuted, fontSize = 12.sp)
+                                            Text("No records yet. Type above or tap '+' to commit flow.", color = theme.textMuted, fontSize = 12.sp)
                                         }
                                     }
                                 }
@@ -397,11 +452,11 @@ fun DashboardScreen(db: AppDatabase) {
                         onEditPocket = { editingPocket = it },
                         onDeletePocketSafe = { pocket, balance ->
                             if (balance != 0.0) {
-                                scope.launch { snackbarHostState.showSnackbar("Cannot delete account with active balance of ₹$balance") }
+                                alertManager.showAlert("Cannot delete account with active balance of ₹${balance.toInt()}", AlertType.WARNING)
                             } else {
                                 scope.launch {
                                     db.stateFlowDao().updatePocket(pocket.copy(isArchived = true))
-                                    snackbarHostState.showSnackbar("${pocket.name} removed")
+                                    alertManager.showAlert("${pocket.name} removed", AlertType.SUCCESS)
                                 }
                             }
                         },
@@ -417,8 +472,8 @@ fun DashboardScreen(db: AppDatabase) {
                                     note = "Card Dues Clearance",
                                     autoSplitEnabled = autoSplit
                                 )) {
-                                    is VaultExecutionResult.OverdraftError -> snackbarHostState.showSnackbar(res.message)
-                                    is VaultExecutionResult.Success -> Unit
+                                    is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
+                                    is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
                                 }
                             }
                         },
@@ -439,8 +494,8 @@ fun DashboardScreen(db: AppDatabase) {
                                     note = nature.name,
                                     autoSplitEnabled = autoSplit
                                 )) {
-                                    is VaultExecutionResult.OverdraftError -> snackbarHostState.showSnackbar(res.message)
-                                    is VaultExecutionResult.Success -> Unit
+                                    is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
+                                    is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
                                 }
                             }
                         }
@@ -495,7 +550,7 @@ fun DashboardScreen(db: AppDatabase) {
                         onClearLedger = {
                             scope.launch {
                                 flowRecords.forEach { db.stateFlowDao().deleteFlowRecord(it.id) }
-                                snackbarHostState.showSnackbar("All vault records cleared")
+                                alertManager.showAlert("All vault records cleared", AlertType.SUCCESS)
                             }
                         }
                     )
@@ -507,10 +562,10 @@ fun DashboardScreen(db: AppDatabase) {
                     activePockets = rawPockets,
                     prefilledNote = ocrPrefilledNote,
                     prefilledAmount = ocrPrefilledAmount,
-                    inDialogErrorMessage = hudErrorMessage,
+                    inDialogErrorMessage = hudInDialogError,
                     onDismiss = {
                         showCommandHud = false
-                        hudErrorMessage = null
+                        hudInDialogError = null
                     },
                     onSubmit = { nature, srcId, tgtId, amt, cat, note, date, isRec, freq ->
                         scope.launch {
@@ -522,14 +577,17 @@ fun DashboardScreen(db: AppDatabase) {
                                 amount = amt,
                                 category = cat,
                                 note = note,
+                                timestamp = date,
                                 autoSplitEnabled = autoSplit
                             )) {
                                 is VaultExecutionResult.OverdraftError -> {
-                                    hudErrorMessage = res.message
+                                    hudInDialogError = res.message
+                                    alertManager.showAlert(res.message, AlertType.ERROR)
                                 }
                                 is VaultExecutionResult.Success -> {
-                                    hudErrorMessage = null
+                                    hudInDialogError = null
                                     showCommandHud = false
+                                    alertManager.showAlert(res.summary, AlertType.SUCCESS)
                                 }
                             }
                         }
@@ -583,6 +641,7 @@ fun DashboardScreen(db: AppDatabase) {
                                 )
                             )
                             showCreatePocketDialog = false
+                            alertManager.showAlert("Created account '$name'", AlertType.SUCCESS)
                         }
                     }
                 )
@@ -602,7 +661,7 @@ fun DashboardScreen(db: AppDatabase) {
                                 )
                             )
                             editingPocket = null
-                            snackbarHostState.showSnackbar("${pocket.name} updated")
+                            alertManager.showAlert("${pocket.name} updated", AlertType.SUCCESS)
                         }
                     }
                 )
