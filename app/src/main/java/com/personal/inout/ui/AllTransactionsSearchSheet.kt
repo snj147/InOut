@@ -1,4 +1,4 @@
-package com.inout.vault.ui
+package com.personal.inout.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,7 +20,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.inout.vault.data.FlowRecord
+import com.personal.inout.data.FlowRecord
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -207,7 +207,6 @@ fun EditTransactionDialog(
                 Text("Category", color = Color(0xFFCCCCCC), fontSize = 13.sp)
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Fixed 3-column uniform grid
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
