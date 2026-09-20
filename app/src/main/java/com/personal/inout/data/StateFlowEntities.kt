@@ -17,6 +17,7 @@ enum class MovementNature {
 enum class PocketType {
     LIQUID,
     CREDIT,
+    CREDIT_LINE,
     PEER,
     COUNTERPARTY
 }
@@ -33,15 +34,14 @@ data class FlowRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
     val sourcePocketId: Long? = null,
     val targetPocketId: Long? = null,
-    val amount: Long,
-    val movementNature: String,
-    val category: String,
+    val amount: Double = 0.0,
+    val movementNature: String = MovementNature.OUTFLOW.name,
+    val category: String = "",
     val note: String = "",
     val timestamp: Long = System.currentTimeMillis(),
     val isRecurring: Boolean = false,
     val recurringCadence: String = "NONE"
 ) {
-    // Alias for PdfDossierExporter.kt
     val nature: String get() = movementNature
 }
 
@@ -49,24 +49,41 @@ data class FlowRecord(
 data class VaultPocket(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
     val name: String = "",
-    val pocketType: PocketType = PocketType.LIQUID,
+    val pocketType: String = PocketType.LIQUID.name,
     val subType: String? = null,
-    val creditLimit: Long = 0L,
+    val creditLimit: Double = 0.0,
     val isArchived: Boolean = false
 ) {
     val pocketId: String get() = id.toString()
     val pocketName: String get() = name
 }
 
+// Factory function matching legacy parameter names (id, name, pocketType: PocketType)
+@Suppress("FunctionName")
+fun VaultPocket(
+    id: Long = 0L,
+    name: String,
+    pocketType: PocketType,
+    subType: String? = null,
+    creditLimit: Double = 0.0,
+    isArchived: Boolean = false
+): VaultPocket = VaultPocket(
+    id = id,
+    name = name,
+    pocketType = pocketType.name,
+    subType = subType,
+    creditLimit = creditLimit,
+    isArchived = isArchived
+)
+
 data class PocketBalanceSummary(
-    val pocketId: String,
-    val pocketName: String,
-    val pocketType: String,
-    val subType: String?,
-    val creditLimit: Long,
-    val computedBalance: Long
+    val pocketId: String = "",
+    val name: String = "",
+    val pocketType: String = "",
+    val subType: String? = null,
+    val creditLimit: Double = 0.0,
+    val computedBalance: Double = 0.0
 ) {
-    // Aliases for PdfDossierExporter.kt
-    val name: String get() = pocketName
-    val currentBalance: Long get() = computedBalance
+    val pocketName: String get() = name
+    val currentBalance: Double get() = computedBalance
 }
