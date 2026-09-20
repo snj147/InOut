@@ -33,6 +33,7 @@ fun FloatingCommandHud(
     prefilledPocketId: Long? = null,
     prefilledNote: String = "",
     prefilledAmount: Double? = null,
+    candidateAmounts: List<Double> = emptyList(),
     inDialogErrorMessage: String? = null,
     onDismiss: () -> Unit,
     onSubmit: (nature: MovementNature, sourceId: Long?, targetId: Long?, amount: Double, cat: String, note: String, date: Long, isRec: Boolean, freq: String) -> Unit
@@ -64,8 +65,8 @@ fun FloatingCommandHud(
         mutableStateOf(if (primaryNature == MovementNature.INFLOW) "Salary" else "Food & Dining")
     }
 
-    // Streamlined 4-Pill Single-Line Recurring State
-    var recurringFrequency by remember { mutableStateOf("None") }
+    // 4-Pill Single-Line Repeat Cadence: None, Daily, Weekly, Monthly
+    var repeatCadence by remember { mutableStateOf("None") }
 
     val computedAmount = remember(expression) { MathEvaluator.evaluate(expression) }
 
@@ -87,7 +88,7 @@ fun FloatingCommandHud(
                     .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                // Selector
+                // Main Nature Selector
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -142,6 +143,28 @@ fun FloatingCommandHud(
                             fontWeight = FontWeight.ExtraBold,
                             modifier = Modifier.padding(start = 6.dp, top = 2.dp)
                         )
+                    }
+
+                    // Interactive OCR Fallback Chips
+                    if (candidateAmounts.isNotEmpty()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Suggested:", color = theme.textMuted, fontSize = 10.sp)
+                            candidateAmounts.forEach { cand ->
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(theme.surfaceAlt)
+                                        .clickable { expression = String.format("%.2f", cand) }
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Text("₹${cand.toInt()}", color = theme.accent, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -223,28 +246,28 @@ fun FloatingCommandHud(
                     }
                 }
 
-                // Streamlined Single-Line 4-Pill Recurring Segment
+                // REPEAT (Single Line, 4-Pill Horizontal Selector)
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("Recurring Cadence", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                    Text("Repeat", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         listOf("None", "Daily", "Weekly", "Monthly").forEach { cadence ->
-                            val isSel = recurringFrequency == cadence
+                            val isSel = repeatCadence == cadence
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(if (isSel) theme.accent else theme.surfaceAlt)
-                                    .clickable { recurringFrequency = cadence }
+                                    .clickable { repeatCadence = cadence }
                                     .padding(vertical = 8.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     cadence,
                                     color = if (isSel) theme.bg else theme.textBright,
-                                    fontSize = 11.sp,
+                                    fontSize = 11.5.sp,
                                     fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
                                 )
                             }
@@ -279,8 +302,8 @@ fun FloatingCommandHud(
                     onClick = {
                         val amt = computedAmount ?: 0.0
                         if (amt > 0.0) {
-                            val isRec = recurringFrequency != "None"
-                            val freq = if (isRec) recurringFrequency.uppercase() else "NONE"
+                            val isRec = repeatCadence != "None"
+                            val freq = if (isRec) repeatCadence.uppercase() else "NONE"
                             when (primaryNature) {
                                 MovementNature.OUTFLOW -> {
                                     selectedSpendPocket?.let {
