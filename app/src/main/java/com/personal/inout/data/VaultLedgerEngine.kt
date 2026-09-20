@@ -3,27 +3,46 @@ package com.personal.inout.data
 import android.content.SharedPreferences
 import java.util.Calendar
 
+sealed class VaultExecutionResult {
+    data class Success(val recordId: Long) : VaultExecutionResult()
+    data class Error(val message: String) : VaultExecutionResult()
+}
+
 class VaultLedgerEngine(
     private val flowRecordDao: StateFlowDao,
     private val prefs: SharedPreferences
 ) {
 
+    // Restores recordMovement signature returning VaultExecutionResult
+    suspend fun recordMovement(record: FlowRecord): VaultExecutionResult {
+        return try {
+            val nature = try {
+                MovementNature.valueOf(record.movementNature)
+            } catch (_: Exception) {
+                MovementNature.OUTFLOW
+            }
+
+            if (nature in listOf(MovementNature.OUTFLOW, MovementNature.CARD_PAYMENT, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
+                requireNotNull(record.sourcePocketId) { "Source account must be specified for outflows" }
+            }
+            if (nature in listOf(MovementNature.INFLOW, MovementNature.PEER_BORROW, MovementNature.PEER_COLLECT)) {
+                requireNotNull(record.targetPocketId) { "Target account must be specified for inflows" }
+            }
+            if (nature == MovementNature.TRANSFER) {
+                requireNotNull(record.sourcePocketId) { "Source account required for transfer" }
+                requireNotNull(record.targetPocketId) { "Destination account required for transfer" }
+                require(record.sourcePocketId != record.targetPocketId) { "Cannot transfer to the same account" }
+            }
+
+            val insertedId = flowRecordDao.insertFlowRecord(record)
+            VaultExecutionResult.Success(insertedId)
+        } catch (e: Exception) {
+            VaultExecutionResult.Error(e.message ?: "Transaction failed")
+        }
+    }
+
     suspend fun executeMovement(record: FlowRecord) {
-        val nature = MovementNature.valueOf(record.movementNature)
-
-        if (nature in listOf(MovementNature.OUTFLOW, MovementNature.CARD_PAYMENT, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
-            requireNotNull(record.sourcePocketId) { "Source account must be specified for outflows" }
-        }
-        if (nature in listOf(MovementNature.INFLOW, MovementNature.PEER_BORROW, MovementNature.PEER_COLLECT)) {
-            requireNotNull(record.targetPocketId) { "Target account must be specified for inflows" }
-        }
-        if (nature == MovementNature.TRANSFER) {
-            requireNotNull(record.sourcePocketId) { "Source account required for transfer" }
-            requireNotNull(record.targetPocketId) { "Destination account required for transfer" }
-            require(record.sourcePocketId != record.targetPocketId) { "Cannot transfer to the same account" }
-        }
-
-        flowRecordDao.insertFlowRecord(record)
+        recordMovement(record)
     }
 
     suspend fun registerRecurringMovement(
