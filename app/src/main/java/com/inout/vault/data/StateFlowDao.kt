@@ -1,11 +1,6 @@
 package com.inout.vault.data
 
-import androidx.room.Dao
-import androidx.room.Delete
-import androidx.room.Insert
-import androidx.room.OnConflictStrategy
-import androidx.room.Query
-import androidx.room.Update
+import androidx.room.*
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -23,6 +18,15 @@ interface StateFlowDao {
     @Query("SELECT * FROM flow_records ORDER BY timestamp DESC")
     fun getAllFlowRecords(): Flow<List<FlowRecord>>
 
+    @Query("SELECT * FROM flow_records WHERE isRecurring = 1 ORDER BY timestamp DESC")
+    fun getRecurringSchedules(): Flow<List<FlowRecord>>
+
+    @Query("SELECT * FROM flow_records WHERE isRecurring = 1")
+    suspend fun getActiveRecurringSchedulesSync(): List<FlowRecord>
+
+    @Query("UPDATE flow_records SET isRecurring = 0 WHERE id = :id")
+    suspend fun stopRecurringSchedule(id: Long)
+
     @Query("""
         SELECT 
             pockets.pocketId,
@@ -30,11 +34,11 @@ interface StateFlowDao {
             pockets.pocketType,
             pockets.subType,
             pockets.creditLimit,
-            pockets.billingCycleDay,
-            pockets.gracePeriodDays,
             COALESCE(SUM(
                 CASE 
+                    -- Future Gating: Inflows only calculate if timestamp <= :currentTime
                     WHEN flow_records.targetPocketId = pockets.pocketId AND flow_records.timestamp <= :currentTime THEN flow_records.amount
+                    -- Future Gating: Outflows only calculate if timestamp <= :currentTime
                     WHEN flow_records.sourcePocketId = pockets.pocketId AND flow_records.timestamp <= :currentTime THEN -flow_records.amount
                     ELSE 0 
                 END
@@ -48,6 +52,9 @@ interface StateFlowDao {
 
     @Query("SELECT * FROM pockets WHERE isArchived = 0")
     fun getAllActivePockets(): Flow<List<PocketEntity>>
+
+    @Query("SELECT * FROM pockets WHERE isArchived = 0")
+    suspend fun getActivePocketsSync(): List<PocketEntity>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPocket(pocket: PocketEntity)
