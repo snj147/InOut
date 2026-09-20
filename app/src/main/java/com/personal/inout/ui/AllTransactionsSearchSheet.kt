@@ -35,6 +35,9 @@ fun AllTransactionsSearchSheet(
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategoryFilter by remember { mutableStateOf<String?>(null) }
 
+    // Fixes the irritating second pull by skipping partial expansion completely
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
     val categories = remember(flowRecords) {
         listOf("All") + flowRecords.map { it.category }.distinct().filter { it.isNotBlank() }
     }
@@ -56,6 +59,7 @@ fun AllTransactionsSearchSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = theme.surface,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
     ) {
@@ -120,11 +124,11 @@ fun AllTransactionsSearchSheet(
                 }
             }
 
-            // Record Stream with tap-to-edit
+            // Record Stream with Tap-To-Edit
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(bottom = 32.dp)
+                contentPadding = PaddingValues(bottom = 48.dp)
             ) {
                 if (filteredRecords.isEmpty()) {
                     item {
