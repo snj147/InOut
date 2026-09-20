@@ -31,7 +31,7 @@ interface StateFlowDao {
         SELECT 
             pockets.pocketId,
             pockets.pocketName,
-            pockets.pocketType,
+            pockets.pocketTypeStr AS pocketType,
             pockets.subType,
             pockets.creditLimit,
             COALESCE(SUM(
@@ -51,11 +51,15 @@ interface StateFlowDao {
     @Query("SELECT * FROM pockets WHERE isArchived = 0")
     fun getAllActivePockets(): Flow<List<VaultPocket>>
 
+    // Alias required by WidgetCommandActivity.kt:126
+    @Query("SELECT * FROM pockets WHERE isArchived = 0")
+    fun observeAllActivePockets(): Flow<List<VaultPocket>>
+
     @Query("SELECT * FROM pockets WHERE isArchived = 0")
     suspend fun getActivePocketsSync(): List<VaultPocket>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertPocket(pocket: VaultPocket)
+    suspend fun insertPocket(pocket: VaultPocket): Long
 
     @Update
     suspend fun updatePocket(pocket: VaultPocket)
