@@ -9,13 +9,14 @@ sealed class VaultExecutionResult {
         val summary: String = "Transaction recorded successfully"
     ) : VaultExecutionResult()
 
-    data class OverdraftError(
-        val message: String
+    // Subclasses OverdraftError with message to satisfy exhaustive when in WidgetCommandActivity
+    open class OverdraftError(
+        open val message: String
     ) : VaultExecutionResult()
 
     data class Error(
-        val message: String
-    ) : VaultExecutionResult()
+        override val message: String
+    ) : OverdraftError(message)
 }
 
 class VaultLedgerEngine(
@@ -23,7 +24,6 @@ class VaultLedgerEngine(
     private val prefs: SharedPreferences? = null
 ) {
 
-    // Overload used by WidgetCommandActivity.kt with Long? IDs and Double amount
     suspend fun recordMovement(
         nature: MovementNature,
         sourcePocketId: Long? = null,
@@ -44,7 +44,6 @@ class VaultLedgerEngine(
         )
     }
 
-    // Overload with Long amount
     suspend fun recordMovement(
         nature: MovementNature,
         sourcePocketId: Long? = null,
@@ -98,23 +97,23 @@ class VaultLedgerEngine(
         return try {
             if (nature in listOf(MovementNature.OUTFLOW, MovementNature.CARD_PAYMENT, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
                 if (sourcePocketId == null || sourcePocketId == 0L) {
-                    return VaultExecutionResult.Error("Source account required for outflow")
+                    return VaultExecutionResult.OverdraftError("Source account required for outflow")
                 }
             }
             if (nature in listOf(MovementNature.INFLOW, MovementNature.PEER_BORROW, MovementNature.PEER_COLLECT)) {
                 if (targetPocketId == null || targetPocketId == 0L) {
-                    return VaultExecutionResult.Error("Target account required for inflow")
+                    return VaultExecutionResult.OverdraftError("Target account required for inflow")
                 }
             }
             if (nature == MovementNature.TRANSFER) {
                 if (sourcePocketId == null || sourcePocketId == 0L) {
-                    return VaultExecutionResult.Error("Source account required for transfer")
+                    return VaultExecutionResult.OverdraftError("Source account required for transfer")
                 }
                 if (targetPocketId == null || targetPocketId == 0L) {
-                    return VaultExecutionResult.Error("Destination account required for transfer")
+                    return VaultExecutionResult.OverdraftError("Destination account required for transfer")
                 }
                 if (sourcePocketId == targetPocketId) {
-                    return VaultExecutionResult.Error("Cannot transfer to the same account")
+                    return VaultExecutionResult.OverdraftError("Cannot transfer to the same account")
                 }
             }
 
@@ -136,7 +135,7 @@ class VaultLedgerEngine(
                 summary = "₹$amount logged for ${entity.note.ifBlank { entity.category }}"
             )
         } catch (e: Exception) {
-            VaultExecutionResult.Error(e.message ?: "Failed to log transaction")
+            VaultExecutionResult.OverdraftError(e.message ?: "Failed to log transaction")
         }
     }
 
