@@ -3,7 +3,6 @@ package com.personal.inout.util
 import com.personal.inout.data.MovementNature
 import com.personal.inout.data.PocketType
 import com.personal.inout.data.VaultPocket
-import java.text.SimpleDateFormat
 import java.util.*
 
 data class ParsedCommand(
@@ -18,9 +17,9 @@ data class ParsedCommand(
 
 object NaturalLanguageParser {
     private val expenseCategoryKeywords = mapOf(
-        "Groceries" to listOf("grocery", "groceries", "supermarket", "milk", "vegetables", "fruits", "dmart", "blinkit", "zepto", "instamart", "kirana", "reliance", "vegetable", "paneer", "atta", "dal"),
-        "Food & Dining" to listOf("coffee", "cafe", "tea", "chai", "lunch", "dinner", "breakfast", "swiggy", "zomato", "restaurant", "starbucks", "burger", "pizza", "biryani", "food", "dosa"),
-        "Transport" to listOf("uber", "ola", "auto", "metro", "fuel", "petrol", "diesel", "cab", "taxi", "bus", "train", "flight", "fastag"),
+        "Groceries" to listOf("grocery", "groceries", "supermarket", "milk", "vegetables", "fruits", "dmart", "blinkit", "zepto", "instamart", "kirana", "reliance", "vegetable", "paneer", "atta", "dal", "bread", "eggs"),
+        "Food & Dining" to listOf("coffee", "cafe", "tea", "chai", "lunch", "dinner", "breakfast", "swiggy", "zomato", "restaurant", "starbucks", "burger", "pizza", "biryani", "food", "dosa", "snack"),
+        "Transport" to listOf("uber", "ola", "auto", "metro", "fuel", "petrol", "diesel", "cab", "taxi", "bus", "train", "flight", "fastag", "toll"),
         "Shopping" to listOf("amazon", "flipkart", "clothes", "shoes", "zara", "myntra", "shopping", "electronics", "gadget", "croma"),
         "Bills" to listOf("bill", "electricity", "water", "wifi", "internet", "recharge", "rent", "broadband", "maintenance", "gas", "jio", "airtel"),
         "Health" to listOf("medicine", "doctor", "hospital", "pharmacy", "clinic", "meds", "apollo", "lab"),
@@ -28,8 +27,8 @@ object NaturalLanguageParser {
     )
 
     private val actionKeywords = mapOf(
-        MovementNature.OUTFLOW to listOf("spent", "paid", "gave", "bought", "spend", "purchased"),
-        MovementNature.INFLOW to listOf("got", "received", "salary", "earned", "income", "freelance"),
+        MovementNature.OUTFLOW to listOf("spent", "paid", "gave", "bought", "spend", "purchased", "pay"),
+        MovementNature.INFLOW to listOf("got", "received", "salary", "earned", "income", "freelance", "receive"),
         MovementNature.PEER_LEND to listOf("lent", "loaned", "lend"),
         MovementNature.PEER_BORROW to listOf("borrowed", "borrow"),
         MovementNature.TRANSFER to listOf("transferred", "transfer", "moved", "sent")
@@ -39,7 +38,20 @@ object NaturalLanguageParser {
         val raw = input.trim()
         if (raw.isBlank()) return null
 
-        // 1. EXTRACT NUMERICAL AMOUNT (e.g. 2000, 2.5k, ₹450)
+        // 1. STRICT ACTION VERB DETECTION (Nullable: No verb = Abort parsing)
+        var detectedNature: MovementNature? = null
+        for ((nat, verbs) in actionKeywords) {
+            if (verbs.any { raw.contains(Regex("""(?i)\b$it\b""")) }) {
+                detectedNature = nat
+                break
+            }
+        }
+        if (detectedNature == null) {
+            // Rejects random text like "abc 2000 good 35"
+            return null
+        }
+
+        // 2. EXTRACT NUMERICAL AMOUNT (Handles 2000, 2.5k, ₹450)
         var amount: Double? = null
         val kMatch = Regex("""(?i)(?:rs\.?|inr|₹)?\s*([0-9]+(?:\.[0-9]+)?)\s*k\b""").find(raw)
         if (kMatch != null) {
@@ -52,7 +64,7 @@ object NaturalLanguageParser {
         }
         if (amount == null || amount <= 0.0) return null
 
-        // 2. PARSE OPTIONAL EXPLICIT DATE (e.g., on 25/08/2026, on 25-08-2026, yesterday, today)
+        // 3. PARSE OPTIONAL EXPLICIT DATE (e.g., on 25/08/2026, yesterday, today)
         var parsedTimestamp = System.currentTimeMillis()
         var workingText = raw
 
@@ -80,16 +92,7 @@ object NaturalLanguageParser {
             workingText = workingText.replace(Regex("""(?i)\byesterday\b"""), " ")
         }
 
-        // 3. DETECT NATURE (Action Verb)
-        var nature = MovementNature.OUTFLOW
-        for ((nat, verbs) in actionKeywords) {
-            if (verbs.any { workingText.contains(Regex("""(?i)\b$it\b""")) }) {
-                nature = nat
-                break
-            }
-        }
-
-        // 4. EXTRACT MATCHED WALLET/ACCOUNT
+        // 4. MATCH SOURCE/TARGET LIQUID WALLET
         var matchedPocket: VaultPocket? = null
         for (pocket in activePockets.filter { it.pocketType == PocketType.LIQUID }) {
             if (workingText.contains(pocket.name, ignoreCase = true)) {
@@ -102,19 +105,30 @@ object NaturalLanguageParser {
             matchedPocket = activePockets.firstOrNull { it.pocketType == PocketType.LIQUID }
         }
 
-        // 5. PEER/COUNTERPARTY LOGIC
+        // 5. PEER/COUNTERPARTY LOGIC (Lent 2000 to ABC OR Lent 2000 ABC)
         var targetPerson: String? = null
-        if (nature == MovementNature.PEER_LEND || nature == MovementNature.PEER_BORROW) {
-            val personMatch = Regex("""(?i)\b(?:to|from)\s+([A-Za-z0-9_-]+)""").find(workingText)
-            if (personMatch != null) {
-                targetPerson = personMatch.groupValues[1].trim()
-                workingText = workingText.replace(personMatch.value, " ")
+        if (detectedNature == MovementNature.PEER_LEND || detectedNature == MovementNature.PEER_BORROW) {
+            val personWithPrep = Regex("""(?i)\b(?:to|from)\s+([A-Za-z0-9_-]+)""").find(workingText)
+            if (personWithPrep != null) {
+                targetPerson = personWithPrep.groupValues[1].trim()
+                workingText = workingText.replace(personWithPrep.value, " ")
+            } else {
+                // Fallback: Lent [Amount] [Person]
+                val tokens = workingText.split(Regex("""\s+""")).filter { it.isNotBlank() }
+                val personCandidate = tokens.firstOrNull { token ->
+                    !token.matches(Regex("""(?i)(?:rs\.?|inr|₹|[0-9]+(?:\.[0-9]+)?\s*k?)""")) &&
+                    !actionKeywords[detectedNature]!!.contains(token.lowercase())
+                }
+                if (personCandidate != null) {
+                    targetPerson = personCandidate
+                    workingText = workingText.replace(personCandidate, " ")
+                }
             }
         }
 
         // 6. CATEGORY DETECTION
-        var matchedCategory = if (nature == MovementNature.INFLOW) "Salary" else "General"
-        if (nature == MovementNature.OUTFLOW) {
+        var matchedCategory = if (detectedNature == MovementNature.INFLOW) "Salary" else "General"
+        if (detectedNature == MovementNature.OUTFLOW) {
             for ((category, keywords) in expenseCategoryKeywords) {
                 if (keywords.any { workingText.contains(Regex("""(?i)\b$it\b""")) }) {
                     matchedCategory = category
@@ -131,14 +145,14 @@ object NaturalLanguageParser {
             .trim()
 
         if (cleanNote.isBlank()) {
-            cleanNote = targetPerson ?: if (nature == MovementNature.INFLOW) "Income" else matchedCategory
+            cleanNote = targetPerson ?: if (detectedNature == MovementNature.INFLOW) "Income" else matchedCategory
         } else {
             cleanNote = cleanNote.split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
         }
 
         return ParsedCommand(
             amount = amount,
-            nature = nature,
+            nature = detectedNature,
             category = if (targetPerson != null) "Peer Transfer" else matchedCategory,
             merchant = cleanNote,
             matchedPocketId = matchedPocket?.id,
