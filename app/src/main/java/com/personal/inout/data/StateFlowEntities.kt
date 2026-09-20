@@ -40,7 +40,10 @@ data class FlowRecord(
     val timestamp: Long = System.currentTimeMillis(),
     val isRecurring: Boolean = false,
     val recurringCadence: String = "NONE"
-)
+) {
+    // Alias for PdfDossierExporter.kt
+    val nature: String get() = movementNature
+}
 
 @Entity(tableName = "pockets")
 data class VaultPocket(
@@ -51,7 +54,6 @@ data class VaultPocket(
     val creditLimit: Long = 0L,
     val isArchived: Boolean = false
 ) {
-    // Property aliases for backwards compatibility
     val pocketId: String get() = id.toString()
     val pocketName: String get() = name
 }
@@ -63,4 +65,8 @@ data class PocketBalanceSummary(
     val subType: String?,
     val creditLimit: Long,
     val computedBalance: Long
-)
+) {
+    // Aliases for PdfDossierExporter.kt
+    val name: String get() = pocketName
+    val currentBalance: Long get() = computedBalance
+}
