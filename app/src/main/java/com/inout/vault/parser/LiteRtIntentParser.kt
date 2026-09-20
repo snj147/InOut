@@ -1,8 +1,8 @@
 package com.inout.vault.parser
 
 import android.content.Context
+import com.google.ai.edge.litert.Interpreter
 import com.inout.vault.data.MovementNature
-import org.tensorflow.lite.Interpreter
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -30,13 +30,10 @@ class LiteRtIntentParser(private val context: Context) {
         try {
             val modelBuffer = loadModelFile(modelFileName)
             val options = Interpreter.Options().apply {
-                setNumThreads(2)
-                setUseNNAPI(false)
+                numThreads = 2
             }
             interpreter = Interpreter(modelBuffer, options)
         } catch (_: Exception) {
-            // If the model asset is not yet available in assets/, the interpreter will stay null
-            // and parsing gracefully falls back to the deterministic action-verb parser.
             interpreter = null
         }
     }
@@ -65,7 +62,6 @@ class LiteRtIntentParser(private val context: Context) {
             )
         }
 
-        // Run LiteRT on-device inference if loaded; otherwise fallback cleanly
         val activeInterpreter = interpreter
         if (activeInterpreter != null) {
             try {
@@ -79,7 +75,6 @@ class LiteRtIntentParser(private val context: Context) {
     }
 
     private fun runModelInference(tflite: Interpreter, input: String): ParsedIntentResult {
-        // Prepare 1x256 ASCII/token buffer for embedded sentence classification
         val inputBuffer = ByteBuffer.allocateDirect(1 * 256 * 4).order(ByteOrder.nativeOrder())
         val chars = input.toCharArray()
         for (i in 0 until 256) {
@@ -90,7 +85,6 @@ class LiteRtIntentParser(private val context: Context) {
             }
         }
 
-        // Output probability distribution: [OUTFLOW, INFLOW, TRANSFER, PEER_LEND, PEER_BORROW, PEER_COLLECT, PEER_REPAY]
         val outputScores = Array(1) { FloatArray(7) }
         tflite.run(inputBuffer, outputScores)
 
@@ -118,10 +112,9 @@ class LiteRtIntentParser(private val context: Context) {
             else -> MovementNature.OUTFLOW
         }
 
-        val parsedAmount = extractAmount(input)
         return ParsedIntentResult(
             movementNature = nature,
-            amount = parsedAmount,
+            amount = extractAmount(input),
             note = input,
             counterpartyOrCategory = null,
             confidence = maxScore
