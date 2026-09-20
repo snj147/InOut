@@ -1,8 +1,8 @@
-package com.inout.vault.parser
+package com.personal.inout.util
 
-import com.inout.vault.data.CadenceType
-import com.inout.vault.data.MovementNature
-import com.inout.vault.data.PocketEntity
+import com.personal.inout.data.CadenceType
+import com.personal.inout.data.MovementNature
+import com.personal.inout.data.VaultPocket
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.min
@@ -10,7 +10,7 @@ import kotlin.math.min
 sealed class ParsedQuickCommand {
     data class CreatePocketCommand(
         val name: String,
-        val type: String, // LIQUID, CREDIT, PEER
+        val type: String,
         val subType: String? = null
     ) : ParsedQuickCommand()
 
@@ -27,7 +27,7 @@ sealed class ParsedQuickCommand {
     data class InvalidCommand(val reason: String) : ParsedQuickCommand()
 }
 
-class FuzzyCommandParser(private val activePocketsProvider: () -> List<PocketEntity>) {
+class FuzzyCommandParser(private val activePocketsProvider: () -> List<VaultPocket>) {
 
     fun parse(rawInput: String): ParsedQuickCommand {
         val text = rawInput.trim()
@@ -66,7 +66,6 @@ class FuzzyCommandParser(private val activePocketsProvider: () -> List<PocketEnt
         val amount = extractAmount(fullText) ?: return ParsedQuickCommand.InvalidCommand("No amount detected")
         val lowerText = fullText.lowercase()
 
-        // Determine Nature
         val firstWord = tokens.first().lowercase()
         val nature = when {
             isFuzzyMatch(firstWord, listOf("borrowed", "borrow"), 2) -> MovementNature.PEER_BORROW
@@ -78,7 +77,6 @@ class FuzzyCommandParser(private val activePocketsProvider: () -> List<PocketEnt
             else -> MovementNature.OUTFLOW
         }
 
-        // Cadence Detection
         val cadence = when {
             lowerText.contains("daily") || lowerText.contains("every day") -> CadenceType.DAILY
             lowerText.contains("weekly") || lowerText.contains("every week") -> CadenceType.WEEKLY
@@ -86,10 +84,7 @@ class FuzzyCommandParser(private val activePocketsProvider: () -> List<PocketEnt
             else -> CadenceType.NONE
         }
 
-        // Temporal / Starting Date Detection
         val targetTimestamp = parseStartingDate(lowerText)
-
-        // Extraction of Note / Target / Source
         val activePockets = activePocketsProvider()
         val matchedPockets = findReferencedPockets(tokens, activePockets)
 
@@ -136,7 +131,6 @@ class FuzzyCommandParser(private val activePocketsProvider: () -> List<PocketEnt
             return now.timeInMillis
         }
 
-        // Look for date pattern like "10-oct", "10 oct", "october 10"
         val dateRegex = Regex("""(?:starting|from|on)?\s*(\d{1,2})[-/\s]([a-zA-Z]{3,9})""")
         val match = dateRegex.find(lowerText)
         if (match != null) {
@@ -151,7 +145,6 @@ class FuzzyCommandParser(private val activePocketsProvider: () -> List<PocketEnt
                     parsedCal.set(Calendar.MONTH, calTemp.get(Calendar.MONTH))
                     parsedCal.set(Calendar.DAY_OF_MONTH, day)
                     if (parsedCal.before(now)) {
-                        // Target next year if month already passed
                         parsedCal.add(Calendar.YEAR, 1)
                     }
                     parsedCal.timeInMillis
@@ -164,8 +157,8 @@ class FuzzyCommandParser(private val activePocketsProvider: () -> List<PocketEnt
         return now.timeInMillis
     }
 
-    private fun findReferencedPockets(tokens: List<String>, available: List<PocketEntity>): List<PocketEntity> {
-        val matches = mutableListOf<PocketEntity>()
+    private fun findReferencedPockets(tokens: List<String>, available: List<VaultPocket>): List<VaultPocket> {
+        val matches = mutableListOf<VaultPocket>()
         for (pocket in available) {
             val pName = pocket.pocketName.lowercase()
             for (token in tokens) {
