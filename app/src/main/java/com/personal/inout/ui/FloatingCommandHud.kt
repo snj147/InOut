@@ -33,7 +33,6 @@ fun FloatingCommandHud(
     prefilledPocketId: Long? = null,
     prefilledNote: String = "",
     prefilledAmount: Double? = null,
-    candidateAmounts: List<Double> = emptyList(),
     inDialogErrorMessage: String? = null,
     onDismiss: () -> Unit,
     onSubmit: (nature: MovementNature, sourceId: Long?, targetId: Long?, amount: Double, cat: String, note: String, date: Long, isRec: Boolean, freq: String) -> Unit
@@ -65,9 +64,8 @@ fun FloatingCommandHud(
         mutableStateOf(if (primaryNature == MovementNature.INFLOW) "Salary" else "Food & Dining")
     }
 
-    // 4-Pill Single-Line Repeat Cadence: None, Daily, Weekly, Monthly
+    // 4-Pill Repeat Cadence: None, Daily, Weekly, Monthly
     var repeatCadence by remember { mutableStateOf("None") }
-
     val computedAmount = remember(expression) { MathEvaluator.evaluate(expression) }
 
     Dialog(
@@ -127,7 +125,7 @@ fun FloatingCommandHud(
                     }
                 }
 
-                // Amount
+                // Amount (Clean, with no distortion chips)
                 Column {
                     CompactInputField(
                         value = expression,
@@ -143,28 +141,6 @@ fun FloatingCommandHud(
                             fontWeight = FontWeight.ExtraBold,
                             modifier = Modifier.padding(start = 6.dp, top = 2.dp)
                         )
-                    }
-
-                    // Interactive OCR Fallback Chips
-                    if (candidateAmounts.isNotEmpty()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Suggested:", color = theme.textMuted, fontSize = 10.sp)
-                            candidateAmounts.forEach { cand ->
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(theme.surfaceAlt)
-                                        .clickable { expression = String.format("%.2f", cand) }
-                                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                                ) {
-                                    Text("₹${cand.toInt()}", color = theme.accent, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
                     }
                 }
 
