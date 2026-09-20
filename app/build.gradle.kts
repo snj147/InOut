@@ -65,8 +65,11 @@ dependencies {
     implementation("androidx.room:room-ktx:$roomVersion")
     kapt("androidx.room:room-compiler:$roomVersion")
 
-    // Play Billing (required by com/personal/inout/billing/PlayBillingManager.kt)
+    // Google Play Billing
     implementation("com.android.billingclient:billing-ktx:7.0.0")
+
+    // Google Play In-App Update (Fixes InAppUpdateHelper.kt unresolved reference: AppUpdateType)
+    implementation("com.google.android.play:app-update-ktx:2.1.0")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
