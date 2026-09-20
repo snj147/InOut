@@ -1,7 +1,9 @@
 package com.personal.inout.data
 
 import androidx.room.Entity
+import androidx.room.Ignore
 import androidx.room.PrimaryKey
+import java.util.UUID
 
 enum class MovementNature {
     OUTFLOW,
@@ -17,7 +19,8 @@ enum class MovementNature {
 enum class PocketType {
     LIQUID,
     CREDIT,
-    PEER
+    PEER,
+    COUNTERPARTY
 }
 
 enum class CadenceType {
@@ -43,45 +46,56 @@ data class FlowRecord(
 
 @Entity(tableName = "pockets")
 data class VaultPocket(
-    @PrimaryKey val pocketId: String,
-    val pocketName: String,
-    val pocketType: String,
+    @PrimaryKey val pocketId: String = UUID.randomUUID().toString(),
+    val pocketName: String = "",
+    val pocketTypeStr: String = PocketType.LIQUID.name,
     val subType: String? = null,
     val creditLimit: Long = 0L,
     val isArchived: Boolean = false
-)
+) {
+    // Property aliases for WidgetCommandActivity compatibility
+    val id: String get() = pocketId
+    val name: String get() = pocketName
 
-// Factory function matching legacy parameter names (id, name, type: PocketType)
+    val pocketType: PocketType
+        get() = try {
+            PocketType.valueOf(pocketTypeStr)
+        } catch (_: Exception) {
+            PocketType.LIQUID
+        }
+}
+
+// Factory function matching legacy parameter names (id, name, pocketType: PocketType)
 @Suppress("FunctionName")
 fun VaultPocket(
-    id: String,
+    id: String = UUID.randomUUID().toString(),
     name: String,
-    type: PocketType,
+    pocketType: PocketType,
     subType: String? = null,
     creditLimit: Long = 0L,
     isArchived: Boolean = false
 ): VaultPocket = VaultPocket(
     pocketId = id,
     pocketName = name,
-    pocketType = type.name,
+    pocketTypeStr = pocketType.name,
     subType = subType,
     creditLimit = creditLimit,
     isArchived = isArchived
 )
 
-// Factory function matching legacy parameter names (id, name, pocketType: String)
+// Factory function matching legacy parameter names (id as Long/String)
 @Suppress("FunctionName")
 fun VaultPocket(
-    id: String,
+    id: Long,
     name: String,
-    pocketType: String,
+    pocketType: PocketType,
     subType: String? = null,
     creditLimit: Long = 0L,
     isArchived: Boolean = false
 ): VaultPocket = VaultPocket(
-    pocketId = id,
+    pocketId = id.toString(),
     pocketName = name,
-    pocketType = pocketType,
+    pocketTypeStr = pocketType.name,
     subType = subType,
     creditLimit = creditLimit,
     isArchived = isArchived
