@@ -1,24 +1,24 @@
 package com.personal.inout.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.personal.inout.data.FlowRecord
-import com.personal.inout.data.MovementNature
-import java.text.SimpleDateFormat
-import java.util.*
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -27,144 +27,120 @@ fun AllTransactionsSearchSheet(
     isPrivacyMode: Boolean,
     isProUser: Boolean,
     onDismiss: () -> Unit,
+    onEditRecord: (FlowRecord) -> Unit,
     onExportCsv: () -> Unit,
     onExportPdfDossier: () -> Unit
 ) {
     val theme = LocalThemeColors.current
     var searchQuery by remember { mutableStateOf("") }
+    var selectedCategoryFilter by remember { mutableStateOf<String?>(null) }
 
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val categories = remember(flowRecords) {
+        listOf("All") + flowRecords.map { it.category }.distinct().filter { it.isNotBlank() }
+    }
 
-    val filteredRecords = remember(flowRecords, searchQuery) {
-        if (searchQuery.isBlank()) flowRecords
-        else {
-            flowRecords.filter {
-                it.note.contains(searchQuery, ignoreCase = true) ||
-                it.category.contains(searchQuery, ignoreCase = true) ||
-                it.nature.name.contains(searchQuery, ignoreCase = true)
-            }
+    val filteredRecords = remember(flowRecords, searchQuery, selectedCategoryFilter) {
+        flowRecords.filter { flow ->
+            val matchesQuery = searchQuery.isBlank() ||
+                    flow.note.contains(searchQuery, ignoreCase = true) ||
+                    flow.category.contains(searchQuery, ignoreCase = true) ||
+                    flow.amount.toString().contains(searchQuery)
+
+            val matchesCategory = selectedCategoryFilter == null ||
+                    selectedCategoryFilter == "All" ||
+                    flow.category.equals(selectedCategoryFilter, ignoreCase = true)
+
+            matchesQuery && matchesCategory
         }
     }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        sheetState = sheetState,
         containerColor = theme.surface,
-        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        dragHandle = { BottomSheetDefaults.DragHandle(color = theme.textMuted.copy(alpha = 0.4f)) },
-        modifier = Modifier.fillMaxHeight(0.92f)
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .navigationBarsPadding()
-                .padding(horizontal = 18.dp, vertical = 4.dp),
+                .padding(horizontal = 18.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            // Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "All Vault Flows (${filteredRecords.size})",
+                    "All Vault Records (${filteredRecords.size})",
                     color = theme.textBright,
-                    fontSize = 16.sp,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Black
                 )
+                IconButton(onClick = onDismiss) {
+                    Icon(Icons.Default.Close, contentDescription = "Close", tint = theme.textMuted)
+                }
+            }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    IconButton(onClick = onExportCsv) {
-                        Icon(Icons.Default.FileDownload, contentDescription = "CSV Export", tint = theme.accent)
-                    }
-                    if (isProUser) {
-                        IconButton(onClick = onExportPdfDossier) {
-                            Icon(Icons.Default.PictureAsPdf, contentDescription = "PDF Dossier", tint = theme.accent)
-                        }
+            // Search Bar
+            TextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                placeholder = { Text("Search by merchant, note, or amount...", color = theme.textMuted, fontSize = 12.5.sp) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = theme.accent) },
+                singleLine = true,
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = theme.surfaceAlt,
+                    unfocusedContainerColor = theme.surfaceAlt,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                    focusedTextColor = theme.textBright,
+                    unfocusedTextColor = theme.textBright
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            // Category Filter Pills
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                categories.take(5).forEach { cat ->
+                    val isSel = (selectedCategoryFilter == null && cat == "All") || selectedCategoryFilter == cat
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSel) theme.accent else theme.surfaceAlt)
+                            .clickable { selectedCategoryFilter = if (cat == "All") null else cat }
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(cat, color = if (isSel) theme.bg else theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
 
-            CompactInputField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = "Search note, merchant, category...",
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            if (filteredRecords.isEmpty()) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text("No matching records found", color = theme.textMuted, fontSize = 12.sp)
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    contentPadding = PaddingValues(bottom = 32.dp)
-                ) {
-                    items(filteredRecords, key = { it.id }) { flow ->
-                        // STRICT OUTFLOW CHECK: PEER_REPAY and PEER_LEND are Outflows (Red), while PEER_COLLECT and PEER_BORROW are Inflows (Green)
-                        val isOut = flow.nature in listOf(
-                            MovementNature.OUTFLOW,
-                            MovementNature.CARD_PAYMENT,
-                            MovementNature.PEER_LEND,
-                            MovementNature.PEER_REPAY
-                        )
-                        val flowColor = if (isOut) theme.mildRed else theme.mildGreen
-                        val dStr = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(flow.timestamp))
-
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(theme.surfaceAlt)
-                                .padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    imageVector = if (isOut) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward,
-                                    contentDescription = null,
-                                    tint = flowColor,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Column {
-                                    Text(
-                                        flow.note.ifBlank { flow.category },
-                                        color = theme.textBright,
-                                        fontWeight = FontWeight.SemiBold,
-                                        fontSize = 13.5.sp
-                                    )
-                                    val flowLabel = when (flow.nature) {
-                                        MovementNature.OUTFLOW -> "Spent"
-                                        MovementNature.INFLOW -> "Received"
-                                        MovementNature.CARD_PAYMENT -> "Card Bill Paid"
-                                        MovementNature.PEER_LEND -> "Lent"
-                                        MovementNature.PEER_COLLECT -> "Collected"
-                                        MovementNature.PEER_BORROW -> "Borrowed"
-                                        MovementNature.PEER_REPAY -> "Repaid"
-                                        MovementNature.TRANSFER -> "Transferred"
-                                    }
-                                    Text("$flowLabel • $dStr", color = theme.textMuted, fontSize = 10.5.sp)
-                                }
-                            }
-
-                            val amtStr = if (isPrivacyMode) "₹ •••" else "${if (isOut) "-" else "+"}₹ ${String.format("%,.0f", flow.amount)}"
-                            Text(
-                                amtStr,
-                                color = flowColor,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 14.sp
-                            )
+            // Record Stream with tap-to-edit
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(bottom = 32.dp)
+            ) {
+                if (filteredRecords.isEmpty()) {
+                    item {
+                        Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                            Text("No matching records found", color = theme.textMuted, fontSize = 12.5.sp)
                         }
+                    }
+                } else {
+                    items(filteredRecords, key = { it.id }) { flow ->
+                        FlowRecordDisplayRow(
+                            flow = flow,
+                            isPrivacyMode = isPrivacyMode,
+                            theme = theme,
+                            onClick = { onEditRecord(flow) }
+                        )
+                        Divider(color = theme.surfaceAlt.copy(alpha = 0.5f), thickness = 0.5.dp)
                     }
                 }
             }
