@@ -30,7 +30,7 @@ object NaturalLanguageParser {
         val raw = input.trim()
         if (raw.isBlank()) return null
 
-        // 1. EXTRACT NUMERICAL AMOUNT
+        // 1. EXTRACT NUMERICAL AMOUNT (supports 2000, 2.5k, ₹450)
         var amount: Double? = null
         val kMatch = Regex("""(?i)(?:rs\.?|inr|₹)?\s*([0-9]+(?:\.[0-9]+)?)\s*k\b""").find(raw)
         if (kMatch != null) {
@@ -45,7 +45,7 @@ object NaturalLanguageParser {
 
         var workingText = raw
 
-        // 2. PARSE OPTIONAL DATE (e.g. on 25/08/2026, yesterday)
+        // 2. PARSE OPTIONAL DATE (on 25/08/2026, yesterday, today)
         var parsedTimestamp = System.currentTimeMillis()
         val dateMatch = Regex("""(?i)\bon\s+([0-3]?[0-9][/\-.][0-1]?[0-9](?:[/\-.](?:20)?[0-9]{2})?)\b""").find(workingText)
         if (dateMatch != null) {
@@ -68,11 +68,11 @@ object NaturalLanguageParser {
             workingText = workingText.replace(Regex("""(?i)\byesterday\b"""), " ")
         }
 
-        // 3. ACTION VERB & PEER CONTEXT DETECTION
+        // 3. ACTION VERB & INTENT CLASSIFICATION
         var detectedNature: MovementNature? = null
         var targetPerson: String? = null
 
-        // Check Peer Collection first: "got 2000 from Rahul", "collected 2000 from Mahesh"
+        // Peer Collection: "got 2000 from Rahul", "collected 2000 from Mahesh"
         val fromPersonMatch = Regex("""(?i)\b(?:got|received|collected|collect)\s+.*?\bfrom\s+([A-Za-z0-9_-]+)""").find(workingText)
         if (fromPersonMatch != null) {
             detectedNature = MovementNature.PEER_COLLECT
@@ -98,11 +98,12 @@ object NaturalLanguageParser {
             detectedNature = MovementNature.INFLOW
         }
 
+        // STRICT ACTION VERB GATE: If no recognized action verb, abort
         if (detectedNature == null) {
-            return null // Reject ungrammatical commands
+            return null
         }
 
-        // 4. MATCH BANK / CASH ACCOUNT
+        // 4. MATCH LIQUID POCKET/ACCOUNT
         var matchedPocket: VaultPocket? = null
         for (pocket in activePockets.filter { it.pocketType == PocketType.LIQUID }) {
             if (workingText.contains(pocket.name, ignoreCase = true)) {
@@ -126,7 +127,7 @@ object NaturalLanguageParser {
             }
         }
 
-        // 6. CLEAN NOTE NARRATION
+        // 6. CLEAN NOTE / MERCHANT
         var cleanNote = workingText
             .replace(Regex("""(?i)\b(?:rs\.?|inr|₹|[0-9]+(?:\.[0-9]+)?\s*k?)\b"""), " ")
             .replace(Regex("""(?i)\b(?:spent|paid|gave|bought|got|received|salary|lent|borrowed|collected|transferred|for|at|to|from|on|via|in|today|with)\b"""), " ")
