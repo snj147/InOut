@@ -1,230 +1,218 @@
-package com.personal.inout.ui
+package com.inout.vault.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.personal.inout.data.*
-import kotlin.math.abs
+import com.inout.vault.data.PocketBalanceSummary
+import com.inout.vault.data.entity.RecurringRuleEntity
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AccountPocketsView(
-    pocketBalances: List<PocketBalanceSummary>,
-    rawPockets: List<VaultPocket>,
-    recurringSchedules: List<FlowRecord>,
-    isPrivacyMode: Boolean,
-    onTransactPocket: (VaultPocket) -> Unit,
-    onEditPocket: (VaultPocket) -> Unit,
-    onDeletePocketSafe: (VaultPocket, Double) -> Unit,
-    onStopRecurringSchedule: (FlowRecord) -> Unit,
-    onRecordCardSettlement: (creditPocketId: Long, liquidPocketId: Long, amount: Double) -> Unit,
-    onPeerAction: (nature: MovementNature, counterpartyId: Long, liquidId: Long, amount: Double) -> Unit
+    pocketSummaries: List<PocketBalanceSummary>,
+    recurringRules: List<RecurringRuleEntity>,
+    onTransact: (pocketId: String) -> Unit,
+    onStopRule: (ruleId: Long) -> Unit,
+    onPauseRule: (ruleId: Long) -> Unit,
+    onPocketLongClick: (pocketId: String) -> Unit = {}
 ) {
-    val theme = LocalThemeColors.current
-
-    val cashAndBank = remember(pocketBalances) { pocketBalances.filter { it.pocketType == PocketType.LIQUID } }
-    val creditAndLoans = remember(pocketBalances) { pocketBalances.filter { it.pocketType == PocketType.CREDIT_LINE } }
-    val people = remember(pocketBalances) { pocketBalances.filter { it.pocketType == PocketType.COUNTERPARTY } }
-
-    var settlingCard by remember { mutableStateOf<PocketBalanceSummary?>(null) }
-    var peerModalTarget by remember { mutableStateOf<PocketBalanceSummary?>(null) }
-    var selectedPocketForMenu by remember { mutableStateOf<Pair<VaultPocket, Double>?>(null) }
+    var selectedRuleForManagement by remember { mutableStateOf<RecurringRuleEntity?>(null) }
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp)
+        modifier = Modifier.fillMaxSize(),
+        // 96.dp bottom padding to prevent FAB and bottom navigation bar clipping
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Cash & Bank
+        // 1. Cash & Bank Accounts
         item {
-            AccountSectionHeader(title = "Cash & Bank Accounts", count = cashAndBank.size, theme = theme)
-        }
-        items(cashAndBank, key = { "liquid_${it.pocketId}" }) { acc ->
-            val raw = rawPockets.firstOrNull { it.id == acc.pocketId }
-            AccountCardRow(
-                summary = acc,
-                isPrivacyMode = isPrivacyMode,
-                theme = theme,
-                onLongPress = { raw?.let { selectedPocketForMenu = it to acc.currentBalance } },
-                actionLabel = "Transact",
-                actionColor = theme.accent,
-                onActionClick = { raw?.let { onTransactPocket(it) } }
-            )
-        }
-
-        // Cards & Loans
-        item {
-            AccountSectionHeader(title = "Cards & Loans (CC / Dues)", count = creditAndLoans.size, theme = theme)
-        }
-        items(creditAndLoans, key = { "credit_${it.pocketId}" }) { card ->
-            val raw = rawPockets.firstOrNull { it.id == card.pocketId }
-            val dues = card.currentBalance.coerceAtLeast(0.0)
-            val available = (card.creditLimit - dues).coerceIn(0.0, card.creditLimit)
-
-            AccountCardRow(
-                summary = card,
-                subLabel = if (isPrivacyMode) "Avail: ₹ •••" else "Avail: ₹${String.format("%,.0f", available)} / Limit: ₹${String.format("%,.0f", card.creditLimit)}",
-                isPrivacyMode = isPrivacyMode,
-                theme = theme,
-                onLongPress = { raw?.let { selectedPocketForMenu = it to card.currentBalance } },
-                actionLabel = if (dues > 0) "Pay Bill" else "Settled",
-                actionColor = if (dues > 0) theme.mildRed else theme.textMuted,
-                onActionClick = { if (dues > 0) settlingCard = card }
-            )
-        }
-
-        // People
-        item {
-            AccountSectionHeader(title = "People (Owed & Lent)", count = people.size, theme = theme)
-        }
-        items(people, key = { "peer_${it.pocketId}" }) { peer ->
-            val raw = rawPockets.firstOrNull { it.id == peer.pocketId }
-            val net = peer.currentBalance
-            val isOwedToYou = net > 0
-            val isEven = net == 0.0
-
-            AccountCardRow(
-                summary = peer,
-                subLabel = when {
-                    isEven -> "Even • Settled"
-                    isOwedToYou -> "They owe you"
-                    else -> "You owe them"
-                },
-                isPrivacyMode = isPrivacyMode,
-                theme = theme,
-                onLongPress = { raw?.let { selectedPocketForMenu = it to peer.currentBalance } },
-                actionLabel = if (isEven) "Transact" else if (isOwedToYou) "Collect" else "Repay",
-                actionColor = if (isEven) theme.accent else if (isOwedToYou) theme.mildGreen else theme.mildRed,
-                onActionClick = { peerModalTarget = peer }
-            )
-        }
-
-        // Active Recurring Schedules
-        if (recurringSchedules.isNotEmpty()) {
-            item {
-                AccountSectionHeader(title = "Active Recurring Schedules", count = recurringSchedules.size, theme = theme)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Cash & Bank Accounts", color = Color(0xFFCCCCCC), fontSize = 14.sp)
+                Text(
+                    "${pocketSummaries.count { it.pocketType == "LIQUID" }}",
+                    color = Color(0xFF666666),
+                    fontSize = 13.sp
+                )
             }
-            items(recurringSchedules, key = { "rec_${it.id}_${it.timestamp}" }) { schedule ->
-                Card(
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)),
-                    colors = CardDefaults.cardColors(containerColor = theme.surface)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(schedule.note.ifBlank { schedule.category }, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            Text("Repeats ${schedule.frequency} • ₹${String.format("%,.0f", schedule.amount)}", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                        }
+        }
+        items(pocketSummaries.filter { it.pocketType == "LIQUID" }, key = { it.pocketId }) { pocket ->
+            PocketCard(
+                name = pocket.pocketName,
+                subtitle = "LIQUID",
+                balanceText = "₹${pocket.computedBalance}",
+                actionLabel = "Transact",
+                actionColor = Color(0xFF332B22),
+                textColor = Color(0xFFE59C5C),
+                onActionClick = { onTransact(pocket.pocketId) },
+                onLongClick = { onPocketLongClick(pocket.pocketId) }
+            )
+        }
 
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(theme.mildRed.copy(alpha = 0.2f))
-                                .clickable { onStopRecurringSchedule(schedule) }
-                                .padding(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
-                            Text("Stop Rule", color = theme.mildRed, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                        }
+        // 2. Cards & Loans
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Cards & Loans (CC / Dues)", color = Color(0xFFCCCCCC), fontSize = 14.sp)
+                Text(
+                    "${pocketSummaries.count { it.pocketType == "CREDIT" }}",
+                    color = Color(0xFF666666),
+                    fontSize = 13.sp
+                )
+            }
+        }
+        items(pocketSummaries.filter { it.pocketType == "CREDIT" }, key = { it.pocketId }) { card ->
+            PocketCard(
+                name = card.pocketName,
+                subtitle = "Avail: ₹${card.creditLimit + card.computedBalance} / Limit: ₹${card.creditLimit}",
+                balanceText = "₹${Math.abs(card.computedBalance)}",
+                actionLabel = if (card.computedBalance >= 0) "Settled" else "Pay Due",
+                actionColor = Color(0xFF282522),
+                textColor = Color(0xFF9E9E9E),
+                onActionClick = { onTransact(card.pocketId) },
+                onLongClick = { onPocketLongClick(card.pocketId) }
+            )
+        }
+
+        // 3. Counterparties (People)
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("People (Owed & Lent)", color = Color(0xFFCCCCCC), fontSize = 14.sp)
+                Text(
+                    "${pocketSummaries.count { it.pocketType == "PEER" || it.subType == "PEER" }}",
+                    color = Color(0xFF666666),
+                    fontSize = 13.sp
+                )
+            }
+        }
+        items(pocketSummaries.filter { it.pocketType == "PEER" || it.subType == "PEER" }, key = { it.pocketId }) { peer ->
+            val isOwedToYou = peer.computedBalance > 0
+            PocketCard(
+                name = peer.pocketName,
+                subtitle = if (isOwedToYou) "They owe you" else "You owe them",
+                balanceText = "₹${Math.abs(peer.computedBalance)}",
+                actionLabel = if (isOwedToYou) "Collect" else "Repay",
+                actionColor = if (isOwedToYou) Color(0xFF1E3326) else Color(0xFF332020),
+                textColor = if (isOwedToYou) Color(0xFF81C784) else Color(0xFFE57373),
+                onActionClick = { onTransact(peer.pocketId) },
+                onLongClick = { onPocketLongClick(peer.pocketId) }
+            )
+        }
+
+        // 4. Active Recurring Schedules
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Active Recurring Schedules", color = Color(0xFFCCCCCC), fontSize = 14.sp)
+                Text("${recurringRules.size}", color = Color(0xFF666666), fontSize = 13.sp)
+            }
+        }
+        items(recurringRules, key = { it.id }) { rule ->
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .combinedClickable(
+                        onClick = {},
+                        onLongClick = { selectedRuleForManagement = rule }
+                    ),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1C1A))
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(
+                            text = rule.note.ifBlank { rule.category },
+                            color = Color.White,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Repeats ${rule.cadence} • ₹${rule.amount}",
+                            color = Color(0xFFE59C5C),
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    Button(
+                        onClick = { selectedRuleForManagement = rule },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF332222)),
+                        shape = RoundedCornerShape(8.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text("Stop Rule", color = Color(0xFFE57373), fontSize = 12.sp)
                     }
                 }
             }
         }
     }
 
-    // Long Press Context Menu
-    selectedPocketForMenu?.let { (pocket, balance) ->
+    // Confirmation & Management Prompt for Recurring Schedules
+    selectedRuleForManagement?.let { rule ->
         AlertDialog(
-            containerColor = theme.surface,
-            onDismissRequest = { selectedPocketForMenu = null },
-            title = { Text(pocket.name, color = theme.textBright, fontWeight = FontWeight.Bold) },
+            onDismissRequest = { selectedRuleForManagement = null },
+            containerColor = Color(0xFF262320),
+            title = { Text("Manage Recurring Rule", color = Color.White) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                selectedPocketForMenu = null
-                                onEditPocket(pocket)
-                            }
-                            .padding(vertical = 10.dp, horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Icon(Icons.Default.Edit, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
-                        Text("Edit Account Details", color = theme.textBright, fontSize = 13.sp)
-                    }
-
-                    Divider(color = theme.surfaceAlt, thickness = 0.5.dp)
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable {
-                                val target = pocket
-                                selectedPocketForMenu = null
-                                onDeletePocketSafe(target, balance)
-                            }
-                            .padding(vertical = 10.dp, horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Icon(Icons.Default.Delete, contentDescription = null, tint = theme.mildRed, modifier = Modifier.size(18.dp))
-                        Text("Delete / Archive Account", color = theme.mildRed, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    }
+                Text(
+                    "Do you want to stop this schedule completely or pause it? Existing ledger records won't be deleted.",
+                    color = Color(0xFFCCCCCC)
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onStopRule(rule.id)
+                        selectedRuleForManagement = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE57373))
+                ) {
+                    Text("Delete Rule", color = Color.White)
                 }
             },
-            confirmButton = {},
             dismissButton = {
-                TextButton(onClick = { selectedPocketForMenu = null }) {
-                    Text("Close", color = theme.textMuted)
+                Row {
+                    TextButton(onClick = {
+                        onPauseRule(rule.id)
+                        selectedRuleForManagement = null
+                    }) {
+                        Text("Pause", color = Color(0xFFE59C5C))
+                    }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    TextButton(onClick = { selectedRuleForManagement = null }) {
+                        Text("Cancel", color = Color(0xFF9E9E9E))
+                    }
                 }
-            }
-        )
-    }
-
-    settlingCard?.let { card ->
-        CardPayDialog(
-            card = card,
-            liquidOptions = rawPockets.filter { it.pocketType == PocketType.LIQUID },
-            theme = theme,
-            onDismiss = { settlingCard = null },
-            onConfirm = { liquidId, amt ->
-                onRecordCardSettlement(card.pocketId, liquidId, amt)
-                settlingCard = null
-            }
-        )
-    }
-
-    peerModalTarget?.let { peer ->
-        PeerActionDialog(
-            peer = peer,
-            liquidOptions = rawPockets.filter { it.pocketType == PocketType.LIQUID },
-            theme = theme,
-            onDismiss = { peerModalTarget = null },
-            onConfirm = { nature, liquidId, amt ->
-                onPeerAction(nature, peer.pocketId, liquidId, amt)
-                peerModalTarget = null
             }
         )
     }
@@ -232,173 +220,50 @@ fun AccountPocketsView(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun AccountCardRow(
-    summary: PocketBalanceSummary,
-    subLabel: String? = null,
-    isPrivacyMode: Boolean,
-    theme: ThemeColors,
-    onLongPress: () -> Unit,
+fun PocketCard(
+    name: String,
+    subtitle: String,
+    balanceText: String,
     actionLabel: String,
     actionColor: Color,
-    onActionClick: () -> Unit
+    textColor: Color,
+    onActionClick: () -> Unit,
+    onLongClick: () -> Unit
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(14.dp))
             .combinedClickable(
                 onClick = {},
-                onLongClick = onLongPress
+                onLongClick = onLongClick
             ),
-        colors = CardDefaults.cardColors(containerColor = theme.surface)
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1C1A))
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(summary.name, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Text(subLabel ?: summary.subType.ifBlank { "GENERAL" }, color = theme.textMuted, fontSize = 11.sp)
+            Column {
+                Text(name, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(subtitle, color = Color(0xFF888888), fontSize = 12.sp)
             }
-
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                val balanceText = if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", abs(summary.currentBalance))}"
-                Text(
-                    text = balanceText,
-                    color = if (summary.currentBalance < 0 || summary.pocketType == PocketType.CREDIT_LINE) theme.mildRed else theme.textBright,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 14.sp
-                )
-
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(actionColor.copy(alpha = 0.2f))
-                        .clickable { onActionClick() }
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(balanceText, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                Spacer(modifier = Modifier.width(12.dp))
+                Button(
+                    onClick = onActionClick,
+                    colors = ButtonDefaults.buttonColors(containerColor = actionColor),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                 ) {
-                    Text(actionLabel, color = actionColor, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                    Text(actionLabel, color = textColor, fontSize = 12.sp)
                 }
             }
         }
     }
-}
-
-@Composable
-private fun AccountSectionHeader(title: String, count: Int, theme: ThemeColors) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(title, color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-        Text("$count", color = theme.textMuted, fontSize = 11.sp)
-    }
-}
-
-@Composable
-private fun CardPayDialog(
-    card: PocketBalanceSummary,
-    liquidOptions: List<VaultPocket>,
-    theme: ThemeColors,
-    onDismiss: () -> Unit,
-    onConfirm: (liquidId: Long, amount: Double) -> Unit
-) {
-    val maxDues = card.currentBalance.coerceAtLeast(0.0)
-    var payAmount by remember { mutableStateOf(String.format("%.0f", maxDues)) }
-    var selectedLiquidId by remember { mutableStateOf(liquidOptions.firstOrNull()?.id ?: 0L) }
-
-    AlertDialog(
-        containerColor = theme.surface,
-        onDismissRequest = onDismiss,
-        title = { Text("Pay Credit Dues: ${card.name}", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Outstanding Dues: ₹${String.format("%,.2f", maxDues)}", color = theme.mildRed, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                CompactInputField(
-                    value = payAmount,
-                    onValueChange = { input ->
-                        val parsed = input.toDoubleOrNull() ?: 0.0
-                        if (parsed <= maxDues) payAmount = input
-                    },
-                    placeholder = "Amount to pay"
-                )
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val amt = payAmount.toDoubleOrNull() ?: 0.0
-                    if (amt > 0.0 && selectedLiquidId != 0L) onConfirm(selectedLiquidId, amt)
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-            ) {
-                Text("Confirm Clearance", color = theme.bg, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) } }
-    )
-}
-
-@Composable
-private fun PeerActionDialog(
-    peer: PocketBalanceSummary,
-    liquidOptions: List<VaultPocket>,
-    theme: ThemeColors,
-    onDismiss: () -> Unit,
-    onConfirm: (nature: MovementNature, liquidId: Long, amount: Double) -> Unit
-) {
-    var amount by remember { mutableStateOf("") }
-    val net = peer.currentBalance
-
-    val pairOptions = remember(net) {
-        when {
-            net == 0.0 -> listOf(MovementNature.PEER_LEND to "Lend", MovementNature.PEER_BORROW to "Borrow")
-            net > 0.0 -> listOf(MovementNature.PEER_COLLECT to "Collect", MovementNature.PEER_LEND to "Lend More")
-            else -> listOf(MovementNature.PEER_REPAY to "Repay", MovementNature.PEER_BORROW to "Borrow More")
-        }
-    }
-
-    var selectedNature by remember(pairOptions) { mutableStateOf(pairOptions.first().first) }
-    var selectedLiquidId by remember { mutableStateOf(liquidOptions.firstOrNull()?.id ?: 0L) }
-
-    AlertDialog(
-        containerColor = theme.surface,
-        onDismissRequest = onDismiss,
-        title = { Text("Transact with ${peer.name}", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    pairOptions.forEach { (nat, lbl) ->
-                        val isSel = selectedNature == nat
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (isSel) theme.accent else theme.surfaceAlt)
-                                .clickable { selectedNature = nat }
-                                .padding(vertical = 8.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(lbl, color = if (isSel) theme.bg else theme.textMuted, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-                CompactInputField(value = amount, onValueChange = { amount = it }, placeholder = "Amount")
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val amt = amount.toDoubleOrNull() ?: 0.0
-                    if (amt > 0.0 && selectedLiquidId != 0L) onConfirm(selectedNature, selectedLiquidId, amt)
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-            ) {
-                Text("Commit", color = theme.bg, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) } }
-    )
 }
