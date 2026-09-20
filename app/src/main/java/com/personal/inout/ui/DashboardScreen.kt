@@ -56,7 +56,6 @@ fun DashboardScreen(db: AppDatabase) {
     val alertManager = remember { VaultAlertManager() }
     val ledgerEngine = remember { VaultLedgerEngine(db.stateFlowDao()) }
 
-    // Run Recurring Catch-Up on app start
     LaunchedEffect(Unit) {
         activity?.let { InAppUpdateHelper.checkForUpdate(it) }
         val generated = ledgerEngine.catchUpRecurringRules()
@@ -73,11 +72,6 @@ fun DashboardScreen(db: AppDatabase) {
         mutableStateOf(AppThemeMode.valueOf(saved ?: AppThemeMode.AMBER_OCHRE.name))
     }
 
-    var cockpitMode by remember {
-        val saved = prefs.getString("cockpit_mode", CockpitDisplayMode.SURVIVAL_DAYS_SLIDER.name)
-        mutableStateOf(CockpitDisplayMode.valueOf(saved ?: CockpitDisplayMode.SURVIVAL_DAYS_SLIDER.name))
-    }
-
     var dailyBurnCeiling by remember {
         mutableStateOf(prefs.getFloat("daily_burn_ceiling", 450f).toDouble())
     }
@@ -92,10 +86,14 @@ fun DashboardScreen(db: AppDatabase) {
     val rawPockets by db.stateFlowDao().observeAllActivePockets().collectAsState(initial = emptyList())
     val flowRecords by db.stateFlowDao().observeAllFlowRecords().collectAsState(initial = emptyList())
 
+    val recurringTemplates = remember(flowRecords) {
+        flowRecords.filter { it.isRecurring && it.frequency != "NONE" }
+            .distinctBy { "${it.note}_${it.amount}_${it.frequency}" }
+    }
+
     var selectedTab by remember { mutableStateOf(0) }
     var isPrivacyMode by remember { mutableStateOf(false) }
 
-    // HUD & Direct Account Selection
     var showCommandHud by remember { mutableStateOf(false) }
     var selectedPocketIdForHud by remember { mutableStateOf<Long?>(null) }
     var hudInDialogError by remember { mutableStateOf<String?>(null) }
@@ -106,7 +104,7 @@ fun DashboardScreen(db: AppDatabase) {
     var showAllRecordsSheet by remember { mutableStateOf(false) }
     var showMockPaywall by remember { mutableStateOf(false) }
 
-    // Quick Command Bar (Centered Syntax Placeholders)
+    // Quick Command Terminal (Centered Syntax Hints)
     var naturalLanguageInput by remember { mutableStateOf("") }
     val placeholderHints = listOf(
         "Spent [Amount] on [Item]",
@@ -125,7 +123,6 @@ fun DashboardScreen(db: AppDatabase) {
 
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
-    var ocrCandidateAmounts by remember { mutableStateOf<List<Double>>(emptyList()) }
 
     fun processReceiptResult(bitmap: Bitmap) {
         scope.launch {
@@ -136,7 +133,6 @@ fun DashboardScreen(db: AppDatabase) {
 
                 ocrPrefilledNote = parsed.merchant
                 ocrPrefilledAmount = parsed.total
-                ocrCandidateAmounts = parsed.candidateAmounts
                 hudInDialogError = null
                 selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
                 showCommandHud = true
@@ -166,7 +162,6 @@ fun DashboardScreen(db: AppDatabase) {
 
                     ocrPrefilledNote = parsed.merchant
                     ocrPrefilledAmount = parsed.total
-                    ocrCandidateAmounts = parsed.candidateAmounts
                     hudInDialogError = null
                     selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
                     showCommandHud = true
@@ -183,8 +178,20 @@ fun DashboardScreen(db: AppDatabase) {
         if (parsed != null) {
             scope.launch {
                 val autoSplit = prefs.getBoolean("auto_split_debit", false)
-                var sourceId = if (parsed.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND)) parsed.matchedPocketId else null
-                var targetId = if (parsed.nature in listOf(MovementNature.INFLOW, MovementNature.PEER_BORROW, MovementNature.PEER_COLLECT)) parsed.matchedPocketId else null
+
+                var sourceId: Long?
+                var targetId: Long?
+
+                if (parsed.nature == MovementNature.TRANSFER) {
+                    sourceId = parsed.matchedPocketId
+                    targetId = parsed.targetPocketId
+                } else if (parsed.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND)) {
+                    sourceId = parsed.matchedPocketId
+                    targetId = null
+                } else {
+                    sourceId = null
+                    targetId = parsed.matchedPocketId
+                }
 
                 if (parsed.targetPersonName != null) {
                     var personPocket = rawPockets.firstOrNull {
@@ -224,7 +231,7 @@ fun DashboardScreen(db: AppDatabase) {
                 }
             }
         } else {
-            alertManager.showAlert("Action missing. Start with: Spent, Lent, Got, Borrowed", AlertType.WARNING)
+            alertManager.showAlert("Action missing. Start with: Spent, Lent, Got, Borrowed, Transferred", AlertType.WARNING)
         }
     }
 
@@ -288,7 +295,6 @@ fun DashboardScreen(db: AppDatabase) {
                                 } else {
                                     ocrPrefilledNote = ""
                                     ocrPrefilledAmount = null
-                                    ocrCandidateAmounts = emptyList()
                                     hudInDialogError = null
                                     selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
                                     showCommandHud = true
@@ -312,17 +318,57 @@ fun DashboardScreen(db: AppDatabase) {
                                 verticalArrangement = Arrangement.spacedBy(14.dp),
                                 contentPadding = PaddingValues(top = 6.dp, bottom = 96.dp)
                             ) {
+                                // Unified Runway & Liquidity Hero Card
                                 item {
-                                    DynamicCockpit(
-                                        pockets = pocketBalances,
-                                        flows = flowRecords,
-                                        mode = cockpitMode,
-                                        configuredDailyBurn = dailyBurnCeiling,
-                                        isPrivacyMode = isPrivacyMode
-                                    )
+                                    val totalLiquid = pocketBalances.filter { it.pocketType == PocketType.LIQUID }.sumOf { it.currentBalance }.coerceAtLeast(0.0)
+                                    val runwayDays = if (dailyBurnCeiling > 0) (totalLiquid / dailyBurnCeiling).toInt() else 0
+
+                                    Card(
+                                        shape = RoundedCornerShape(20.dp),
+                                        colors = CardDefaults.cardColors(containerColor = theme.surface),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text("RUNWAY SURVIVAL HORIZON", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+                                                Box(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(6.dp))
+                                                        .background(if (runwayDays > 30) theme.mildGreen.copy(alpha = 0.2f) else theme.mildRed.copy(alpha = 0.2f))
+                                                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                                                ) {
+                                                    Text(
+                                                        if (runwayDays > 30) "Solvent" else "Tight",
+                                                        color = if (runwayDays > 30) theme.mildGreen else theme.mildRed,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+
+                                            Text(
+                                                text = if (isPrivacyMode) "•• Days" else "$runwayDays Days",
+                                                color = theme.textBright,
+                                                fontSize = 28.sp,
+                                                fontWeight = FontWeight.Black
+                                            )
+
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text("Burn Target: ₹${dailyBurnCeiling.toInt()}/day", color = theme.textMuted, fontSize = 11.sp)
+                                                Text("Available: ₹${String.format("%,.0f", totalLiquid)}", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
                                 }
 
-                                // Quick Command Terminal
+                                // Quick Command Bar (Centered Input & Placeholders)
                                 item {
                                     Card(
                                         shape = RoundedCornerShape(14.dp),
@@ -469,12 +515,12 @@ fun DashboardScreen(db: AppDatabase) {
                         1 -> AccountPocketsView(
                             pocketBalances = pocketBalances,
                             rawPockets = rawPockets,
+                            recurringSchedules = recurringTemplates,
                             isPrivacyMode = isPrivacyMode,
                             onTransactPocket = { pocket ->
                                 selectedPocketIdForHud = pocket.id
                                 ocrPrefilledNote = ""
                                 ocrPrefilledAmount = null
-                                ocrCandidateAmounts = emptyList()
                                 hudInDialogError = null
                                 showCommandHud = true
                             },
@@ -487,6 +533,12 @@ fun DashboardScreen(db: AppDatabase) {
                                         db.stateFlowDao().updatePocket(pocket.copy(isArchived = true))
                                         alertManager.showAlert("${pocket.name} removed", AlertType.SUCCESS)
                                     }
+                                }
+                            },
+                            onStopRecurringSchedule = { schedule ->
+                                scope.launch {
+                                    db.stateFlowDao().updateFlowRecord(schedule.copy(isRecurring = false, frequency = "NONE"))
+                                    alertManager.showAlert("Recurring rule cancelled for ${schedule.note.ifBlank { schedule.category }}", AlertType.SUCCESS)
                                 }
                             },
                             onRecordCardSettlement = { cardId, liquidId, amt ->
@@ -538,16 +590,11 @@ fun DashboardScreen(db: AppDatabase) {
 
                         3 -> SettingsScreen(
                             currentTheme = activeThemeMode,
-                            currentCockpitMode = cockpitMode,
                             configuredDailyBurn = dailyBurnCeiling,
                             isProUser = isProUnlocked,
                             onSelectTheme = { mode ->
                                 activeThemeMode = mode
                                 prefs.edit().putString("selected_theme", mode.name).apply()
-                            },
-                            onSelectCockpitMode = { mode ->
-                                cockpitMode = mode
-                                prefs.edit().putString("cockpit_mode", mode.name).apply()
                             },
                             onUpdateDailyBurn = { rate ->
                                 dailyBurnCeiling = rate
@@ -592,7 +639,6 @@ fun DashboardScreen(db: AppDatabase) {
                         prefilledPocketId = selectedPocketIdForHud,
                         prefilledNote = ocrPrefilledNote,
                         prefilledAmount = ocrPrefilledAmount,
-                        candidateAmounts = ocrCandidateAmounts,
                         inDialogErrorMessage = hudInDialogError,
                         onDismiss = {
                             showCommandHud = false
@@ -628,7 +674,7 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
 
-                // In-Place Transaction Editor Sheet
+                // In-Place Transaction Editor (Room @Update)
                 editingFlowRecord?.let { flow ->
                     EditTransactionDialog(
                         record = flow,
@@ -636,7 +682,7 @@ fun DashboardScreen(db: AppDatabase) {
                         onDismiss = { editingFlowRecord = null },
                         onSave = { updatedCategory, updatedNote ->
                             scope.launch {
-                                db.stateFlowDao().insertFlowRecord(
+                                db.stateFlowDao().updateFlowRecord(
                                     flow.copy(category = updatedCategory, note = updatedNote)
                                 )
                                 editingFlowRecord = null
@@ -659,6 +705,10 @@ fun DashboardScreen(db: AppDatabase) {
                         isPrivacyMode = isPrivacyMode,
                         isProUser = isProUnlocked,
                         onDismiss = { showAllRecordsSheet = false },
+                        onEditRecord = { flow ->
+                            showAllRecordsSheet = false
+                            editingFlowRecord = flow
+                        },
                         onExportCsv = {
                             val compatList = flowRecords.map {
                                 Transaction(
@@ -735,7 +785,7 @@ fun DashboardScreen(db: AppDatabase) {
                 }
             }
 
-            // Top Alert Floating Banner
+            // Top Floating Notification Banner
             VaultFloatingTopOverlay(alertManager = alertManager, theme = theme)
         }
     }
@@ -803,7 +853,7 @@ private fun CleanVaultHeader(
 }
 
 @Composable
-private fun FlowRecordDisplayRow(
+fun FlowRecordDisplayRow(
     flow: FlowRecord,
     isPrivacyMode: Boolean,
     theme: ThemeColors,
