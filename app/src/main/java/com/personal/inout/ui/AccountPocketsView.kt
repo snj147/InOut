@@ -14,25 +14,24 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.inout.vault.data.FlowRecord
 import com.inout.vault.data.PocketBalanceSummary
-import com.inout.vault.data.entity.RecurringRuleEntity
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AccountPocketsView(
     pocketSummaries: List<PocketBalanceSummary>,
-    recurringRules: List<RecurringRuleEntity>,
+    recurringRecords: List<FlowRecord>,
     onTransact: (pocketId: String) -> Unit,
-    onStopRule: (ruleId: Long) -> Unit,
-    onPauseRule: (ruleId: Long) -> Unit,
+    onStopRecurring: (recordId: Long) -> Unit,
     onPocketLongClick: (pocketId: String) -> Unit = {}
 ) {
-    var selectedRuleForManagement by remember { mutableStateOf<RecurringRuleEntity?>(null) }
+    var selectedRecordForStop by remember { mutableStateOf<FlowRecord?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        // 96.dp bottom padding to prevent FAB and bottom navigation bar clipping
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 96.dp),
+        // 100.dp padding ensures items never get covered by the FAB or bottom navigation
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 100.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         // 1. Cash & Bank Accounts
@@ -128,16 +127,16 @@ fun AccountPocketsView(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("Active Recurring Schedules", color = Color(0xFFCCCCCC), fontSize = 14.sp)
-                Text("${recurringRules.size}", color = Color(0xFF666666), fontSize = 13.sp)
+                Text("${recurringRecords.size}", color = Color(0xFF666666), fontSize = 13.sp)
             }
         }
-        items(recurringRules, key = { it.id }) { rule ->
+        items(recurringRecords, key = { it.id }) { record ->
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
                     .combinedClickable(
                         onClick = {},
-                        onLongClick = { selectedRuleForManagement = rule }
+                        onLongClick = { selectedRecordForStop = record }
                     ),
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1C1A))
@@ -151,21 +150,21 @@ fun AccountPocketsView(
                 ) {
                     Column {
                         Text(
-                            text = rule.note.ifBlank { rule.category },
+                            text = record.note.ifBlank { record.category },
                             color = Color.White,
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Medium
                         )
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "Repeats ${rule.cadence} • ₹${rule.amount}",
+                            text = "Repeats ${record.recurringCadence} • ₹${record.amount}",
                             color = Color(0xFFE59C5C),
                             fontSize = 12.sp
                         )
                     }
 
                     Button(
-                        onClick = { selectedRuleForManagement = rule },
+                        onClick = { selectedRecordForStop = record },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF332222)),
                         shape = RoundedCornerShape(8.dp),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
@@ -177,41 +176,32 @@ fun AccountPocketsView(
         }
     }
 
-    // Confirmation & Management Prompt for Recurring Schedules
-    selectedRuleForManagement?.let { rule ->
+    // Confirmation Guard: Stopping a recurring schedule requires confirmation
+    selectedRecordForStop?.let { record ->
         AlertDialog(
-            onDismissRequest = { selectedRuleForManagement = null },
+            onDismissRequest = { selectedRecordForStop = null },
             containerColor = Color(0xFF262320),
-            title = { Text("Manage Recurring Rule", color = Color.White) },
+            title = { Text("Stop Recurring Rule", color = Color.White) },
             text = {
                 Text(
-                    "Do you want to stop this schedule completely or pause it? Existing ledger records won't be deleted.",
+                    "Are you sure you want to stop this recurring schedule? Existing past ledger records will remain safe.",
                     color = Color(0xFFCCCCCC)
                 )
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        onStopRule(rule.id)
-                        selectedRuleForManagement = null
+                        onStopRecurring(record.id)
+                        selectedRecordForStop = null
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE57373))
                 ) {
-                    Text("Delete Rule", color = Color.White)
+                    Text("Stop Rule", color = Color.White)
                 }
             },
             dismissButton = {
-                Row {
-                    TextButton(onClick = {
-                        onPauseRule(rule.id)
-                        selectedRuleForManagement = null
-                    }) {
-                        Text("Pause", color = Color(0xFFE59C5C))
-                    }
-                    Spacer(modifier = Modifier.width(4.dp))
-                    TextButton(onClick = { selectedRuleForManagement = null }) {
-                        Text("Cancel", color = Color(0xFF9E9E9E))
-                    }
+                TextButton(onClick = { selectedRecordForStop = null }) {
+                    Text("Cancel", color = Color(0xFF9E9E9E))
                 }
             }
         )
