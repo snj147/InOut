@@ -23,11 +23,11 @@ class VaultLedgerEngine(
     private val prefs: SharedPreferences? = null
 ) {
 
-    // Overload 1: Supports Double amount (NaturalLanguageParser returns Double/Long)
+    // Overload used by WidgetCommandActivity.kt with Long? IDs and Double amount
     suspend fun recordMovement(
         nature: MovementNature,
-        sourcePocketId: String? = null,
-        targetPocketId: String? = null,
+        sourcePocketId: Long? = null,
+        targetPocketId: Long? = null,
         amount: Double,
         category: String,
         note: String = "",
@@ -44,11 +44,11 @@ class VaultLedgerEngine(
         )
     }
 
-    // Overload 2: Supports Long amount
+    // Overload with Long amount
     suspend fun recordMovement(
         nature: MovementNature,
-        sourcePocketId: String? = null,
-        targetPocketId: String? = null,
+        sourcePocketId: Long? = null,
+        targetPocketId: Long? = null,
         amount: Long,
         category: String,
         note: String = "",
@@ -65,41 +65,14 @@ class VaultLedgerEngine(
         )
     }
 
-    // Overload 3: Loose string nature overload
-    suspend fun recordMovement(
-        nature: String,
-        sourcePocketId: String? = null,
-        targetPocketId: String? = null,
-        amount: Long,
-        category: String,
-        note: String = "",
-        timestamp: Long = System.currentTimeMillis()
-    ): VaultExecutionResult {
-        val parsedNature = try {
-            MovementNature.valueOf(nature)
-        } catch (_: Exception) {
-            MovementNature.OUTFLOW
-        }
-        return recordMovementInternal(
-            nature = parsedNature,
-            sourcePocketId = sourcePocketId,
-            targetPocketId = targetPocketId,
-            amount = amount,
-            category = category,
-            note = note,
-            timestamp = timestamp
-        )
-    }
-
-    // Overload 4: Entity overload
     suspend fun recordMovement(record: FlowRecord): VaultExecutionResult {
-        val parsedNature = try {
+        val nature = try {
             MovementNature.valueOf(record.movementNature)
         } catch (_: Exception) {
             MovementNature.OUTFLOW
         }
         return recordMovementInternal(
-            nature = parsedNature,
+            nature = nature,
             sourcePocketId = record.sourcePocketId,
             targetPocketId = record.targetPocketId,
             amount = record.amount,
@@ -115,8 +88,8 @@ class VaultLedgerEngine(
 
     private suspend fun recordMovementInternal(
         nature: MovementNature,
-        sourcePocketId: String?,
-        targetPocketId: String?,
+        sourcePocketId: Long?,
+        targetPocketId: Long?,
         amount: Long,
         category: String,
         note: String,
@@ -124,20 +97,20 @@ class VaultLedgerEngine(
     ): VaultExecutionResult {
         return try {
             if (nature in listOf(MovementNature.OUTFLOW, MovementNature.CARD_PAYMENT, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
-                if (sourcePocketId.isNullOrBlank()) {
+                if (sourcePocketId == null || sourcePocketId == 0L) {
                     return VaultExecutionResult.Error("Source account required for outflow")
                 }
             }
             if (nature in listOf(MovementNature.INFLOW, MovementNature.PEER_BORROW, MovementNature.PEER_COLLECT)) {
-                if (targetPocketId.isNullOrBlank()) {
+                if (targetPocketId == null || targetPocketId == 0L) {
                     return VaultExecutionResult.Error("Target account required for inflow")
                 }
             }
             if (nature == MovementNature.TRANSFER) {
-                if (sourcePocketId.isNullOrBlank()) {
+                if (sourcePocketId == null || sourcePocketId == 0L) {
                     return VaultExecutionResult.Error("Source account required for transfer")
                 }
-                if (targetPocketId.isNullOrBlank()) {
+                if (targetPocketId == null || targetPocketId == 0L) {
                     return VaultExecutionResult.Error("Destination account required for transfer")
                 }
                 if (sourcePocketId == targetPocketId) {
@@ -195,7 +168,7 @@ class VaultLedgerEngine(
             var nextDue = calculateNextOccurrence(schedule.timestamp, cadence)
             while (nextDue <= now) {
                 val execution = schedule.copy(
-                    id = 0,
+                    id = 0L,
                     timestamp = nextDue,
                     isRecurring = false
                 )
