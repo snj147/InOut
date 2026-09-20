@@ -1,4 +1,4 @@
-package com.inout.vault.data
+package com.personal.inout.data
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
@@ -27,7 +27,7 @@ data class FlowRecord(
     val sourcePocketId: String? = null,
     val targetPocketId: String? = null,
     val amount: Long,
-    val movementNature: String, // String representation for clean database persistence
+    val movementNature: String,
     val category: String,
     val note: String = "",
     val timestamp: Long = System.currentTimeMillis(),
@@ -36,7 +36,7 @@ data class FlowRecord(
 )
 
 @Entity(tableName = "pockets")
-data class PocketEntity(
+data class VaultPocket(
     @PrimaryKey val pocketId: String,
     val pocketName: String,
     val pocketType: String, // LIQUID, CREDIT, PEER
