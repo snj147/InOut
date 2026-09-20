@@ -49,33 +49,40 @@ object ReceiptScanner {
     private fun extractReceiptData(visionText: Text): ParsedReceipt {
         val lines = visionText.textBlocks.flatMap { it.lines }.map { it.text.trim() }.filter { it.isNotBlank() }
 
-        val totalKeywords = listOf("GRAND TOTAL", "TOTAL AMOUNT", "NET PAYABLE", "TOTAL", "AMOUNT DUE", "SUBTOTAL", "BALANCE DUE")
+        // Primary anchors for invoice and bill totals
+        val strictTotalAnchors = listOf(
+            "GRAND TOTAL",
+            "TOTAL AMOUNT",
+            "NET PAYABLE",
+            "TOTAL PAYABLE",
+            "BALANCE DUE",
+            "FINAL TOTAL",
+            "AMOUNT PAID"
+        )
+        val secondaryAnchors = listOf("TOTAL", "SUBTOTAL", "DUE")
+
         var detectedTotal: Double? = null
 
+        // PASS 1: Strict reverse scan for specific Grand Total anchors (Prevents picking line items like Masala Dosa 149.00)
         for (line in lines.reversed()) {
             val upper = line.uppercase()
-            for (kw in totalKeywords) {
-                if (upper.contains(kw)) {
-                    val priceMatch = Regex("""(?:₹|INR|RS\.?|TOTAL\s*[:\-])?\s*(\d{1,6}(?:,\d{3})*(?:\.\d{1,2})?)""").find(upper)
-                    val candidate = priceMatch?.groupValues?.get(1)?.replace(",", "")?.toDoubleOrNull()
-                    if (candidate != null && candidate > 0 && candidate < 500000) {
-                        detectedTotal = candidate
-                        break
-                    }
+            if (strictTotalAnchors.any { upper.contains(it) }) {
+                val candidate = extractTrailingNumber(upper)
+                if (candidate != null && candidate in 1.0..499999.0) {
+                    detectedTotal = candidate
+                    break
                 }
             }
-            if (detectedTotal != null) break
         }
 
+        // PASS 2: If no strict match, scan the line following a strict anchor
         if (detectedTotal == null) {
-            for (i in lines.indices) {
+            for (i in lines.indices.reversed()) {
                 val upper = lines[i].uppercase()
-                if (totalKeywords.any { upper.contains(it) }) {
+                if (strictTotalAnchors.any { upper.contains(it) }) {
                     if (i + 1 < lines.size) {
-                        val nextLine = lines[i + 1].replace(",", "")
-                        val match = Regex("""(\d{1,6}(?:\.\d{1,2})?)""").find(nextLine)
-                        val candidate = match?.groupValues?.get(1)?.toDoubleOrNull()
-                        if (candidate != null && candidate > 0 && candidate < 500000) {
+                        val candidate = extractTrailingNumber(lines[i + 1].uppercase())
+                        if (candidate != null && candidate in 1.0..499999.0) {
                             detectedTotal = candidate
                             break
                         }
@@ -84,16 +91,35 @@ object ReceiptScanner {
             }
         }
 
-        val ignoreList = listOf("EXIT", "POS", "ESC", "BILL", "NO", "DATE", "TIME", "WELCOME", "TAX", "INVOICE", "CASH", "CARD")
+        // PASS 3: Fallback to secondary anchors ("TOTAL")
+        if (detectedTotal == null) {
+            for (line in lines.reversed()) {
+                val upper = line.uppercase()
+                // Avoid barcode and date lines
+                if (upper.contains("TOTAL") && !upper.contains("SUB") && !upper.contains("QTY")) {
+                    val candidate = extractTrailingNumber(upper)
+                    if (candidate != null && candidate in 1.0..499999.0) {
+                        detectedTotal = candidate
+                        break
+                    }
+                }
+            }
+        }
+
+        // MERCHANT EXTRACTION: Skip POS UI control text, exit codes, and bill headers
+        val uiBlacklist = listOf(
+            "EXIT", "POS", "ESC", "SETTINGS", "BILLING", "SCREEN", "WATCH", "HOW TO",
+            "BILL NO", "DATE", "TIME", "GSTIN", "TAX", "WELCOME", "CUSTOMER", "TABLE"
+        )
         var detectedMerchant = "Receipt"
 
-        for (line in lines.take(5)) {
-            val clean = line.replace(Regex("""[^a-zA-Z0-9\s&]"""), "").trim()
+        for (line in lines.take(8)) {
+            val clean = line.replace(Regex("""[^a-zA-Z0-9\s&'-]"""), "").trim()
             val upper = clean.uppercase()
-            val isIgnored = ignoreList.any { upper.startsWith(it) || upper == it }
-            val hasDigitsOnly = clean.all { it.isDigit() || it.isWhitespace() }
+            val isBlacklisted = uiBlacklist.any { upper.contains(it) }
+            val isPureNumbers = clean.all { it.isDigit() || it.isWhitespace() }
 
-            if (!isIgnored && !hasDigitsOnly && clean.length in 3..35) {
+            if (!isBlacklisted && !isPureNumbers && clean.length in 3..32) {
                 detectedMerchant = clean
                 break
             }
@@ -102,7 +128,19 @@ object ReceiptScanner {
         return ParsedReceipt(
             merchant = detectedMerchant,
             total = detectedTotal,
-            lineItems = lines.take(10)
+            lineItems = lines.take(12)
         )
+    }
+
+    private fun extractTrailingNumber(str: String): Double? {
+        // Regex extracts currency numbers with optional decimals, rejecting 10-12 digit barcodes & 6 digit PIN codes
+        val matches = Regex("""(?:₹|INR|RS\.?)?\s*([0-9]{1,5}(?:\.[0-9]{1,2})?)""").findAll(str)
+        for (m in matches.toList().reversed()) {
+            val num = m.groupValues[1].toDoubleOrNull()
+            if (num != null && num > 0.0) {
+                return num
+            }
+        }
+        return null
     }
 }
