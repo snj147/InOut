@@ -10,7 +10,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -29,7 +29,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -95,19 +97,19 @@ fun DashboardScreen(db: AppDatabase) {
     var showAllRecordsSheet by remember { mutableStateOf(false) }
     var showMockPaywall by remember { mutableStateOf(false) }
 
-    // Quick Command Terminal Bar state
+    // Quick Command Bar with Syntax-Only Placeholders
     var naturalLanguageInput by remember { mutableStateOf("") }
     val placeholderHints = listOf(
-        "Spent 400 for groceries at reliance",
-        "Lent 2000 to ABC on 25/08/2026",
-        "Got 75000 salary in MyBank",
-        "Paid 140 for coffee via Cash",
-        "Borrowed 5000 from Rahul"
+        "Spent [Amount] on [Item]",
+        "Lent [Amount] to [Name]",
+        "Got [Amount] from [Name/Source]",
+        "Borrowed [Amount] from [Name]",
+        "Transferred [Amount] from [Bank] to [Bank]"
     )
     var currentHintIndex by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) {
-            delay(3500)
+            delay(3400)
             currentHintIndex = (currentHintIndex + 1) % placeholderHints.size
         }
     }
@@ -126,7 +128,7 @@ fun DashboardScreen(db: AppDatabase) {
                     showCommandHud = true
                     alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
                 } catch (e: Exception) {
-                    alertManager.showAlert("Receipt OCR Error: ${e.localizedMessage}", AlertType.ERROR)
+                    alertManager.showAlert("OCR Error: ${e.localizedMessage}", AlertType.ERROR)
                 }
             }
         }
@@ -148,36 +150,29 @@ fun DashboardScreen(db: AppDatabase) {
                     showCommandHud = true
                     alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
                 } catch (e: Exception) {
-                    alertManager.showAlert("Receipt Parse Error: ${e.localizedMessage}", AlertType.ERROR)
+                    alertManager.showAlert("Receipt Error: ${e.localizedMessage}", AlertType.ERROR)
                 }
             }
         }
     }
 
-    // Natural Language Execution Routine
     fun executeNaturalLanguageCommand(text: String) {
         val parsed = NaturalLanguageParser.parse(text, rawPockets)
         if (parsed != null) {
             scope.launch {
                 val autoSplit = prefs.getBoolean("auto_split_debit", false)
-                var sourceId = if (parsed.nature == MovementNature.OUTFLOW) parsed.matchedPocketId else null
-                var targetId = if (parsed.nature == MovementNature.INFLOW) parsed.matchedPocketId else null
+                var sourceId = if (parsed.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND)) parsed.matchedPocketId else null
+                var targetId = if (parsed.nature in listOf(MovementNature.INFLOW, MovementNature.PEER_BORROW, MovementNature.PEER_COLLECT)) parsed.matchedPocketId else null
 
-                // Auto-create person if Lent/Borrowed and contact does not exist
                 if (parsed.targetPersonName != null) {
                     var personPocket = rawPockets.firstOrNull {
                         it.pocketType == PocketType.COUNTERPARTY && it.name.equals(parsed.targetPersonName, ignoreCase = true)
                     }
                     if (personPocket == null) {
                         val newId = db.stateFlowDao().insertPocket(
-                            VaultPocket(
-                                name = parsed.targetPersonName,
-                                pocketType = PocketType.COUNTERPARTY,
-                                subType = "PEER"
-                            )
+                            VaultPocket(name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY, subType = "PEER")
                         )
                         personPocket = VaultPocket(id = newId, name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY)
-                        alertManager.showAlert("Created counterparty '${parsed.targetPersonName}'", AlertType.INFO)
                     }
 
                     if (parsed.nature == MovementNature.PEER_LEND) {
@@ -207,7 +202,7 @@ fun DashboardScreen(db: AppDatabase) {
                 }
             }
         } else {
-            alertManager.showAlert("Syntax not recognized. Try: 'Spent 400 for groceries at reliance'", AlertType.WARNING)
+            alertManager.showAlert("Action word missing. Start with: Spent, Lent, Got, Borrowed", AlertType.WARNING)
         }
     }
 
@@ -215,321 +210,391 @@ fun DashboardScreen(db: AppDatabase) {
         LocalThemeColors provides theme,
         LocalVaultAlertManager provides alertManager
     ) {
-        Scaffold(
-            containerColor = theme.bg,
-            topBar = {
-                Column {
-                    CleanVaultHeader(
-                        totalLiquid = pocketBalances.filter { it.pocketType == PocketType.LIQUID }.sumOf { it.currentBalance }.coerceAtLeast(0.0),
-                        totalSpent = flowRecords.filter { it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY) }.sumOf { it.amount },
-                        isProUser = isProUnlocked,
-                        isPrivacyMode = isPrivacyMode,
-                        theme = theme,
-                        onTogglePrivacy = { isPrivacyMode = !isPrivacyMode }
-                    )
-                    DevSandboxTogglePill(
-                        isProUnlocked = isProUnlocked,
-                        onOpenPaywall = { showMockPaywall = true }
-                    )
-                    // Centralized Alert Top Banner
-                    VaultAlertTopBanner(alertManager = alertManager, theme = theme)
-                }
-            },
-            bottomBar = {
-                NavigationBar(
-                    containerColor = theme.surface,
-                    tonalElevation = 6.dp,
-                    modifier = Modifier.navigationBarsPadding().clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
-                ) {
-                    listOf(
-                        Triple(0, "Vault", Icons.Filled.MenuBook),
-                        Triple(1, "Accounts", Icons.Filled.AccountBalance),
-                        Triple(2, "Insights", Icons.Filled.Insights),
-                        Triple(3, "Settings", Icons.Filled.Settings)
-                    ).forEach { (idx, title, icon) ->
-                        NavigationBarItem(
-                            selected = selectedTab == idx,
-                            onClick = { selectedTab = idx },
-                            icon = { Icon(icon, contentDescription = title) },
-                            label = { Text(title, fontSize = 11.sp, fontWeight = if (selectedTab == idx) FontWeight.Bold else FontWeight.Normal) },
-                            colors = NavigationBarItemDefaults.colors(
-                                selectedIconColor = theme.accent,
-                                selectedTextColor = theme.accent,
-                                indicatorColor = theme.surfaceAlt,
-                                unselectedIconColor = theme.textMuted,
-                                unselectedTextColor = theme.textMuted
+        Box(modifier = Modifier.fillMaxSize()) {
+            Scaffold(
+                containerColor = theme.bg,
+                topBar = {
+                    Column {
+                        CleanVaultHeader(
+                            totalLiquid = pocketBalances.filter { it.pocketType == PocketType.LIQUID }.sumOf { it.currentBalance }.coerceAtLeast(0.0),
+                            totalSpent = flowRecords.filter { it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY) }.sumOf { it.amount },
+                            isProUser = isProUnlocked,
+                            isPrivacyMode = isPrivacyMode,
+                            theme = theme,
+                            onTogglePrivacy = { isPrivacyMode = !isPrivacyMode }
+                        )
+                        DevSandboxTogglePill(
+                            isProUnlocked = isProUnlocked,
+                            onOpenPaywall = { showMockPaywall = true }
+                        )
+                    }
+                },
+                bottomBar = {
+                    NavigationBar(
+                        containerColor = theme.surface,
+                        tonalElevation = 6.dp,
+                        modifier = Modifier.navigationBarsPadding().clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                    ) {
+                        listOf(
+                            Triple(0, "Vault", Icons.Filled.MenuBook),
+                            Triple(1, "Accounts", Icons.Filled.AccountBalance),
+                            Triple(2, "Insights", Icons.Filled.Insights),
+                            Triple(3, "Settings", Icons.Filled.Settings)
+                        ).forEach { (idx, title, icon) ->
+                            NavigationBarItem(
+                                selected = selectedTab == idx,
+                                onClick = { selectedTab = idx },
+                                icon = { Icon(icon, contentDescription = title) },
+                                label = { Text(title, fontSize = 11.sp, fontWeight = if (selectedTab == idx) FontWeight.Bold else FontWeight.Normal) },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = theme.accent,
+                                    selectedTextColor = theme.accent,
+                                    indicatorColor = theme.surfaceAlt,
+                                    unselectedIconColor = theme.textMuted,
+                                    unselectedTextColor = theme.textMuted
+                                )
                             )
+                        }
+                    }
+                },
+                floatingActionButton = {
+                    if (selectedTab == 0 || selectedTab == 1) {
+                        FloatingActionButton(
+                            onClick = {
+                                if (selectedTab == 1) {
+                                    showCreatePocketDialog = true
+                                } else {
+                                    ocrPrefilledNote = ""
+                                    ocrPrefilledAmount = null
+                                    hudInDialogError = null
+                                    showCommandHud = true
+                                }
+                            },
+                            containerColor = theme.accent,
+                            contentColor = theme.bg,
+                            shape = CircleShape,
+                            modifier = Modifier.navigationBarsPadding()
+                        ) {
+                            Icon(if (selectedTab == 1) Icons.Default.AddCard else Icons.Default.Add, contentDescription = "Action", modifier = Modifier.size(26.dp))
+                        }
+                    }
+                }
+            ) { padding ->
+                Box(modifier = Modifier.fillMaxSize().padding(padding).background(theme.bg)) {
+                    when (selectedTab) {
+                        0 -> {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp),
+                                contentPadding = PaddingValues(top = 6.dp, bottom = 96.dp)
+                            ) {
+                                item {
+                                    DynamicCockpit(
+                                        pockets = pocketBalances,
+                                        flows = flowRecords,
+                                        mode = cockpitMode,
+                                        configuredDailyBurn = dailyBurnCeiling,
+                                        isPrivacyMode = isPrivacyMode
+                                    )
+                                }
+
+                                // Quick Command Bar with Centered Disappearing Placeholders
+                                item {
+                                    Card(
+                                        shape = RoundedCornerShape(14.dp),
+                                        colors = CardDefaults.cardColors(containerColor = theme.surface),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .border(1.5.dp, theme.accent.copy(alpha = 0.8f), RoundedCornerShape(14.dp))
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(CircleShape)
+                                                    .background(theme.accent.copy(alpha = 0.2f))
+                                                    .padding(6.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(Icons.Default.Bolt, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
+                                            }
+
+                                            Spacer(Modifier.width(10.dp))
+
+                                            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                                if (naturalLanguageInput.isEmpty()) {
+                                                    Text(
+                                                        text = placeholderHints[currentHintIndex],
+                                                        color = theme.textMuted.copy(alpha = 0.7f),
+                                                        fontSize = 13.sp,
+                                                        maxLines = 1
+                                                    )
+                                                }
+                                                BasicTextField(
+                                                    value = naturalLanguageInput,
+                                                    onValueChange = { naturalLanguageInput = it },
+                                                    singleLine = true,
+                                                    textStyle = TextStyle(
+                                                        color = theme.textBright,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Medium
+                                                    ),
+                                                    cursorBrush = SolidColor(theme.accent),
+                                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                                    keyboardActions = KeyboardActions(onDone = {
+                                                        executeNaturalLanguageCommand(naturalLanguageInput)
+                                                    }),
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                            }
+
+                                            if (naturalLanguageInput.isNotBlank()) {
+                                                IconButton(onClick = { executeNaturalLanguageCommand(naturalLanguageInput) }) {
+                                                    Icon(Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Receipt Scan Buttons
+                                item {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                                                    cameraSnapLauncher.launch(null)
+                                                } else {
+                                                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                                }
+                                            },
+                                            modifier = Modifier.weight(1f).height(40.dp),
+                                            shape = RoundedCornerShape(10.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt)
+                                        ) {
+                                            Icon(Icons.Default.PhotoCamera, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Scan Receipt", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                        }
+
+                                        OutlinedButton(
+                                            onClick = {
+                                                photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                            },
+                                            modifier = Modifier.weight(1f).height(40.dp),
+                                            shape = RoundedCornerShape(10.dp),
+                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent)
+                                        ) {
+                                            Icon(Icons.Default.Image, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("From Gallery", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+
+                                item {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Real-Time Flow Stream", color = theme.textBright, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
+                                        if (flowRecords.isNotEmpty()) {
+                                            Text(
+                                                "View All (${flowRecords.size}) →",
+                                                color = theme.accent,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.clickable { showAllRecordsSheet = true }
+                                            )
+                                        }
+                                    }
+                                }
+
+                                if (flowRecords.isEmpty()) {
+                                    item {
+                                        Card(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            shape = RoundedCornerShape(16.dp),
+                                            colors = CardDefaults.cardColors(containerColor = theme.surface)
+                                        ) {
+                                            Box(Modifier.fillMaxWidth().padding(28.dp), contentAlignment = Alignment.Center) {
+                                                Text("No records yet. Type above or tap '+' to commit flow.", color = theme.textMuted, fontSize = 12.sp)
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    items(flowRecords.take(8), key = { it.id }) { flow ->
+                                        FlowRecordDisplayRow(flow = flow, isPrivacyMode = isPrivacyMode, theme = theme)
+                                        Divider(color = theme.surfaceAlt.copy(alpha = 0.5f), thickness = 0.5.dp)
+                                    }
+                                }
+                            }
+                        }
+
+                        1 -> AccountPocketsView(
+                            pocketBalances = pocketBalances,
+                            rawPockets = rawPockets,
+                            isPrivacyMode = isPrivacyMode,
+                            onEditPocket = { editingPocket = it },
+                            onDeletePocketSafe = { pocket, balance ->
+                                if (balance != 0.0) {
+                                    alertManager.showAlert("Cannot delete account with active balance of ₹${balance.toInt()}", AlertType.WARNING)
+                                } else {
+                                    scope.launch {
+                                        db.stateFlowDao().updatePocket(pocket.copy(isArchived = true))
+                                        alertManager.showAlert("${pocket.name} removed", AlertType.SUCCESS)
+                                    }
+                                }
+                            },
+                            onRecordCardSettlement = { cardId, liquidId, amt ->
+                                scope.launch {
+                                    val autoSplit = prefs.getBoolean("auto_split_debit", false)
+                                    when (val res = ledgerEngine.recordMovement(
+                                        nature = MovementNature.CARD_PAYMENT,
+                                        sourcePocketId = liquidId,
+                                        targetPocketId = cardId,
+                                        amount = amt,
+                                        category = "Bill Payment",
+                                        note = "Card Dues Clearance",
+                                        autoSplitEnabled = autoSplit
+                                    )) {
+                                        is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
+                                        is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
+                                    }
+                                }
+                            },
+                            onPeerAction = { nature, peerId, liquidId, amt ->
+                                scope.launch {
+                                    val autoSplit = prefs.getBoolean("auto_split_debit", false)
+                                    val (src, tgt) = if (nature in listOf(MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
+                                        liquidId to peerId
+                                    } else {
+                                        peerId to liquidId
+                                    }
+                                    when (val res = ledgerEngine.recordMovement(
+                                        nature = nature,
+                                        sourcePocketId = src,
+                                        targetPocketId = tgt,
+                                        amount = amt,
+                                        category = "Peer Transfer",
+                                        note = nature.name,
+                                        autoSplitEnabled = autoSplit
+                                    )) {
+                                        is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
+                                        is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
+                                    }
+                                }
+                            }
+                        )
+
+                        2 -> IntelligenceScreen(
+                            pocketBalances = pocketBalances,
+                            flowRecords = flowRecords,
+                            isPrivacyMode = isPrivacyMode
+                        )
+
+                        3 -> SettingsScreen(
+                            currentTheme = activeThemeMode,
+                            currentCockpitMode = cockpitMode,
+                            configuredDailyBurn = dailyBurnCeiling,
+                            isProUser = isProUnlocked,
+                            onSelectTheme = { mode ->
+                                activeThemeMode = mode
+                                prefs.edit().putString("selected_theme", mode.name).apply()
+                            },
+                            onSelectCockpitMode = { mode ->
+                                cockpitMode = mode
+                                prefs.edit().putString("cockpit_mode", mode.name).apply()
+                            },
+                            onUpdateDailyBurn = { rate ->
+                                dailyBurnCeiling = rate
+                                prefs.edit().putFloat("daily_burn_ceiling", rate.toFloat()).apply()
+                            },
+                            onTriggerProPurchase = { showMockPaywall = true },
+                            onExportPdfDossier = {
+                                scope.launch {
+                                    PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords)
+                                }
+                            },
+                            onExportCsv = {
+                                val compatList = flowRecords.map {
+                                    Transaction(
+                                        id = it.id,
+                                        accountId = it.sourcePocketId ?: it.targetPocketId ?: 0L,
+                                        flowType = if (it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.CARD_PAYMENT)) "OUT" else "IN",
+                                        type = it.nature.name,
+                                        category = it.category,
+                                        amount = it.amount,
+                                        timestamp = it.timestamp,
+                                        note = it.note,
+                                        isRecurring = it.isRecurring,
+                                        frequency = it.frequency
+                                    )
+                                }
+                                CsvExporter.exportAndShareTransactions(context, compatList)
+                            },
+                            onClearLedger = {
+                                scope.launch {
+                                    flowRecords.forEach { db.stateFlowDao().deleteFlowRecord(it.id) }
+                                    alertManager.showAlert("All vault records cleared", AlertType.SUCCESS)
+                                }
+                            }
                         )
                     }
                 }
-            },
-            floatingActionButton = {
-                if (selectedTab == 0 || selectedTab == 1) {
-                    FloatingActionButton(
-                        onClick = {
-                            if (selectedTab == 1) {
-                                showCreatePocketDialog = true
-                            } else {
-                                ocrPrefilledNote = ""
-                                ocrPrefilledAmount = null
-                                hudInDialogError = null
-                                showCommandHud = true
-                            }
+
+                if (showCommandHud) {
+                    val defaultLiquidId = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
+                    FloatingCommandHud(
+                        activePockets = rawPockets,
+                        prefilledPocketId = defaultLiquidId,
+                        prefilledNote = ocrPrefilledNote,
+                        prefilledAmount = ocrPrefilledAmount,
+                        inDialogErrorMessage = hudInDialogError,
+                        onDismiss = {
+                            showCommandHud = false
+                            hudInDialogError = null
                         },
-                        containerColor = theme.accent,
-                        contentColor = theme.bg,
-                        shape = CircleShape,
-                        modifier = Modifier.navigationBarsPadding()
-                    ) {
-                        Icon(if (selectedTab == 1) Icons.Default.AddCard else Icons.Default.Add, contentDescription = "Action", modifier = Modifier.size(26.dp))
-                    }
-                }
-            }
-        ) { padding ->
-            Box(modifier = Modifier.fillMaxSize().padding(padding).background(theme.bg)) {
-                when (selectedTab) {
-                    0 -> {
-                        LazyColumn(
-                            modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp),
-                            contentPadding = PaddingValues(top = 6.dp, bottom = 96.dp)
-                        ) {
-                            item {
-                                DynamicCockpit(
-                                    pockets = pocketBalances,
-                                    flows = flowRecords,
-                                    mode = cockpitMode,
-                                    configuredDailyBurn = dailyBurnCeiling,
-                                    isPrivacyMode = isPrivacyMode
-                                )
-                            }
-
-                            // ELEVATED COMMAND TERMINAL BAR
-                            item {
-                                Card(
-                                    shape = RoundedCornerShape(14.dp),
-                                    colors = CardDefaults.cardColors(containerColor = theme.surface),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .border(1.5.dp, theme.accent.copy(alpha = 0.75f), RoundedCornerShape(14.dp))
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(CircleShape)
-                                                .background(theme.accent.copy(alpha = 0.2f))
-                                                .padding(6.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Icon(Icons.Default.Bolt, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
-                                        }
-
-                                        Spacer(Modifier.width(10.dp))
-
-                                        Box(modifier = Modifier.weight(1f)) {
-                                            if (naturalLanguageInput.isEmpty()) {
-                                                Text(
-                                                    text = placeholderHints[currentHintIndex],
-                                                    color = theme.textMuted.copy(alpha = 0.7f),
-                                                    fontSize = 12.5.sp,
-                                                    maxLines = 1
-                                                )
-                                            }
-                                            TextField(
-                                                value = naturalLanguageInput,
-                                                onValueChange = { naturalLanguageInput = it },
-                                                singleLine = true,
-                                                colors = TextFieldDefaults.colors(
-                                                    focusedContainerColor = Color.Transparent,
-                                                    unfocusedContainerColor = Color.Transparent,
-                                                    focusedIndicatorColor = Color.Transparent,
-                                                    unfocusedIndicatorColor = Color.Transparent,
-                                                    focusedTextColor = theme.textBright,
-                                                    unfocusedTextColor = theme.textBright
-                                                ),
-                                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                                keyboardActions = KeyboardActions(onDone = {
-                                                    executeNaturalLanguageCommand(naturalLanguageInput)
-                                                }),
-                                                modifier = Modifier.fillMaxWidth()
-                                            )
-                                        }
-
-                                        if (naturalLanguageInput.isNotBlank()) {
-                                            IconButton(onClick = { executeNaturalLanguageCommand(naturalLanguageInput) }) {
-                                                Icon(Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            // OCR Scan Buttons
-                            item {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Button(
-                                        onClick = {
-                                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                                                cameraSnapLauncher.launch(null)
-                                            } else {
-                                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                                            }
-                                        },
-                                        modifier = Modifier.weight(1f).height(40.dp),
-                                        shape = RoundedCornerShape(10.dp),
-                                        colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt)
-                                    ) {
-                                        Icon(Icons.Default.PhotoCamera, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("Scan Receipt", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                                    }
-
-                                    OutlinedButton(
-                                        onClick = {
-                                            photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                                        },
-                                        modifier = Modifier.weight(1f).height(40.dp),
-                                        shape = RoundedCornerShape(10.dp),
-                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent)
-                                    ) {
-                                        Icon(Icons.Default.Image, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
-                                        Spacer(Modifier.width(6.dp))
-                                        Text("From Gallery", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
-
-                            item {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text("Real-Time Flow Stream", color = theme.textBright, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
-                                    if (flowRecords.isNotEmpty()) {
-                                        Text(
-                                            "View All (${flowRecords.size}) →",
-                                            color = theme.accent,
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.clickable { showAllRecordsSheet = true }
-                                        )
-                                    }
-                                }
-                            }
-
-                            if (flowRecords.isEmpty()) {
-                                item {
-                                    Card(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        shape = RoundedCornerShape(16.dp),
-                                        colors = CardDefaults.cardColors(containerColor = theme.surface)
-                                    ) {
-                                        Box(Modifier.fillMaxWidth().padding(28.dp), contentAlignment = Alignment.Center) {
-                                            Text("No records yet. Type above or tap '+' to commit flow.", color = theme.textMuted, fontSize = 12.sp)
-                                        }
-                                    }
-                                }
-                            } else {
-                                items(flowRecords.take(8), key = { it.id }) { flow ->
-                                    FlowRecordDisplayRow(flow = flow, isPrivacyMode = isPrivacyMode, theme = theme)
-                                    Divider(color = theme.surfaceAlt.copy(alpha = 0.5f), thickness = 0.5.dp)
-                                }
-                            }
-                        }
-                    }
-
-                    1 -> AccountPocketsView(
-                        pocketBalances = pocketBalances,
-                        rawPockets = rawPockets,
-                        isPrivacyMode = isPrivacyMode,
-                        onEditPocket = { editingPocket = it },
-                        onDeletePocketSafe = { pocket, balance ->
-                            if (balance != 0.0) {
-                                alertManager.showAlert("Cannot delete account with active balance of ₹${balance.toInt()}", AlertType.WARNING)
-                            } else {
-                                scope.launch {
-                                    db.stateFlowDao().updatePocket(pocket.copy(isArchived = true))
-                                    alertManager.showAlert("${pocket.name} removed", AlertType.SUCCESS)
-                                }
-                            }
-                        },
-                        onRecordCardSettlement = { cardId, liquidId, amt ->
+                        onSubmit = { nature, srcId, tgtId, amt, cat, note, date, isRec, freq ->
                             scope.launch {
                                 val autoSplit = prefs.getBoolean("auto_split_debit", false)
-                                when (val res = ledgerEngine.recordMovement(
-                                    nature = MovementNature.CARD_PAYMENT,
-                                    sourcePocketId = liquidId,
-                                    targetPocketId = cardId,
-                                    amount = amt,
-                                    category = "Bill Payment",
-                                    note = "Card Dues Clearance",
-                                    autoSplitEnabled = autoSplit
-                                )) {
-                                    is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
-                                    is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
-                                }
-                            }
-                        },
-                        onPeerAction = { nature, peerId, liquidId, amt ->
-                            scope.launch {
-                                val autoSplit = prefs.getBoolean("auto_split_debit", false)
-                                val (src, tgt) = if (nature == MovementNature.PEER_LEND || nature == MovementNature.PEER_REPAY) {
-                                    liquidId to peerId
-                                } else {
-                                    peerId to liquidId
-                                }
                                 when (val res = ledgerEngine.recordMovement(
                                     nature = nature,
-                                    sourcePocketId = src,
-                                    targetPocketId = tgt,
+                                    sourcePocketId = srcId,
+                                    targetPocketId = tgtId,
                                     amount = amt,
-                                    category = "Peer Transfer",
-                                    note = nature.name,
+                                    category = cat,
+                                    note = note,
+                                    timestamp = date,
                                     autoSplitEnabled = autoSplit
                                 )) {
-                                    is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
-                                    is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
+                                    is VaultExecutionResult.OverdraftError -> {
+                                        hudInDialogError = res.message
+                                        alertManager.showAlert(res.message, AlertType.ERROR)
+                                    }
+                                    is VaultExecutionResult.Success -> {
+                                        hudInDialogError = null
+                                        showCommandHud = false
+                                        alertManager.showAlert(res.summary, AlertType.SUCCESS)
+                                    }
                                 }
                             }
                         }
                     )
+                }
 
-                    2 -> IntelligenceScreen(
-                        pocketBalances = pocketBalances,
+                if (showAllRecordsSheet) {
+                    AllTransactionsSearchSheet(
                         flowRecords = flowRecords,
-                        isPrivacyMode = isPrivacyMode
-                    )
-
-                    3 -> SettingsScreen(
-                        currentTheme = activeThemeMode,
-                        currentCockpitMode = cockpitMode,
-                        configuredDailyBurn = dailyBurnCeiling,
+                        isPrivacyMode = isPrivacyMode,
                         isProUser = isProUnlocked,
-                        onSelectTheme = { mode ->
-                            activeThemeMode = mode
-                            prefs.edit().putString("selected_theme", mode.name).apply()
-                        },
-                        onSelectCockpitMode = { mode ->
-                            cockpitMode = mode
-                            prefs.edit().putString("cockpit_mode", mode.name).apply()
-                        },
-                        onUpdateDailyBurn = { rate ->
-                            dailyBurnCeiling = rate
-                            prefs.edit().putFloat("daily_burn_ceiling", rate.toFloat()).apply()
-                        },
-                        onTriggerProPurchase = { showMockPaywall = true },
-                        onExportPdfDossier = {
-                            scope.launch {
-                                PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords)
-                            }
-                        },
+                        onDismiss = { showAllRecordsSheet = false },
                         onExportCsv = {
                             val compatList = flowRecords.map {
                                 Transaction(
@@ -547,134 +612,67 @@ fun DashboardScreen(db: AppDatabase) {
                             }
                             CsvExporter.exportAndShareTransactions(context, compatList)
                         },
-                        onClearLedger = {
+                        onExportPdfDossier = {
                             scope.launch {
-                                flowRecords.forEach { db.stateFlowDao().deleteFlowRecord(it.id) }
-                                alertManager.showAlert("All vault records cleared", AlertType.SUCCESS)
+                                PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords)
                             }
                         }
                     )
                 }
-            }
 
-            if (showCommandHud) {
-                FloatingCommandHud(
-                    activePockets = rawPockets,
-                    prefilledNote = ocrPrefilledNote,
-                    prefilledAmount = ocrPrefilledAmount,
-                    inDialogErrorMessage = hudInDialogError,
-                    onDismiss = {
-                        showCommandHud = false
-                        hudInDialogError = null
-                    },
-                    onSubmit = { nature, srcId, tgtId, amt, cat, note, date, isRec, freq ->
-                        scope.launch {
-                            val autoSplit = prefs.getBoolean("auto_split_debit", false)
-                            when (val res = ledgerEngine.recordMovement(
-                                nature = nature,
-                                sourcePocketId = srcId,
-                                targetPocketId = tgtId,
-                                amount = amt,
-                                category = cat,
-                                note = note,
-                                timestamp = date,
-                                autoSplitEnabled = autoSplit
-                            )) {
-                                is VaultExecutionResult.OverdraftError -> {
-                                    hudInDialogError = res.message
-                                    alertManager.showAlert(res.message, AlertType.ERROR)
-                                }
-                                is VaultExecutionResult.Success -> {
-                                    hudInDialogError = null
-                                    showCommandHud = false
-                                    alertManager.showAlert(res.summary, AlertType.SUCCESS)
-                                }
+                if (showCreatePocketDialog) {
+                    CreateAccountDialog(
+                        theme = theme,
+                        onDismiss = { showCreatePocketDialog = false },
+                        onSave = { name, type, limit ->
+                            scope.launch {
+                                db.stateFlowDao().insertPocket(
+                                    VaultPocket(
+                                        name = name,
+                                        pocketType = type,
+                                        subType = type.name,
+                                        creditLimit = limit
+                                    )
+                                )
+                                showCreatePocketDialog = false
+                                alertManager.showAlert("Created account '$name'", AlertType.SUCCESS)
                             }
                         }
-                    }
-                )
-            }
+                    )
+                }
 
-            if (showAllRecordsSheet) {
-                AllTransactionsSearchSheet(
-                    flowRecords = flowRecords,
-                    isPrivacyMode = isPrivacyMode,
-                    isProUser = isProUnlocked,
-                    onDismiss = { showAllRecordsSheet = false },
-                    onExportCsv = {
-                        val compatList = flowRecords.map {
-                            Transaction(
-                                id = it.id,
-                                accountId = it.sourcePocketId ?: it.targetPocketId ?: 0L,
-                                flowType = if (it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.CARD_PAYMENT)) "OUT" else "IN",
-                                type = it.nature.name,
-                                category = it.category,
-                                amount = it.amount,
-                                timestamp = it.timestamp,
-                                note = it.note,
-                                isRecurring = it.isRecurring,
-                                frequency = it.frequency
-                            )
-                        }
-                        CsvExporter.exportAndShareTransactions(context, compatList)
-                    },
-                    onExportPdfDossier = {
-                        scope.launch {
-                            PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords)
-                        }
-                    }
-                )
-            }
-
-            if (showCreatePocketDialog) {
-                CreateAccountDialog(
-                    theme = theme,
-                    onDismiss = { showCreatePocketDialog = false },
-                    onSave = { name, type, limit ->
-                        scope.launch {
-                            db.stateFlowDao().insertPocket(
-                                VaultPocket(
-                                    name = name,
-                                    pocketType = type,
-                                    subType = type.name,
-                                    creditLimit = limit
+                editingPocket?.let { pocket ->
+                    EditAccountDialog(
+                        account = pocket,
+                        theme = theme,
+                        onDismiss = { editingPocket = null },
+                        onSave = { updatedName, updatedLimit ->
+                            scope.launch {
+                                db.stateFlowDao().updatePocket(
+                                    pocket.copy(
+                                        name = updatedName,
+                                        creditLimit = updatedLimit
+                                    )
                                 )
-                            )
-                            showCreatePocketDialog = false
-                            alertManager.showAlert("Created account '$name'", AlertType.SUCCESS)
+                                editingPocket = null
+                                alertManager.showAlert("${pocket.name} updated", AlertType.SUCCESS)
+                            }
                         }
-                    }
-                )
+                    )
+                }
+
+                if (showMockPaywall) {
+                    MockPaywallBottomSheet(
+                        currentProState = isProUnlocked,
+                        onDismiss = { showMockPaywall = false },
+                        onSimulatePurchaseSuccess = { billingManager.simulatePurchaseSuccess() },
+                        onSimulateRevokePro = { billingManager.simulateRevokePro() }
+                    )
+                }
             }
 
-            editingPocket?.let { pocket ->
-                EditAccountDialog(
-                    account = pocket,
-                    theme = theme,
-                    onDismiss = { editingPocket = null },
-                    onSave = { updatedName, updatedLimit ->
-                        scope.launch {
-                            db.stateFlowDao().updatePocket(
-                                pocket.copy(
-                                    name = updatedName,
-                                    creditLimit = updatedLimit
-                                )
-                            )
-                            editingPocket = null
-                            alertManager.showAlert("${pocket.name} updated", AlertType.SUCCESS)
-                        }
-                    }
-                )
-            }
-
-            if (showMockPaywall) {
-                MockPaywallBottomSheet(
-                    currentProState = isProUnlocked,
-                    onDismiss = { showMockPaywall = false },
-                    onSimulatePurchaseSuccess = { billingManager.simulatePurchaseSuccess() },
-                    onSimulateRevokePro = { billingManager.simulateRevokePro() }
-                )
-            }
+            // Non-intrusive floating top banner overlay (no layout shifting)
+            VaultFloatingTopOverlay(alertManager = alertManager, theme = theme)
         }
     }
 }
