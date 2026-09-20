@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,6 +34,7 @@ fun FloatingCommandHud(
     prefilledPocketId: Long? = null,
     prefilledNote: String = "",
     prefilledAmount: Double? = null,
+    inDialogErrorMessage: String? = null,
     onDismiss: () -> Unit,
     onSubmit: (nature: MovementNature, sourceId: Long?, targetId: Long?, amount: Double, cat: String, note: String, date: Long, isRec: Boolean, freq: String) -> Unit
 ) {
@@ -62,6 +65,7 @@ fun FloatingCommandHud(
         mutableStateOf(if (primaryNature == MovementNature.INFLOW) "Salary" else "Food & Dining")
     }
 
+    // Fully restored Recurring options
     var isRecurring by remember { mutableStateOf(false) }
     var frequency by remember { mutableStateOf("MONTHLY") }
     var showMoreOptions by remember { mutableStateOf(false) }
@@ -77,7 +81,7 @@ fun FloatingCommandHud(
             colors = CardDefaults.cardColors(containerColor = theme.surface),
             modifier = Modifier
                 .fillMaxWidth(0.92f)
-                .padding(vertical = 20.dp)
+                .padding(vertical = 16.dp)
                 .imePadding()
         ) {
             Column(
@@ -219,6 +223,85 @@ fun FloatingCommandHud(
                             theme,
                             Modifier.weight(1f)
                         ) { showCustomDatePicker = true }
+                    }
+                }
+
+                // Restored Recurring Settings Toggle
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { showMoreOptions = !showMoreOptions }
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Recurring / Repeat Settings", color = theme.textMuted, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                    Text(if (showMoreOptions) "▲ Less" else "▼ More", color = theme.accent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                }
+
+                AnimatedVisibility(visible = showMoreOptions) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(theme.surfaceAlt)
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Auto-Repeat Transaction", color = theme.textBright, fontSize = 12.sp)
+                            Switch(
+                                checked = isRecurring,
+                                onCheckedChange = { isRecurring = it },
+                                colors = SwitchDefaults.colors(checkedThumbColor = theme.bg, checkedTrackColor = theme.accent)
+                            )
+                        }
+
+                        if (isRecurring) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                listOf("DAILY", "WEEKLY", "MONTHLY").forEach { freq ->
+                                    val isSel = frequency == freq
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(if (isSel) theme.accent else theme.surface)
+                                            .clickable { frequency = freq }
+                                            .padding(vertical = 6.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(freq, color = if (isSel) theme.bg else theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // IN-DIALOG PROMINENT ERROR BANNER (Fixes errors hidden under dialog)
+                if (inDialogErrorMessage != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(theme.mildRed.copy(alpha = 0.2f))
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.Warning, contentDescription = null, tint = theme.mildRed, modifier = Modifier.size(18.dp))
+                        Text(
+                            text = inDialogErrorMessage,
+                            color = theme.mildRed,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
                     }
                 }
 
