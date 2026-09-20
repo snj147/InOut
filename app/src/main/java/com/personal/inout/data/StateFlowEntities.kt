@@ -73,6 +73,10 @@ interface StateFlowDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertFlowRecord(record: FlowRecord): Long
 
+    // Fixes UNIQUE constraint exception when updating category/notes
+    @Update
+    suspend fun updateFlowRecord(record: FlowRecord)
+
     @Query("SELECT * FROM flow_records ORDER BY timestamp DESC")
     fun observeAllFlowRecords(): Flow<List<FlowRecord>>
 
