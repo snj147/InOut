@@ -19,10 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.personal.inout.data.MovementNature
-import com.personal.inout.data.PocketBalanceSummary
-import com.personal.inout.data.PocketType
-import com.personal.inout.data.VaultPocket
+import com.personal.inout.data.*
 import kotlin.math.abs
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -30,10 +27,12 @@ import kotlin.math.abs
 fun AccountPocketsView(
     pocketBalances: List<PocketBalanceSummary>,
     rawPockets: List<VaultPocket>,
+    recurringSchedules: List<FlowRecord>,
     isPrivacyMode: Boolean,
     onTransactPocket: (VaultPocket) -> Unit,
     onEditPocket: (VaultPocket) -> Unit,
     onDeletePocketSafe: (VaultPocket, Double) -> Unit,
+    onStopRecurringSchedule: (FlowRecord) -> Unit,
     onRecordCardSettlement: (creditPocketId: Long, liquidPocketId: Long, amount: Double) -> Unit,
     onPeerAction: (nature: MovementNature, counterpartyId: Long, liquidId: Long, amount: Double) -> Unit
 ) {
@@ -115,9 +114,43 @@ fun AccountPocketsView(
                 onActionClick = { peerModalTarget = peer }
             )
         }
+
+        // ACTIVE RECURRING SCHEDULES (Allows pausing/stopping salary or subscription rules)
+        if (recurringSchedules.isNotEmpty()) {
+            item {
+                AccountSectionHeader(title = "Active Recurring Schedules", count = recurringSchedules.size, theme = theme)
+            }
+            items(recurringSchedules, key = { it.id }) { schedule ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)),
+                    colors = CardDefaults.cardColors(containerColor = theme.surface)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(schedule.note.ifBlank { schedule.category }, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text("Repeats ${schedule.frequency} • ₹${String.format("%,.0f", schedule.amount)}", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(theme.mildRed.copy(alpha = 0.2f))
+                                .clickable { onStopRecurringSchedule(schedule) }
+                                .padding(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text("Stop Rule", color = theme.mildRed, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    // Context Menu for Long-Press
+    // Long Press Context Menu
     selectedPocketForMenu?.let { (pocket, balance) ->
         AlertDialog(
             containerColor = theme.surface,
