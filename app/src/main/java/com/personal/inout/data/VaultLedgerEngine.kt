@@ -20,10 +20,31 @@ sealed class VaultExecutionResult {
 
 class VaultLedgerEngine(
     private val flowRecordDao: StateFlowDao,
-    private val prefs: SharedPreferences
+    private val prefs: SharedPreferences? = null
 ) {
 
-    // Overload 1: Named argument interface used directly by WidgetCommandActivity.kt
+    // Overload 1: Supports Double amount (NaturalLanguageParser returns Double/Long)
+    suspend fun recordMovement(
+        nature: MovementNature,
+        sourcePocketId: String? = null,
+        targetPocketId: String? = null,
+        amount: Double,
+        category: String,
+        note: String = "",
+        timestamp: Long = System.currentTimeMillis()
+    ): VaultExecutionResult {
+        return recordMovementInternal(
+            nature = nature,
+            sourcePocketId = sourcePocketId,
+            targetPocketId = targetPocketId,
+            amount = amount.toLong(),
+            category = category,
+            note = note,
+            timestamp = timestamp
+        )
+    }
+
+    // Overload 2: Supports Long amount
     suspend fun recordMovement(
         nature: MovementNature,
         sourcePocketId: String? = null,
@@ -44,7 +65,7 @@ class VaultLedgerEngine(
         )
     }
 
-    // Overload 2: String-based nature overload for loose typing callers
+    // Overload 3: Loose string nature overload
     suspend fun recordMovement(
         nature: String,
         sourcePocketId: String? = null,
@@ -70,7 +91,7 @@ class VaultLedgerEngine(
         )
     }
 
-    // Overload 3: Full entity record overload
+    // Overload 4: Entity overload
     suspend fun recordMovement(record: FlowRecord): VaultExecutionResult {
         val parsedNature = try {
             MovementNature.valueOf(record.movementNature)
@@ -102,7 +123,6 @@ class VaultLedgerEngine(
         timestamp: Long
     ): VaultExecutionResult {
         return try {
-            // Validation
             if (nature in listOf(MovementNature.OUTFLOW, MovementNature.CARD_PAYMENT, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
                 if (sourcePocketId.isNullOrBlank()) {
                     return VaultExecutionResult.Error("Source account required for outflow")
