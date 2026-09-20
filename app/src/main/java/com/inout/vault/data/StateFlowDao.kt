@@ -29,29 +29,28 @@ interface StateFlowDao {
 
     @Query("""
         SELECT 
-            pockets.pocketId,
-            pockets.pocketName,
-            pockets.pocketTypeStr AS pocketType,
+            CAST(pockets.id AS TEXT) AS pocketId,
+            pockets.name AS pocketName,
+            pockets.pocketType AS pocketType,
             pockets.subType,
             pockets.creditLimit,
             COALESCE(SUM(
                 CASE 
-                    WHEN flow_records.targetPocketId = pockets.pocketId AND flow_records.timestamp <= :currentTime THEN flow_records.amount
-                    WHEN flow_records.sourcePocketId = pockets.pocketId AND flow_records.timestamp <= :currentTime THEN -flow_records.amount
+                    WHEN flow_records.targetPocketId = pockets.id AND flow_records.timestamp <= :currentTime THEN flow_records.amount
+                    WHEN flow_records.sourcePocketId = pockets.id AND flow_records.timestamp <= :currentTime THEN -flow_records.amount
                     ELSE 0 
                 END
             ), 0) AS computedBalance
         FROM pockets
-        LEFT JOIN flow_records ON (pockets.pocketId = flow_records.sourcePocketId OR pockets.pocketId = flow_records.targetPocketId)
+        LEFT JOIN flow_records ON (pockets.id = flow_records.sourcePocketId OR pockets.id = flow_records.targetPocketId)
         WHERE pockets.isArchived = 0
-        GROUP BY pockets.pocketId
+        GROUP BY pockets.id
     """)
     fun getPocketBalanceSummaries(currentTime: Long = System.currentTimeMillis()): Flow<List<PocketBalanceSummary>>
 
     @Query("SELECT * FROM pockets WHERE isArchived = 0")
     fun getAllActivePockets(): Flow<List<VaultPocket>>
 
-    // Alias required by WidgetCommandActivity.kt:126
     @Query("SELECT * FROM pockets WHERE isArchived = 0")
     fun observeAllActivePockets(): Flow<List<VaultPocket>>
 
