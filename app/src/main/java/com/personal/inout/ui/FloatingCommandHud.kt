@@ -1,6 +1,5 @@
 package com.personal.inout.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -45,7 +44,7 @@ fun FloatingCommandHud(
     var expression by remember { mutableStateOf(prefilledAmount?.let { String.format("%.2f", it) } ?: "") }
     var note by remember { mutableStateOf(prefilledNote) }
     var selectedDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
-    var showCustomDatePicker by remember { mutableStateOf(false) }
+    var showCustomCalendar by remember { mutableStateOf(false) }
 
     val liquidPockets = remember(activePockets) { activePockets.filter { it.pocketType == PocketType.LIQUID } }
     val creditPockets = remember(activePockets) { activePockets.filter { it.pocketType == PocketType.CREDIT_LINE } }
@@ -65,10 +64,8 @@ fun FloatingCommandHud(
         mutableStateOf(if (primaryNature == MovementNature.INFLOW) "Salary" else "Food & Dining")
     }
 
-    // Fully restored Recurring options
-    var isRecurring by remember { mutableStateOf(false) }
-    var frequency by remember { mutableStateOf("MONTHLY") }
-    var showMoreOptions by remember { mutableStateOf(false) }
+    // Streamlined 4-Pill Single-Line Recurring State
+    var recurringFrequency by remember { mutableStateOf("None") }
 
     val computedAmount = remember(expression) { MathEvaluator.evaluate(expression) }
 
@@ -222,68 +219,40 @@ fun FloatingCommandHud(
                             isCustom,
                             theme,
                             Modifier.weight(1f)
-                        ) { showCustomDatePicker = true }
+                        ) { showCustomCalendar = true }
                     }
                 }
 
-                // Restored Recurring Settings Toggle
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { showMoreOptions = !showMoreOptions }
-                        .padding(vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Recurring / Repeat Settings", color = theme.textMuted, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                    Text(if (showMoreOptions) "▲ Less" else "▼ More", color = theme.accent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                }
-
-                AnimatedVisibility(visible = showMoreOptions) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(theme.surfaceAlt)
-                            .padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                // Streamlined Single-Line 4-Pill Recurring Segment
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Recurring Cadence", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Auto-Repeat Transaction", color = theme.textBright, fontSize = 12.sp)
-                            Switch(
-                                checked = isRecurring,
-                                onCheckedChange = { isRecurring = it },
-                                colors = SwitchDefaults.colors(checkedThumbColor = theme.bg, checkedTrackColor = theme.accent)
-                            )
-                        }
-
-                        if (isRecurring) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                listOf("DAILY", "WEEKLY", "MONTHLY").forEach { freq ->
-                                    val isSel = frequency == freq
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .clip(RoundedCornerShape(6.dp))
-                                            .background(if (isSel) theme.accent else theme.surface)
-                                            .clickable { frequency = freq }
-                                            .padding(vertical = 6.dp),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Text(freq, color = if (isSel) theme.bg else theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
+                        listOf("None", "Daily", "Weekly", "Monthly").forEach { cadence ->
+                            val isSel = recurringFrequency == cadence
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSel) theme.accent else theme.surfaceAlt)
+                                    .clickable { recurringFrequency = cadence }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    cadence,
+                                    color = if (isSel) theme.bg else theme.textBright,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
+                                )
                             }
                         }
                     }
                 }
 
-                // IN-DIALOG PROMINENT ERROR BANNER (Fixes errors hidden under dialog)
+                // In-Dialog Error Banner
                 if (inDialogErrorMessage != null) {
                     Row(
                         modifier = Modifier
@@ -310,15 +279,17 @@ fun FloatingCommandHud(
                     onClick = {
                         val amt = computedAmount ?: 0.0
                         if (amt > 0.0) {
+                            val isRec = recurringFrequency != "None"
+                            val freq = if (isRec) recurringFrequency.uppercase() else "NONE"
                             when (primaryNature) {
                                 MovementNature.OUTFLOW -> {
                                     selectedSpendPocket?.let {
-                                        onSubmit(MovementNature.OUTFLOW, it.id, null, amt, selectedCategory, note, selectedDateMillis, isRecurring, frequency)
+                                        onSubmit(MovementNature.OUTFLOW, it.id, null, amt, selectedCategory, note, selectedDateMillis, isRec, freq)
                                     }
                                 }
                                 MovementNature.INFLOW -> {
                                     selectedSpendPocket?.let {
-                                        onSubmit(MovementNature.INFLOW, null, it.id, amt, selectedCategory, note, selectedDateMillis, isRecurring, frequency)
+                                        onSubmit(MovementNature.INFLOW, null, it.id, amt, selectedCategory, note, selectedDateMillis, isRec, freq)
                                     }
                                 }
                                 MovementNature.TRANSFER -> {
@@ -340,54 +311,15 @@ fun FloatingCommandHud(
         }
     }
 
-    if (showCustomDatePicker) {
-        ReadableCalendarDialog(
+    if (showCustomCalendar) {
+        CustomCalendarDialog(
             initialDateMillis = selectedDateMillis,
-            onDismiss = { showCustomDatePicker = false },
+            onDismiss = { showCustomCalendar = false },
             onDateSelected = {
                 selectedDateMillis = it
-                showCustomDatePicker = false
+                showCustomCalendar = false
             }
         )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun ReadableCalendarDialog(
-    initialDateMillis: Long,
-    onDismiss: () -> Unit,
-    onDateSelected: (Long) -> Unit
-) {
-    val theme = LocalThemeColors.current
-    val pickerState = rememberDatePickerState(initialSelectedDateMillis = initialDateMillis)
-
-    DatePickerDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = { pickerState.selectedDateMillis?.let { onDateSelected(it) } }) {
-                Text("Select", color = theme.accent, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) } },
-        colors = DatePickerDefaults.colors(
-            containerColor = theme.surface,
-            titleContentColor = theme.textBright,
-            headlineContentColor = theme.accent,
-            weekdayContentColor = theme.accent,
-            subheadContentColor = theme.textBright,
-            yearContentColor = theme.textBright,
-            currentYearContentColor = theme.accent,
-            selectedYearContentColor = theme.bg,
-            selectedYearContainerColor = theme.accent,
-            dayContentColor = Color.White,
-            selectedDayContentColor = theme.bg,
-            selectedDayContainerColor = theme.accent,
-            todayContentColor = theme.accent,
-            todayDateBorderColor = theme.accent
-        )
-    ) {
-        DatePicker(state = pickerState)
     }
 }
 
