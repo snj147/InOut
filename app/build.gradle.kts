@@ -68,8 +68,11 @@ dependencies {
     // Google Play Billing
     implementation("com.android.billingclient:billing-ktx:7.0.0")
 
-    // Google Play In-App Update (Fixes InAppUpdateHelper.kt unresolved reference: AppUpdateType)
+    // Google Play In-App Update
     implementation("com.google.android.play:app-update-ktx:2.1.0")
+
+    // ML Kit Text Recognition (Fixes ReceiptScanner.kt unresolved reference: mlkit)
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.0")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
