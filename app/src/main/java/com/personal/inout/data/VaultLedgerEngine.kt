@@ -64,13 +64,8 @@ class VaultLedgerEngine(
     }
 
     suspend fun recordMovement(record: FlowRecord): VaultExecutionResult {
-        val nature = try {
-            MovementNature.valueOf(record.movementNature)
-        } catch (_: Exception) {
-            MovementNature.OUTFLOW
-        }
         return recordMovementInternal(
-            nature = nature,
+            nature = record.movementNature,
             sourcePocketId = record.sourcePocketId,
             targetPocketId = record.targetPocketId,
             amount = record.amount,
@@ -120,12 +115,13 @@ class VaultLedgerEngine(
                 sourcePocketId = sourcePocketId,
                 targetPocketId = targetPocketId,
                 amount = amount,
-                movementNature = nature.name,
+                movementNature = nature,
                 category = category.ifBlank { "General" },
                 note = note,
                 timestamp = timestamp,
                 isRecurring = false,
-                recurringCadence = "NONE"
+                recurringCadence = "NONE",
+                frequency = "NONE"
             )
 
             val id = flowRecordDao.insertFlowRecord(entity)
@@ -146,7 +142,8 @@ class VaultLedgerEngine(
         val scheduleRecord = templateRecord.copy(
             timestamp = firstDueDate,
             isRecurring = true,
-            recurringCadence = cadence.name
+            recurringCadence = cadence.name,
+            frequency = cadence.name
         )
         flowRecordDao.insertFlowRecord(scheduleRecord)
     }
@@ -157,7 +154,7 @@ class VaultLedgerEngine(
 
         for (schedule in activeSchedules) {
             val cadence = try {
-                CadenceType.valueOf(schedule.recurringCadence)
+                CadenceType.valueOf(if (schedule.frequency != "NONE") schedule.frequency else schedule.recurringCadence)
             } catch (_: Exception) {
                 CadenceType.NONE
             }
