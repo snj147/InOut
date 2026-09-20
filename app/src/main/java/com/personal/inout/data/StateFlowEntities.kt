@@ -27,11 +27,12 @@ data class FlowRecord(
     val sourcePocketId: String? = null,
     val targetPocketId: String? = null,
     val amount: Long,
-    val movementNature: MovementNature,
+    val movementNature: String, // String representation for clean database persistence
     val category: String,
     val note: String = "",
     val timestamp: Long = System.currentTimeMillis(),
-    val isRecurring: Boolean = false
+    val isRecurring: Boolean = false,
+    val recurringCadence: String = "NONE"
 )
 
 @Entity(tableName = "pockets")
@@ -41,8 +42,6 @@ data class PocketEntity(
     val pocketType: String, // LIQUID, CREDIT, PEER
     val subType: String? = null,
     val creditLimit: Long = 0L,
-    val billingCycleDay: Int = 1,
-    val gracePeriodDays: Int = 20,
     val isArchived: Boolean = false
 )
 
@@ -52,7 +51,5 @@ data class PocketBalanceSummary(
     val pocketType: String,
     val subType: String?,
     val creditLimit: Long,
-    val billingCycleDay: Int,
-    val gracePeriodDays: Int,
     val computedBalance: Long
 )
