@@ -16,14 +16,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.personal.inout.data.FlowRecord
 import com.personal.inout.data.PocketBalanceSummary
+import com.personal.inout.data.PocketType
+import com.personal.inout.data.VaultPocket
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AccountPocketsView(
-    pocketSummaries: List<PocketBalanceSummary>,
-    recurringRecords: List<FlowRecord>,
-    onTransact: (pocketId: String) -> Unit,
-    onStopRecurring: (recordId: Long) -> Unit,
+    pocketBalances: List<PocketBalanceSummary> = emptyList(),
+    rawPockets: List<VaultPocket> = emptyList(),
+    recurringSchedules: List<FlowRecord> = emptyList(),
+    isPrivacyMode: Boolean = false,
+    onTransactPocket: (pocketId: String) -> Unit = {},
+    onEditPocket: (pocket: VaultPocket) -> Unit = {},
+    onStopRecurring: (recordId: Long) -> Unit = {},
     onPocketLongClick: (pocketId: String) -> Unit = {}
 ) {
     var selectedRecordForStop by remember { mutableStateOf<FlowRecord?>(null) }
@@ -42,21 +47,21 @@ fun AccountPocketsView(
             ) {
                 Text("Cash & Bank Accounts", color = Color(0xFFCCCCCC), fontSize = 14.sp)
                 Text(
-                    "${pocketSummaries.count { it.pocketType == "LIQUID" }}",
+                    "${pocketBalances.count { it.pocketType == PocketType.LIQUID }}",
                     color = Color(0xFF666666),
                     fontSize = 13.sp
                 )
             }
         }
-        items(pocketSummaries.filter { it.pocketType == "LIQUID" }, key = { it.pocketId }) { pocket ->
+        items(pocketBalances.filter { it.pocketType == PocketType.LIQUID }, key = { it.pocketId }) { pocket ->
             PocketCard(
                 name = pocket.pocketName,
                 subtitle = "LIQUID",
-                balanceText = "₹${pocket.computedBalance}",
+                balanceText = if (isPrivacyMode) "••••" else "₹${pocket.computedBalance}",
                 actionLabel = "Transact",
                 actionColor = Color(0xFF332B22),
                 textColor = Color(0xFFE59C5C),
-                onActionClick = { onTransact(pocket.pocketId) },
+                onActionClick = { onTransactPocket(pocket.pocketId) },
                 onLongClick = { onPocketLongClick(pocket.pocketId) }
             )
         }
@@ -70,21 +75,21 @@ fun AccountPocketsView(
             ) {
                 Text("Cards & Loans (CC / Dues)", color = Color(0xFFCCCCCC), fontSize = 14.sp)
                 Text(
-                    "${pocketSummaries.count { it.pocketType == "CREDIT" }}",
+                    "${pocketBalances.count { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }}",
                     color = Color(0xFF666666),
                     fontSize = 13.sp
                 )
             }
         }
-        items(pocketSummaries.filter { it.pocketType == "CREDIT" }, key = { it.pocketId }) { card ->
+        items(pocketBalances.filter { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }, key = { it.pocketId }) { card ->
             PocketCard(
                 name = card.pocketName,
-                subtitle = "Avail: ₹${card.creditLimit + card.computedBalance} / Limit: ₹${card.creditLimit}",
-                balanceText = "₹${Math.abs(card.computedBalance)}",
+                subtitle = if (isPrivacyMode) "••••" else "Avail: ₹${card.creditLimit + card.computedBalance} / Limit: ₹${card.creditLimit}",
+                balanceText = if (isPrivacyMode) "••••" else "₹${Math.abs(card.computedBalance)}",
                 actionLabel = if (card.computedBalance >= 0) "Settled" else "Pay Due",
                 actionColor = Color(0xFF282522),
                 textColor = Color(0xFF9E9E9E),
-                onActionClick = { onTransact(card.pocketId) },
+                onActionClick = { onTransactPocket(card.pocketId) },
                 onLongClick = { onPocketLongClick(card.pocketId) }
             )
         }
@@ -98,22 +103,22 @@ fun AccountPocketsView(
             ) {
                 Text("People (Owed & Lent)", color = Color(0xFFCCCCCC), fontSize = 14.sp)
                 Text(
-                    "${pocketSummaries.count { it.pocketType == "PEER" || it.subType == "PEER" }}",
+                    "${pocketBalances.count { it.pocketType == PocketType.PEER || it.pocketType == PocketType.COUNTERPARTY || it.subType == "PEER" }}",
                     color = Color(0xFF666666),
                     fontSize = 13.sp
                 )
             }
         }
-        items(pocketSummaries.filter { it.pocketType == "PEER" || it.subType == "PEER" }, key = { it.pocketId }) { peer ->
+        items(pocketBalances.filter { it.pocketType == PocketType.PEER || it.pocketType == PocketType.COUNTERPARTY || it.subType == "PEER" }, key = { it.pocketId }) { peer ->
             val isOwedToYou = peer.computedBalance > 0
             PocketCard(
                 name = peer.pocketName,
                 subtitle = if (isOwedToYou) "They owe you" else "You owe them",
-                balanceText = "₹${Math.abs(peer.computedBalance)}",
+                balanceText = if (isPrivacyMode) "••••" else "₹${Math.abs(peer.computedBalance)}",
                 actionLabel = if (isOwedToYou) "Collect" else "Repay",
                 actionColor = if (isOwedToYou) Color(0xFF1E3326) else Color(0xFF332020),
                 textColor = if (isOwedToYou) Color(0xFF81C784) else Color(0xFFE57373),
-                onActionClick = { onTransact(peer.pocketId) },
+                onActionClick = { onTransactPocket(peer.pocketId) },
                 onLongClick = { onPocketLongClick(peer.pocketId) }
             )
         }
@@ -126,10 +131,10 @@ fun AccountPocketsView(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("Active Recurring Schedules", color = Color(0xFFCCCCCC), fontSize = 14.sp)
-                Text("${recurringRecords.size}", color = Color(0xFF666666), fontSize = 13.sp)
+                Text("${recurringSchedules.size}", color = Color(0xFF666666), fontSize = 13.sp)
             }
         }
-        items(recurringRecords, key = { it.id }) { record ->
+        items(recurringSchedules, key = { it.id }) { record ->
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -155,8 +160,9 @@ fun AccountPocketsView(
                             fontWeight = FontWeight.Medium
                         )
                         Spacer(modifier = Modifier.height(2.dp))
+                        val freqText = if (record.frequency != "NONE") record.frequency else record.recurringCadence
                         Text(
-                            text = "Repeats ${record.recurringCadence} • ₹${record.amount}",
+                            text = if (isPrivacyMode) "Repeats $freqText • ₹••••" else "Repeats $freqText • ₹${record.amount}",
                             color = Color(0xFFE59C5C),
                             fontSize = 12.sp
                         )
