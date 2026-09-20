@@ -3,7 +3,7 @@ package com.personal.inout.data
 import kotlinx.coroutines.flow.first
 
 sealed class VaultExecutionResult {
-    object Success : VaultExecutionResult()
+    data class Success(val summary: String) : VaultExecutionResult()
     data class OverdraftError(val message: String) : VaultExecutionResult()
 }
 
@@ -16,6 +16,7 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
         amount: Double,
         category: String,
         note: String,
+        timestamp: Long = System.currentTimeMillis(),
         autoSplitEnabled: Boolean = false
     ): VaultExecutionResult {
         if (amount <= 0.0) {
@@ -25,7 +26,7 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
         val allSummaries = dao.observePocketBalances().first()
         val liquidPockets = allSummaries.filter { it.pocketType == PocketType.LIQUID }
 
-        // 1. TRANSFERS: Source must have balance >= amount
+        // 1. TRANSFERS
         if (nature == MovementNature.TRANSFER) {
             if (sourcePocketId == null || targetPocketId == null) {
                 return VaultExecutionResult.OverdraftError("Select valid source and destination accounts")
@@ -36,7 +37,7 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
             val srcSummary = liquidPockets.firstOrNull { it.pocketId == sourcePocketId }
             val available = srcSummary?.currentBalance ?: 0.0
             if (available < amount) {
-                return VaultExecutionResult.OverdraftError("Cannot transfer ₹${amount.toInt()}. ${srcSummary?.name ?: "Source"} only has ₹${available.toInt()}.")
+                return VaultExecutionResult.OverdraftError("Transfer Blocked: ${srcSummary?.name ?: "Account"} only has ₹${available.toInt()}.")
             }
 
             dao.insertFlowRecord(
@@ -46,13 +47,14 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
                     targetPocketId = targetPocketId,
                     amount = amount,
                     category = "Transfer",
-                    note = note.ifBlank { "Account Transfer" }
+                    note = note.ifBlank { "Account Transfer" },
+                    timestamp = timestamp
                 )
             )
-            return VaultExecutionResult.Success
+            return VaultExecutionResult.Success("Transferred ₹${amount.toInt()}")
         }
 
-        // 2. OUTFLOW (SPENT), CARD PAYMENT, PEER LEND, PEER REPAY: Strict balance validation
+        // 2. CASH OUTFLOWS (SPENT, CARD PAYMENT, PEER LEND, PEER REPAY)
         val isSpendingCash = nature in listOf(
             MovementNature.OUTFLOW,
             MovementNature.CARD_PAYMENT,
@@ -67,13 +69,12 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
 
                 if (available < amount) {
                     if (!autoSplitEnabled) {
-                        return VaultExecutionResult.OverdraftError("Insufficient balance. ${srcSummary.name} has ₹${available.toInt()}, cannot debit ₹${amount.toInt()}.")
+                        return VaultExecutionResult.OverdraftError("Overdraft Blocked: ${srcSummary.name} has ₹${available.toInt()}, cannot debit ₹${amount.toInt()}.")
                     }
 
-                    // Auto-Split execution across other bank accounts
                     val totalCombinedLiquid = liquidPockets.sumOf { it.currentBalance }
                     if (totalCombinedLiquid < amount) {
-                        return VaultExecutionResult.OverdraftError("Combined balance across all accounts is only ₹${totalCombinedLiquid.toInt()}. Transaction blocked.")
+                        return VaultExecutionResult.OverdraftError("Combined bank balance is only ₹${totalCombinedLiquid.toInt()}. Transaction blocked.")
                     }
 
                     var remaining = amount
@@ -85,7 +86,8 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
                                 targetPocketId = targetPocketId,
                                 amount = available,
                                 category = category,
-                                note = "$note (${srcSummary.name})"
+                                note = "$note (${srcSummary.name})",
+                                timestamp = timestamp
                             )
                         )
                         remaining -= available
@@ -105,12 +107,13 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
                                 targetPocketId = targetPocketId,
                                 amount = take,
                                 category = category,
-                                note = "$note (Auto-Split: ${other.name})"
+                                note = "$note (Auto-Split: ${other.name})",
+                                timestamp = timestamp
                             )
                         )
                         remaining -= take
                     }
-                    return VaultExecutionResult.Success
+                    return VaultExecutionResult.Success("Auto-Split completed across accounts for ₹${amount.toInt()}")
                 }
             }
         }
@@ -123,9 +126,10 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
                 targetPocketId = targetPocketId,
                 amount = amount,
                 category = category,
-                note = note
+                note = note,
+                timestamp = timestamp
             )
         )
-        return VaultExecutionResult.Success
+        return VaultExecutionResult.Success("Committed ₹${amount.toInt()} ($category)")
     }
 }
