@@ -31,6 +31,7 @@ fun AccountPocketsView(
     pocketBalances: List<PocketBalanceSummary>,
     rawPockets: List<VaultPocket>,
     isPrivacyMode: Boolean,
+    onTransactPocket: (VaultPocket) -> Unit,
     onEditPocket: (VaultPocket) -> Unit,
     onDeletePocketSafe: (VaultPocket, Double) -> Unit,
     onRecordCardSettlement: (creditPocketId: Long, liquidPocketId: Long, amount: Double) -> Unit,
@@ -51,7 +52,7 @@ fun AccountPocketsView(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp)
     ) {
-        // Cash & Bank
+        // Cash & Bank (Transact action pill)
         item {
             AccountSectionHeader(title = "Cash & Bank Accounts", count = cashAndBank.size, theme = theme)
         }
@@ -62,9 +63,9 @@ fun AccountPocketsView(
                 isPrivacyMode = isPrivacyMode,
                 theme = theme,
                 onLongPress = { raw?.let { selectedPocketForMenu = it to acc.currentBalance } },
-                actionLabel = "Edit",
+                actionLabel = "Transact",
                 actionColor = theme.accent,
-                onActionClick = { raw?.let { onEditPocket(it) } }
+                onActionClick = { raw?.let { onTransactPocket(it) } }
             )
         }
 
@@ -116,7 +117,7 @@ fun AccountPocketsView(
         }
     }
 
-    // Long Press Context Menu
+    // Context Menu for Long-Press
     selectedPocketForMenu?.let { (pocket, balance) ->
         AlertDialog(
             containerColor = theme.surface,
@@ -237,7 +238,6 @@ private fun AccountCardRow(
                     fontSize = 14.sp
                 )
 
-                // Dedicated standalone clickable pill so touch events don't clash with Card
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
@@ -319,10 +319,6 @@ private fun PeerActionDialog(
     var amount by remember { mutableStateOf("") }
     val net = peer.currentBalance
 
-    // Fixed logic for Neutral (0), Positive, and Negative accounts:
-    // 1. Balance = 0: "Lend" (you give) or "Borrow" (you take)
-    // 2. Balance > 0: "Collect" (they return) or "Lend More" (you give more)
-    // 3. Balance < 0: "Repay" (you return) or "Borrow More" (you take more)
     val pairOptions = remember(net) {
         when {
             net == 0.0 -> listOf(MovementNature.PEER_LEND to "Lend", MovementNature.PEER_BORROW to "Borrow")
