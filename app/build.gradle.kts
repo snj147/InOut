@@ -45,19 +45,20 @@ android {
         kotlinCompilerExtensionVersion = "1.5.14"
     }
 
-    // Modern Android Gradle Plugin syntax for keeping .tflite uncompressed in APK
     androidResources {
         noCompress += "tflite"
     }
 }
 
+kapt {
+    correctErrorTypes = true
+}
+
 dependencies {
-    // AndroidX & Lifecycle
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
     implementation("androidx.activity:activity-compose:1.9.1")
 
-    // Compose (BOM ensures aligned versions)
     val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
     implementation(composeBom)
     implementation("androidx.compose.ui:ui")
@@ -72,10 +73,8 @@ dependencies {
     implementation("androidx.room:room-ktx:$roomVersion")
     kapt("androidx.room:room-compiler:$roomVersion")
 
-    // TensorFlow Lite Official Runtime
-    implementation("org.tensorflow:tensorflow-lite:2.14.0")
+    // TensorFlow Lite / LiteRT (Clean single dependency avoiding duplicate manifest namespace)
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
 
-    // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }
