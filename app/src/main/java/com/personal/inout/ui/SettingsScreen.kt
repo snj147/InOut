@@ -1,277 +1,164 @@
-package com.personal.inout.ui
+package com.inout.vault.ui
 
-import android.content.Context
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
 fun SettingsScreen(
-    currentTheme: AppThemeMode,
-    configuredDailyBurn: Double,
-    isProUser: Boolean,
-    onSelectTheme: (AppThemeMode) -> Unit,
-    onUpdateDailyBurn: (Double) -> Unit,
-    onTriggerProPurchase: () -> Unit,
-    onExportPdfDossier: () -> Unit,
-    onExportCsv: () -> Unit,
-    onClearLedger: () -> Unit
+    burnTarget: Long,
+    onBurnTargetChange: (Long) -> Unit,
+    autoSplitEnabled: Boolean,
+    onAutoSplitToggle: (Boolean) -> Unit,
+    cloudVisionEnabled: Boolean,
+    onCloudVisionToggle: (Boolean) -> Unit,
+    onExportPdf: () -> Unit,
+    onExportCsv: () -> Unit
 ) {
-    val theme = LocalThemeColors.current
-    val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE) }
+    val scrollState = rememberScrollState()
 
-    var useCloudVision by remember { mutableStateOf(prefs.getBoolean("use_cloud_vision", false)) }
-    var cloudApiKey by remember { mutableStateOf(prefs.getString("cloud_vision_api_key", "") ?: "") }
-    var showApiKeyDialog by remember { mutableStateOf(false) }
-    var autoSplitEnabled by remember { mutableStateOf(prefs.getBoolean("auto_split_debit", false)) }
-
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-        contentPadding = PaddingValues(top = 10.dp, bottom = 96.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(scrollState)
+            .padding(16.dp)
     ) {
-        item {
-            Text("Vault Configuration", color = theme.textBright, fontSize = 18.sp, fontWeight = FontWeight.Black)
-        }
+        Text("Settings & Ledger Config", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(20.dp))
 
-        // Theme Selection
-        item {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = theme.surface),
-                modifier = Modifier.fillMaxWidth()
+        // Burn Target Section
+        Text("Runway Configuration", color = Color(0xFFCCCCCC), fontSize = 14.sp)
+        Spacer(modifier = Modifier.height(8.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1C1A))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("THEME PALETTE", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(
-                            AppThemeMode.AMBER_OCHRE to "Amber",
-                            AppThemeMode.OLIVE_MATCHA to "Matcha",
-                            AppThemeMode.NORDIC_SLATE to "Slate"
-                        ).forEach { (mode, lbl) ->
-                            val isSel = currentTheme == mode
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (isSel) theme.accent else theme.surfaceAlt)
-                                    .clickable { onSelectTheme(mode) }
-                                    .padding(vertical = 8.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(lbl, color = if (isSel) theme.bg else theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
+                Column {
+                    Text("Daily Burn Target", color = Color.White, fontSize = 15.sp)
+                    Text("Calculates daily survival runway", color = Color(0xFF888888), fontSize = 12.sp)
                 }
+                Text("₹$burnTarget/day", color = Color(0xFFE59C5C), fontSize = 15.sp, fontWeight = FontWeight.Bold)
             }
         }
 
-        // Auto-Split Across Bank Accounts
-        item {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = theme.surface),
-                modifier = Modifier.fillMaxWidth()
-            ) {
+        Spacer(modifier = Modifier.height(20.dp))
+
+        // Toggles Section
+        Text("Preferences & Automation", color = Color(0xFFCCCCCC), fontSize = 14.sp)
+        Spacer(modifier = Modifier.height(8.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1C1A))
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
                 Row(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Auto-Split Cross-Account Debit", color = theme.textBright, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                        Text(
-                            "Automatically debit secondary bank accounts when primary account has insufficient balance.",
-                            color = theme.textMuted,
-                            fontSize = 11.sp
-                        )
+                        Text("Auto-Split Cross Account Debit", color = Color.White, fontSize = 15.sp)
+                        Text("Allows overdraft split across liquid accounts", color = Color(0xFF888888), fontSize = 12.sp)
                     }
                     Switch(
                         checked = autoSplitEnabled,
-                        onCheckedChange = { checked ->
-                            autoSplitEnabled = checked
-                            prefs.edit().putBoolean("auto_split_debit", checked).apply()
-                        },
-                        colors = SwitchDefaults.colors(checkedThumbColor = theme.bg, checkedTrackColor = theme.accent)
+                        onCheckedChange = onAutoSplitToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFF1C1917),
+                            checkedTrackColor = Color(0xFFE59C5C)
+                        )
+                    )
+                }
+
+                HorizontalDivider(color = Color(0xFF2B2826), thickness = 1.dp, modifier = Modifier.padding(vertical = 12.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Cloud Vision Assist", color = Color.White, fontSize = 15.sp)
+                        Text("Off by default (App uses 100% offline ML Kit)", color = Color(0xFF888888), fontSize = 12.sp)
+                    }
+                    Switch(
+                        checked = cloudVisionEnabled,
+                        onCheckedChange = onCloudVisionToggle,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color(0xFF1C1917),
+                            checkedTrackColor = Color(0xFFE59C5C)
+                        )
                     )
                 }
             }
         }
 
-        // Google Cloud Vision Assist
-        item {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = theme.surface),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Google Cloud Vision API", color = theme.textBright, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                            Text(
-                                "Enhanced cloud OCR for damaged receipts. Default is 100% offline on-device.",
-                                color = theme.textMuted,
-                                fontSize = 10.5.sp
-                            )
-                        }
-                        Switch(
-                            checked = useCloudVision,
-                            onCheckedChange = { checked ->
-                                useCloudVision = checked
-                                prefs.edit().putBoolean("use_cloud_vision", checked).apply()
-                                if (checked && cloudApiKey.isBlank()) {
-                                    showApiKeyDialog = true
-                                }
-                            },
-                            colors = SwitchDefaults.colors(checkedThumbColor = theme.bg, checkedTrackColor = theme.accent)
-                        )
-                    }
+        Spacer(modifier = Modifier.height(20.dp))
 
-                    if (useCloudVision) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(theme.surfaceAlt)
-                                .clickable { showApiKeyDialog = true }
-                                .padding(10.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = if (cloudApiKey.isNotBlank()) "Key: ••••••••••••${cloudApiKey.takeLast(4)}" else "Set Google Cloud API Key →",
-                                color = theme.accent,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Icon(Icons.Default.VpnKey, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
-                        }
-                    }
-                }
-            }
-        }
-
-        // Daily Burn Rate
-        item {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = theme.surface),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("DAILY RUNWAY BURN TARGET", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(300.0, 450.0, 600.0, 1000.0).forEach { rate ->
-                            val isSel = configuredDailyBurn == rate
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (isSel) theme.accent else theme.surfaceAlt)
-                                    .clickable { onUpdateDailyBurn(rate) }
-                                    .padding(vertical = 8.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("₹${rate.toInt()}", color = if (isSel) theme.bg else theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Data & Exports
-        item {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = theme.surface),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("DATA & DOSSIERS", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = onExportCsv,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt)
-                        ) {
-                            Text("Export CSV", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                        }
-
-                        Button(
-                            onClick = onExportPdfDossier,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-                        ) {
-                            Text("PDF Dossier", color = theme.bg, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    OutlinedButton(
-                        onClick = onClearLedger,
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(8.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.mildRed)
-                    ) {
-                        Text("Clear All Ledger Entries", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-    }
-
-    if (showApiKeyDialog) {
-        var keyInput by remember { mutableStateOf(cloudApiKey) }
-        AlertDialog(
-            containerColor = theme.surface,
-            onDismissRequest = { showApiKeyDialog = false },
-            title = { Text("Google Cloud Vision API Key", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Enter your GCP Vision API key. When active, requests are made directly over HTTPS.", color = theme.textMuted, fontSize = 11.sp)
-                    CompactInputField(value = keyInput, onValueChange = { keyInput = it }, placeholder = "AIzaSy...")
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        cloudApiKey = keyInput.trim()
-                        prefs.edit().putString("cloud_vision_api_key", cloudApiKey).apply()
-                        showApiKeyDialog = false
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
+        // Direct One-Click Dossiers & Exports (No Radio Pre-selection)
+        Text("Data & Dossiers", color = Color(0xFFCCCCCC), fontSize = 14.sp)
+        Spacer(modifier = Modifier.height(8.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1C1A))
+        ) {
+            Column(modifier = Modifier.padding(8.dp)) {
+                // PDF Dossier
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onExportPdf() }
+                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Save Key", color = theme.bg, fontWeight = FontWeight.Bold)
+                    Column {
+                        Text("Export Dossier (PDF)", color = Color.White, fontSize = 15.sp)
+                        Text("Formatted financial statement & insights", color = Color(0xFF888888), fontSize = 12.sp)
+                    }
+                    Text("Export →", color = Color(0xFFE59C5C), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { showApiKeyDialog = false }) {
-                    Text("Cancel", color = theme.textMuted)
+
+                HorizontalDivider(color = Color(0xFF2B2826), thickness = 1.dp)
+
+                // CSV Ledger
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onExportCsv() }
+                        .padding(horizontal = 12.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Export Ledger (CSV)", color = Color.White, fontSize = 15.sp)
+                        Text("Raw spreadsheet data for backup or custom analysis", color = Color(0xFF888888), fontSize = 12.sp)
+                    }
+                    Text("Export →", color = Color(0xFFE59C5C), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
             }
-        )
+        }
+
+        Spacer(modifier = Modifier.height(48.dp))
     }
 }
