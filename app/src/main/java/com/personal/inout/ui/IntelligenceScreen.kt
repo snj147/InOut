@@ -28,20 +28,40 @@ fun IntelligenceScreen(
 ) {
     val theme = LocalThemeColors.current
 
-    // Micro-leak tracker: under ₹150
-    val microLeaks = remember(flowRecords) {
-        flowRecords.filter { it.nature == MovementNature.OUTFLOW && it.amount in 1.0..150.0 }
+    // ALL cash leaving your possession (Direct Spend + Loans Given + Debts Repaid)
+    val allOutflows = remember(flowRecords) {
+        flowRecords.filter {
+            it.nature in listOf(
+                MovementNature.OUTFLOW,
+                MovementNature.CARD_PAYMENT,
+                MovementNature.PEER_LEND,
+                MovementNature.PEER_REPAY
+            )
+        }
+    }
+
+    // Micro-leak tracker: Expenses under ₹250 (Coffee, fast deliveries, small UPIs)
+    val microLeaks = remember(allOutflows) {
+        allOutflows.filter { it.amount in 1.0..250.0 }
     }
     val totalMicroLeak = remember(microLeaks) { microLeaks.sumOf { it.amount } }
 
-    val categoryTotals = remember(flowRecords) {
-        flowRecords
-            .filter { it.nature == MovementNature.OUTFLOW }
-            .groupBy { it.category }
+    // Reconciled Category Breakdown (Guaranteed Rupee-for-Rupee Match with Dashboard Outflows)
+    val categoryTotals = remember(allOutflows) {
+        allOutflows
+            .groupBy { flow ->
+                when (flow.nature) {
+                    MovementNature.PEER_LEND -> "Peer Lending"
+                    MovementNature.PEER_REPAY -> "Peer Debt Repayment"
+                    MovementNature.CARD_PAYMENT -> "Credit Card Clearance"
+                    else -> flow.category.ifBlank { "General" }
+                }
+            }
             .mapValues { entry -> entry.value.sumOf { it.amount } }
             .toList()
             .sortedByDescending { it.second }
     }
+
     val totalSpent = remember(categoryTotals) { categoryTotals.sumOf { it.second }.coerceAtLeast(1.0) }
 
     val totalLiquid = remember(pocketBalances) {
@@ -57,7 +77,7 @@ fun IntelligenceScreen(
             .fillMaxSize()
             .padding(horizontal = 18.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
-        contentPadding = PaddingValues(top = 10.dp, bottom = 48.dp) // Clean padding, no overlapping FAB
+        contentPadding = PaddingValues(top = 10.dp, bottom = 48.dp)
     ) {
         item {
             Text(
@@ -116,7 +136,7 @@ fun IntelligenceScreen(
                     }
 
                     Text(
-                        "Silent daily micro-expenses under ₹150 (coffee, fast delivery charges, small UPIs).",
+                        "Silent daily micro-expenses under ₹250 (coffee, fast delivery charges, small UPIs).",
                         color = theme.textMuted,
                         fontSize = 11.sp
                     )
