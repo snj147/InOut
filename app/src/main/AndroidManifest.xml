@@ -13,7 +13,6 @@
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
 
-        <!-- Default Obsidian Launcher Activity -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -24,7 +23,6 @@
             </intent-filter>
         </activity>
 
-        <!-- VIP Gold Dynamic Icon Alias -->
         <activity-alias
             android:name=".MainActivityProGold"
             android:enabled="false"
@@ -38,7 +36,13 @@
             </intent-filter>
         </activity-alias>
 
-        <!-- 3 Tactical Home Widgets -->
+        <!-- Fast Natural Language Overlay for Widget -->
+        <activity
+            android:name=".widget.WidgetCommandActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:exported="true"
+            android:windowSoftInputMode="stateVisible|adjustResize" />
+
         <receiver
             android:name=".widget.SpeedDialWidgetProvider"
             android:exported="true">
