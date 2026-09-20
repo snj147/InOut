@@ -51,11 +51,11 @@ fun AccountPocketsView(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp)
     ) {
-        // Cash & Bank (Transact action pill)
+        // Cash & Bank
         item {
             AccountSectionHeader(title = "Cash & Bank Accounts", count = cashAndBank.size, theme = theme)
         }
-        items(cashAndBank, key = { it.pocketId }) { acc ->
+        items(cashAndBank, key = { "liquid_${it.pocketId}" }) { acc ->
             val raw = rawPockets.firstOrNull { it.id == acc.pocketId }
             AccountCardRow(
                 summary = acc,
@@ -72,7 +72,7 @@ fun AccountPocketsView(
         item {
             AccountSectionHeader(title = "Cards & Loans (CC / Dues)", count = creditAndLoans.size, theme = theme)
         }
-        items(creditAndLoans, key = { it.pocketId }) { card ->
+        items(creditAndLoans, key = { "credit_${it.pocketId}" }) { card ->
             val raw = rawPockets.firstOrNull { it.id == card.pocketId }
             val dues = card.currentBalance.coerceAtLeast(0.0)
             val available = (card.creditLimit - dues).coerceIn(0.0, card.creditLimit)
@@ -93,7 +93,7 @@ fun AccountPocketsView(
         item {
             AccountSectionHeader(title = "People (Owed & Lent)", count = people.size, theme = theme)
         }
-        items(people, key = { it.pocketId }) { peer ->
+        items(people, key = { "peer_${it.pocketId}" }) { peer ->
             val raw = rawPockets.firstOrNull { it.id == peer.pocketId }
             val net = peer.currentBalance
             val isOwedToYou = net > 0
@@ -115,12 +115,12 @@ fun AccountPocketsView(
             )
         }
 
-        // ACTIVE RECURRING SCHEDULES (Allows pausing/stopping salary or subscription rules)
+        // Active Recurring Schedules
         if (recurringSchedules.isNotEmpty()) {
             item {
                 AccountSectionHeader(title = "Active Recurring Schedules", count = recurringSchedules.size, theme = theme)
             }
-            items(recurringSchedules, key = { it.id }) { schedule ->
+            items(recurringSchedules, key = { "rec_${it.id}_${it.timestamp}" }) { schedule ->
                 Card(
                     modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)),
                     colors = CardDefaults.cardColors(containerColor = theme.surface)
@@ -259,7 +259,7 @@ private fun AccountCardRow(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(summary.name, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                Text(subLabel ?: summary.subType, color = theme.textMuted, fontSize = 11.sp)
+                Text(subLabel ?: summary.subType.ifBlank { "GENERAL" }, color = theme.textMuted, fontSize = 11.sp)
             }
 
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
