@@ -4,8 +4,18 @@ import android.content.SharedPreferences
 import java.util.Calendar
 
 sealed class VaultExecutionResult {
-    data class Success(val recordId: Long) : VaultExecutionResult()
-    data class Error(val message: String) : VaultExecutionResult()
+    data class Success(
+        val recordId: Long = 0L,
+        val summary: String = "Transaction recorded successfully"
+    ) : VaultExecutionResult()
+
+    data class OverdraftError(
+        val message: String
+    ) : VaultExecutionResult()
+
+    data class Error(
+        val message: String
+    ) : VaultExecutionResult()
 }
 
 class VaultLedgerEngine(
@@ -13,36 +23,128 @@ class VaultLedgerEngine(
     private val prefs: SharedPreferences
 ) {
 
-    // Restores recordMovement signature returning VaultExecutionResult
-    suspend fun recordMovement(record: FlowRecord): VaultExecutionResult {
-        return try {
-            val nature = try {
-                MovementNature.valueOf(record.movementNature)
-            } catch (_: Exception) {
-                MovementNature.OUTFLOW
-            }
+    // Overload 1: Named argument interface used directly by WidgetCommandActivity.kt
+    suspend fun recordMovement(
+        nature: MovementNature,
+        sourcePocketId: String? = null,
+        targetPocketId: String? = null,
+        amount: Long,
+        category: String,
+        note: String = "",
+        timestamp: Long = System.currentTimeMillis()
+    ): VaultExecutionResult {
+        return recordMovementInternal(
+            nature = nature,
+            sourcePocketId = sourcePocketId,
+            targetPocketId = targetPocketId,
+            amount = amount,
+            category = category,
+            note = note,
+            timestamp = timestamp
+        )
+    }
 
-            if (nature in listOf(MovementNature.OUTFLOW, MovementNature.CARD_PAYMENT, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
-                requireNotNull(record.sourcePocketId) { "Source account must be specified for outflows" }
-            }
-            if (nature in listOf(MovementNature.INFLOW, MovementNature.PEER_BORROW, MovementNature.PEER_COLLECT)) {
-                requireNotNull(record.targetPocketId) { "Target account must be specified for inflows" }
-            }
-            if (nature == MovementNature.TRANSFER) {
-                requireNotNull(record.sourcePocketId) { "Source account required for transfer" }
-                requireNotNull(record.targetPocketId) { "Destination account required for transfer" }
-                require(record.sourcePocketId != record.targetPocketId) { "Cannot transfer to the same account" }
-            }
-
-            val insertedId = flowRecordDao.insertFlowRecord(record)
-            VaultExecutionResult.Success(insertedId)
-        } catch (e: Exception) {
-            VaultExecutionResult.Error(e.message ?: "Transaction failed")
+    // Overload 2: String-based nature overload for loose typing callers
+    suspend fun recordMovement(
+        nature: String,
+        sourcePocketId: String? = null,
+        targetPocketId: String? = null,
+        amount: Long,
+        category: String,
+        note: String = "",
+        timestamp: Long = System.currentTimeMillis()
+    ): VaultExecutionResult {
+        val parsedNature = try {
+            MovementNature.valueOf(nature)
+        } catch (_: Exception) {
+            MovementNature.OUTFLOW
         }
+        return recordMovementInternal(
+            nature = parsedNature,
+            sourcePocketId = sourcePocketId,
+            targetPocketId = targetPocketId,
+            amount = amount,
+            category = category,
+            note = note,
+            timestamp = timestamp
+        )
+    }
+
+    // Overload 3: Full entity record overload
+    suspend fun recordMovement(record: FlowRecord): VaultExecutionResult {
+        val parsedNature = try {
+            MovementNature.valueOf(record.movementNature)
+        } catch (_: Exception) {
+            MovementNature.OUTFLOW
+        }
+        return recordMovementInternal(
+            nature = parsedNature,
+            sourcePocketId = record.sourcePocketId,
+            targetPocketId = record.targetPocketId,
+            amount = record.amount,
+            category = record.category,
+            note = record.note,
+            timestamp = record.timestamp
+        )
     }
 
     suspend fun executeMovement(record: FlowRecord) {
         recordMovement(record)
+    }
+
+    private suspend fun recordMovementInternal(
+        nature: MovementNature,
+        sourcePocketId: String?,
+        targetPocketId: String?,
+        amount: Long,
+        category: String,
+        note: String,
+        timestamp: Long
+    ): VaultExecutionResult {
+        return try {
+            // Validation
+            if (nature in listOf(MovementNature.OUTFLOW, MovementNature.CARD_PAYMENT, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
+                if (sourcePocketId.isNullOrBlank()) {
+                    return VaultExecutionResult.Error("Source account required for outflow")
+                }
+            }
+            if (nature in listOf(MovementNature.INFLOW, MovementNature.PEER_BORROW, MovementNature.PEER_COLLECT)) {
+                if (targetPocketId.isNullOrBlank()) {
+                    return VaultExecutionResult.Error("Target account required for inflow")
+                }
+            }
+            if (nature == MovementNature.TRANSFER) {
+                if (sourcePocketId.isNullOrBlank()) {
+                    return VaultExecutionResult.Error("Source account required for transfer")
+                }
+                if (targetPocketId.isNullOrBlank()) {
+                    return VaultExecutionResult.Error("Destination account required for transfer")
+                }
+                if (sourcePocketId == targetPocketId) {
+                    return VaultExecutionResult.Error("Cannot transfer to the same account")
+                }
+            }
+
+            val entity = FlowRecord(
+                sourcePocketId = sourcePocketId,
+                targetPocketId = targetPocketId,
+                amount = amount,
+                movementNature = nature.name,
+                category = category.ifBlank { "General" },
+                note = note,
+                timestamp = timestamp,
+                isRecurring = false,
+                recurringCadence = "NONE"
+            )
+
+            val id = flowRecordDao.insertFlowRecord(entity)
+            VaultExecutionResult.Success(
+                recordId = id,
+                summary = "₹$amount logged for ${entity.note.ifBlank { entity.category }}"
+            )
+        } catch (e: Exception) {
+            VaultExecutionResult.Error(e.message ?: "Failed to log transaction")
+        }
     }
 
     suspend fun registerRecurringMovement(
