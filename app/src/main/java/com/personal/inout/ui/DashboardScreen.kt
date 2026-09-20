@@ -6,7 +6,6 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
-import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -57,8 +56,13 @@ fun DashboardScreen(db: AppDatabase) {
     val alertManager = remember { VaultAlertManager() }
     val ledgerEngine = remember { VaultLedgerEngine(db.stateFlowDao()) }
 
+    // Run Recurring Catch-Up on app start
     LaunchedEffect(Unit) {
         activity?.let { InAppUpdateHelper.checkForUpdate(it) }
+        val generated = ledgerEngine.catchUpRecurringRules()
+        if (generated > 0) {
+            alertManager.showAlert("Auto-recorded $generated recurring transaction(s)", AlertType.SUCCESS)
+        }
     }
 
     val billingManager = remember { PlayBillingManager(context, scope) }
@@ -90,14 +94,19 @@ fun DashboardScreen(db: AppDatabase) {
 
     var selectedTab by remember { mutableStateOf(0) }
     var isPrivacyMode by remember { mutableStateOf(false) }
+
+    // HUD & Direct Account Selection
     var showCommandHud by remember { mutableStateOf(false) }
+    var selectedPocketIdForHud by remember { mutableStateOf<Long?>(null) }
     var hudInDialogError by remember { mutableStateOf<String?>(null) }
+
     var editingPocket by remember { mutableStateOf<VaultPocket?>(null) }
+    var editingFlowRecord by remember { mutableStateOf<FlowRecord?>(null) }
     var showCreatePocketDialog by remember { mutableStateOf(false) }
     var showAllRecordsSheet by remember { mutableStateOf(false) }
     var showMockPaywall by remember { mutableStateOf(false) }
 
-    // Quick Command Bar with Syntax-Only Placeholders
+    // Quick Command Bar (Centered Syntax Placeholders)
     var naturalLanguageInput by remember { mutableStateOf("") }
     val placeholderHints = listOf(
         "Spent [Amount] on [Item]",
@@ -116,22 +125,30 @@ fun DashboardScreen(db: AppDatabase) {
 
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
+    var ocrCandidateAmounts by remember { mutableStateOf<List<Double>>(emptyList()) }
 
-    val cameraSnapLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap: Bitmap? ->
-        if (bitmap != null) {
-            scope.launch {
-                try {
-                    val parsed = ReceiptScanner.processReceiptBitmap(bitmap)
-                    ocrPrefilledNote = parsed.merchant
-                    ocrPrefilledAmount = parsed.total
-                    hudInDialogError = null
-                    showCommandHud = true
-                    alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
-                } catch (e: Exception) {
-                    alertManager.showAlert("OCR Error: ${e.localizedMessage}", AlertType.ERROR)
-                }
+    fun processReceiptResult(bitmap: Bitmap) {
+        scope.launch {
+            try {
+                val useCloud = prefs.getBoolean("use_cloud_vision", false)
+                val cloudKey = prefs.getString("cloud_vision_api_key", "") ?: ""
+                val parsed = ReceiptScanner.processReceiptBitmap(bitmap, useCloud, cloudKey)
+
+                ocrPrefilledNote = parsed.merchant
+                ocrPrefilledAmount = parsed.total
+                ocrCandidateAmounts = parsed.candidateAmounts
+                hudInDialogError = null
+                selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
+                showCommandHud = true
+                alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
+            } catch (e: Exception) {
+                alertManager.showAlert("Receipt OCR Error: ${e.localizedMessage}", AlertType.ERROR)
             }
         }
+    }
+
+    val cameraSnapLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap: Bitmap? ->
+        if (bitmap != null) processReceiptResult(bitmap)
     }
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -143,14 +160,19 @@ fun DashboardScreen(db: AppDatabase) {
         if (uri != null) {
             scope.launch {
                 try {
-                    val parsed = ReceiptScanner.processReceipt(context, uri)
+                    val useCloud = prefs.getBoolean("use_cloud_vision", false)
+                    val cloudKey = prefs.getString("cloud_vision_api_key", "") ?: ""
+                    val parsed = ReceiptScanner.processReceipt(context, uri, useCloud, cloudKey)
+
                     ocrPrefilledNote = parsed.merchant
                     ocrPrefilledAmount = parsed.total
+                    ocrCandidateAmounts = parsed.candidateAmounts
                     hudInDialogError = null
+                    selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
                     showCommandHud = true
                     alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
                 } catch (e: Exception) {
-                    alertManager.showAlert("Receipt Error: ${e.localizedMessage}", AlertType.ERROR)
+                    alertManager.showAlert("Receipt Parse Error: ${e.localizedMessage}", AlertType.ERROR)
                 }
             }
         }
@@ -202,7 +224,7 @@ fun DashboardScreen(db: AppDatabase) {
                 }
             }
         } else {
-            alertManager.showAlert("Action word missing. Start with: Spent, Lent, Got, Borrowed", AlertType.WARNING)
+            alertManager.showAlert("Action missing. Start with: Spent, Lent, Got, Borrowed", AlertType.WARNING)
         }
     }
 
@@ -266,7 +288,9 @@ fun DashboardScreen(db: AppDatabase) {
                                 } else {
                                     ocrPrefilledNote = ""
                                     ocrPrefilledAmount = null
+                                    ocrCandidateAmounts = emptyList()
                                     hudInDialogError = null
+                                    selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
                                     showCommandHud = true
                                 }
                             },
@@ -298,7 +322,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     )
                                 }
 
-                                // Quick Command Bar with Centered Disappearing Placeholders
+                                // Quick Command Terminal
                                 item {
                                     Card(
                                         shape = RoundedCornerShape(14.dp),
@@ -359,7 +383,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
-                                // Receipt Scan Buttons
+                                // OCR Scan Buttons
                                 item {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -430,7 +454,12 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 } else {
                                     items(flowRecords.take(8), key = { it.id }) { flow ->
-                                        FlowRecordDisplayRow(flow = flow, isPrivacyMode = isPrivacyMode, theme = theme)
+                                        FlowRecordDisplayRow(
+                                            flow = flow,
+                                            isPrivacyMode = isPrivacyMode,
+                                            theme = theme,
+                                            onClick = { editingFlowRecord = flow }
+                                        )
                                         Divider(color = theme.surfaceAlt.copy(alpha = 0.5f), thickness = 0.5.dp)
                                     }
                                 }
@@ -441,6 +470,14 @@ fun DashboardScreen(db: AppDatabase) {
                             pocketBalances = pocketBalances,
                             rawPockets = rawPockets,
                             isPrivacyMode = isPrivacyMode,
+                            onTransactPocket = { pocket ->
+                                selectedPocketIdForHud = pocket.id
+                                ocrPrefilledNote = ""
+                                ocrPrefilledAmount = null
+                                ocrCandidateAmounts = emptyList()
+                                hudInDialogError = null
+                                showCommandHud = true
+                            },
                             onEditPocket = { editingPocket = it },
                             onDeletePocketSafe = { pocket, balance ->
                                 if (balance != 0.0) {
@@ -550,12 +587,12 @@ fun DashboardScreen(db: AppDatabase) {
                 }
 
                 if (showCommandHud) {
-                    val defaultLiquidId = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
                     FloatingCommandHud(
                         activePockets = rawPockets,
-                        prefilledPocketId = defaultLiquidId,
+                        prefilledPocketId = selectedPocketIdForHud,
                         prefilledNote = ocrPrefilledNote,
                         prefilledAmount = ocrPrefilledAmount,
+                        candidateAmounts = ocrCandidateAmounts,
                         inDialogErrorMessage = hudInDialogError,
                         onDismiss = {
                             showCommandHud = false
@@ -572,7 +609,9 @@ fun DashboardScreen(db: AppDatabase) {
                                     category = cat,
                                     note = note,
                                     timestamp = date,
-                                    autoSplitEnabled = autoSplit
+                                    autoSplitEnabled = autoSplit,
+                                    isRecurring = isRec,
+                                    frequency = freq
                                 )) {
                                     is VaultExecutionResult.OverdraftError -> {
                                         hudInDialogError = res.message
@@ -584,6 +623,31 @@ fun DashboardScreen(db: AppDatabase) {
                                         alertManager.showAlert(res.summary, AlertType.SUCCESS)
                                     }
                                 }
+                            }
+                        }
+                    )
+                }
+
+                // In-Place Transaction Editor Sheet
+                editingFlowRecord?.let { flow ->
+                    EditTransactionDialog(
+                        record = flow,
+                        theme = theme,
+                        onDismiss = { editingFlowRecord = null },
+                        onSave = { updatedCategory, updatedNote ->
+                            scope.launch {
+                                db.stateFlowDao().insertFlowRecord(
+                                    flow.copy(category = updatedCategory, note = updatedNote)
+                                )
+                                editingFlowRecord = null
+                                alertManager.showAlert("Transaction updated", AlertType.SUCCESS)
+                            }
+                        },
+                        onDelete = {
+                            scope.launch {
+                                db.stateFlowDao().deleteFlowRecord(flow.id)
+                                editingFlowRecord = null
+                                alertManager.showAlert("Transaction deleted and balance restored", AlertType.SUCCESS)
                             }
                         }
                     )
@@ -671,7 +735,7 @@ fun DashboardScreen(db: AppDatabase) {
                 }
             }
 
-            // Non-intrusive floating top banner overlay (no layout shifting)
+            // Top Alert Floating Banner
             VaultFloatingTopOverlay(alertManager = alertManager, theme = theme)
         }
     }
@@ -739,13 +803,22 @@ private fun CleanVaultHeader(
 }
 
 @Composable
-private fun FlowRecordDisplayRow(flow: FlowRecord, isPrivacyMode: Boolean, theme: ThemeColors) {
+private fun FlowRecordDisplayRow(
+    flow: FlowRecord,
+    isPrivacyMode: Boolean,
+    theme: ThemeColors,
+    onClick: () -> Unit
+) {
     val isOut = flow.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.CARD_PAYMENT)
     val flowColor = if (isOut) theme.mildRed else theme.mildGreen
     val dStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(flow.timestamp))
 
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable { onClick() }
+            .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -778,6 +851,63 @@ private fun FlowRecordDisplayRow(flow: FlowRecord, isPrivacyMode: Boolean, theme
             Text(dStr, color = theme.textMuted, fontSize = 10.sp)
         }
     }
+}
+
+@Composable
+private fun EditTransactionDialog(
+    record: FlowRecord,
+    theme: ThemeColors,
+    onDismiss: () -> Unit,
+    onSave: (category: String, note: String) -> Unit,
+    onDelete: () -> Unit
+) {
+    var note by remember { mutableStateOf(record.note) }
+    var category by remember { mutableStateOf(record.category) }
+
+    val categories = listOf("Food & Dining", "Groceries", "Transport", "Shopping", "Bills", "Health", "Leisure", "General", "Salary")
+
+    AlertDialog(
+        containerColor = theme.surface,
+        onDismissRequest = onDismiss,
+        title = { Text("Edit Entry", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Amount: ₹${record.amount.toInt()}", color = theme.textMuted, fontSize = 12.sp)
+                CompactInputField(value = note, onValueChange = { note = it }, placeholder = "Merchant / Note")
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    categories.take(4).forEach { cat ->
+                        val isSel = category == cat
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSel) theme.accent else theme.surfaceAlt)
+                                .clickable { category = cat }
+                                .padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(cat.split(" ").first(), color = if (isSel) theme.bg else theme.textBright, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(category, note) },
+                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
+            ) {
+                Text("Update", color = theme.bg, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onDelete) { Text("Delete", color = theme.mildRed) }
+                TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
+            }
+        }
+    )
 }
 
 @Composable
