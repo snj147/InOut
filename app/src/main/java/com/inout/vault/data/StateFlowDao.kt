@@ -1,4 +1,4 @@
-package com.inout.vault.data
+package com.personal.inout.data
 
 import androidx.room.*
 import kotlinx.coroutines.flow.Flow
@@ -36,9 +36,7 @@ interface StateFlowDao {
             pockets.creditLimit,
             COALESCE(SUM(
                 CASE 
-                    -- Future Gating: Inflows only calculate if timestamp <= :currentTime
                     WHEN flow_records.targetPocketId = pockets.pocketId AND flow_records.timestamp <= :currentTime THEN flow_records.amount
-                    -- Future Gating: Outflows only calculate if timestamp <= :currentTime
                     WHEN flow_records.sourcePocketId = pockets.pocketId AND flow_records.timestamp <= :currentTime THEN -flow_records.amount
                     ELSE 0 
                 END
@@ -51,14 +49,14 @@ interface StateFlowDao {
     fun getPocketBalanceSummaries(currentTime: Long = System.currentTimeMillis()): Flow<List<PocketBalanceSummary>>
 
     @Query("SELECT * FROM pockets WHERE isArchived = 0")
-    fun getAllActivePockets(): Flow<List<PocketEntity>>
+    fun getAllActivePockets(): Flow<List<VaultPocket>>
 
     @Query("SELECT * FROM pockets WHERE isArchived = 0")
-    suspend fun getActivePocketsSync(): List<PocketEntity>
+    suspend fun getActivePocketsSync(): List<VaultPocket>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertPocket(pocket: PocketEntity)
+    suspend fun insertPocket(pocket: VaultPocket)
 
     @Update
-    suspend fun updatePocket(pocket: PocketEntity)
+    suspend fun updatePocket(pocket: VaultPocket)
 }
