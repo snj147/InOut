@@ -18,6 +18,9 @@ interface StateFlowDao {
     @Query("SELECT * FROM flow_records ORDER BY timestamp DESC")
     fun getAllFlowRecords(): Flow<List<FlowRecord>>
 
+    @Query("SELECT * FROM flow_records ORDER BY timestamp DESC")
+    fun observeAllFlowRecords(): Flow<List<FlowRecord>>
+
     @Query("SELECT * FROM flow_records WHERE isRecurring = 1 ORDER BY timestamp DESC")
     fun getRecurringSchedules(): Flow<List<FlowRecord>>
 
@@ -47,6 +50,27 @@ interface StateFlowDao {
         GROUP BY pockets.id
     """)
     fun getPocketBalanceSummaries(currentTime: Long = System.currentTimeMillis()): Flow<List<PocketBalanceSummary>>
+
+    @Query("""
+        SELECT 
+            CAST(pockets.id AS TEXT) AS pocketId,
+            pockets.name AS name,
+            pockets.pocketType AS pocketType,
+            pockets.subType AS subType,
+            pockets.creditLimit AS creditLimit,
+            COALESCE(SUM(
+                CASE 
+                    WHEN flow_records.targetPocketId = pockets.id AND flow_records.timestamp <= :currentTime THEN flow_records.amount
+                    WHEN flow_records.sourcePocketId = pockets.id AND flow_records.timestamp <= :currentTime THEN -flow_records.amount
+                    ELSE 0.0 
+                END
+            ), 0.0) AS computedBalance
+        FROM pockets
+        LEFT JOIN flow_records ON (pockets.id = flow_records.sourcePocketId OR pockets.id = flow_records.targetPocketId)
+        WHERE pockets.isArchived = 0
+        GROUP BY pockets.id
+    """)
+    fun observePocketBalances(currentTime: Long = System.currentTimeMillis()): Flow<List<PocketBalanceSummary>>
 
     @Query("SELECT * FROM pockets WHERE isArchived = 0")
     fun getAllActivePockets(): Flow<List<VaultPocket>>
