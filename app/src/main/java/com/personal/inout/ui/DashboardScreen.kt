@@ -104,7 +104,7 @@ fun DashboardScreen(db: AppDatabase) {
     var showAllRecordsSheet by remember { mutableStateOf(false) }
     var showMockPaywall by remember { mutableStateOf(false) }
 
-    // Quick Command Terminal (Centered Syntax Hints)
+    // Quick Command Terminal
     var naturalLanguageInput by remember { mutableStateOf("") }
     val placeholderHints = listOf(
         "Spent [Amount] on [Item]",
@@ -199,9 +199,13 @@ fun DashboardScreen(db: AppDatabase) {
                     }
                     if (personPocket == null) {
                         val newId = db.stateFlowDao().insertPocket(
-                            VaultPocket(name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY, subType = "PEER")
+                            VaultPocket(
+                                name = parsed.targetPersonName,
+                                pocketType = PocketType.COUNTERPARTY,
+                                subType = "PEER"
+                            )
                         )
-                        personPocket = VaultPocket(id = newId, name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY)
+                        personPocket = VaultPocket(id = newId, name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY, subType = "PEER")
                     }
 
                     if (parsed.nature == MovementNature.PEER_LEND) {
@@ -368,7 +372,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
-                                // Quick Command Bar (Centered Input & Placeholders)
+                                // Quick Command Terminal
                                 item {
                                     Card(
                                         shape = RoundedCornerShape(14.dp),
@@ -674,7 +678,7 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
 
-                // In-Place Transaction Editor (Room @Update)
+                // In-Place Transaction Editor: Does NOT close the sheet underneath
                 editingFlowRecord?.let { flow ->
                     EditTransactionDialog(
                         record = flow,
@@ -706,7 +710,7 @@ fun DashboardScreen(db: AppDatabase) {
                         isProUser = isProUnlocked,
                         onDismiss = { showAllRecordsSheet = false },
                         onEditRecord = { flow ->
-                            showAllRecordsSheet = false
+                            // Open editor dialog ON TOP of the sheet without dismissing it
                             editingFlowRecord = flow
                         },
                         onExportCsv = {
@@ -903,6 +907,7 @@ fun FlowRecordDisplayRow(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EditTransactionDialog(
     record: FlowRecord,
@@ -914,30 +919,44 @@ private fun EditTransactionDialog(
     var note by remember { mutableStateOf(record.note) }
     var category by remember { mutableStateOf(record.category) }
 
-    val categories = listOf("Food & Dining", "Groceries", "Transport", "Shopping", "Bills", "Health", "Leisure", "General", "Salary")
+    val allCategories = listOf(
+        "Food & Dining", "Groceries", "Transport", "Shopping", 
+        "Bills", "Health", "Leisure", "Salary", "General", "Peer Transfer"
+    )
 
     AlertDialog(
         containerColor = theme.surface,
         onDismissRequest = onDismiss,
         title = { Text("Edit Entry", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("Amount: ₹${record.amount.toInt()}", color = theme.textMuted, fontSize = 12.sp)
                 CompactInputField(value = note, onValueChange = { note = it }, placeholder = "Merchant / Note")
 
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    categories.take(4).forEach { cat ->
+                Text("Category", color = theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+
+                // 2-row wrapping flow containing all categories
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    allCategories.forEach { cat ->
                         val isSel = category == cat
                         Box(
                             modifier = Modifier
-                                .weight(1f)
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(if (isSel) theme.accent else theme.surfaceAlt)
                                 .clickable { category = cat }
-                                .padding(vertical = 6.dp),
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(cat.split(" ").first(), color = if (isSel) theme.bg else theme.textBright, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                cat,
+                                color = if (isSel) theme.bg else theme.textBright,
+                                fontSize = 10.5.sp,
+                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
+                            )
                         }
                     }
                 }
