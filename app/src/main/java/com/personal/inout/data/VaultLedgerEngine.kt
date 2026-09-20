@@ -20,24 +20,24 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
         autoSplitEnabled: Boolean = false
     ): VaultExecutionResult {
         if (amount <= 0.0) {
-            return VaultExecutionResult.OverdraftError("Amount must be greater than zero")
+            return VaultExecutionResult.OverdraftError("Amount must be greater than zero.")
         }
 
         val allSummaries = dao.observePocketBalances().first()
         val liquidPockets = allSummaries.filter { it.pocketType == PocketType.LIQUID }
 
-        // 1. TRANSFERS
+        // 1. TRANSFERS (Liquid -> Liquid)
         if (nature == MovementNature.TRANSFER) {
             if (sourcePocketId == null || targetPocketId == null) {
-                return VaultExecutionResult.OverdraftError("Select valid source and destination accounts")
+                return VaultExecutionResult.OverdraftError("Select valid source and destination accounts.")
             }
             if (sourcePocketId == targetPocketId) {
-                return VaultExecutionResult.OverdraftError("Cannot transfer to the same account")
+                return VaultExecutionResult.OverdraftError("Cannot transfer to the same account.")
             }
             val srcSummary = liquidPockets.firstOrNull { it.pocketId == sourcePocketId }
             val available = srcSummary?.currentBalance ?: 0.0
             if (available < amount) {
-                return VaultExecutionResult.OverdraftError("Transfer Blocked: ${srcSummary?.name ?: "Account"} only has ₹${available.toInt()}.")
+                return VaultExecutionResult.OverdraftError("Transfer Blocked: ${srcSummary?.name ?: "Source"} only has ₹${available.toInt()}.")
             }
 
             dao.insertFlowRecord(
@@ -54,7 +54,7 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
             return VaultExecutionResult.Success("Transferred ₹${amount.toInt()}")
         }
 
-        // 2. CASH OUTFLOWS (SPENT, CARD PAYMENT, PEER LEND, PEER REPAY)
+        // 2. CASH OUTFLOWS (Spent, Card Settlement, Peer Lending, Peer Repay)
         val isSpendingCash = nature in listOf(
             MovementNature.OUTFLOW,
             MovementNature.CARD_PAYMENT,
@@ -62,9 +62,19 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
             MovementNature.PEER_REPAY
         )
 
-        if (isSpendingCash && sourcePocketId != null) {
+        if (isSpendingCash) {
+            // STRICT RULE: Money cannot be spent out of thin air
+            if (sourcePocketId == null) {
+                return VaultExecutionResult.OverdraftError("No funding account available. Create or select a Cash/Bank account first.")
+            }
+
             val srcSummary = allSummaries.firstOrNull { it.pocketId == sourcePocketId }
-            if (srcSummary?.pocketType == PocketType.LIQUID) {
+            if (srcSummary == null) {
+                return VaultExecutionResult.OverdraftError("Selected funding account does not exist.")
+            }
+
+            // If spending from Bank/Cash, strictly verify balance
+            if (srcSummary.pocketType == PocketType.LIQUID) {
                 val available = srcSummary.currentBalance
 
                 if (available < amount) {
@@ -74,7 +84,7 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
 
                     val totalCombinedLiquid = liquidPockets.sumOf { it.currentBalance }
                     if (totalCombinedLiquid < amount) {
-                        return VaultExecutionResult.OverdraftError("Combined bank balance is only ₹${totalCombinedLiquid.toInt()}. Transaction blocked.")
+                        return VaultExecutionResult.OverdraftError("Combined bank balance (₹${totalCombinedLiquid.toInt()}) is insufficient for ₹${amount.toInt()}.")
                     }
 
                     var remaining = amount
@@ -113,12 +123,26 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
                         )
                         remaining -= take
                     }
-                    return VaultExecutionResult.Success("Auto-Split completed across accounts for ₹${amount.toInt()}")
+                    return VaultExecutionResult.Success("Auto-Split debit completed for ₹${amount.toInt()}")
                 }
             }
         }
 
-        // 3. INFLOW / DEFAULT COMMITS
+        // 3. INFLOWS & BORROWING (Inflow, Peer Borrow, Peer Collect)
+        val isInwardCash = nature in listOf(
+            MovementNature.INFLOW,
+            MovementNature.PEER_BORROW,
+            MovementNature.PEER_COLLECT
+        )
+
+        if (isInwardCash) {
+            // STRICT RULE: Cash received must have a destination liquid pocket
+            if (targetPocketId == null) {
+                return VaultExecutionResult.OverdraftError("No receiving account available. Create or select a Cash/Bank account first.")
+            }
+        }
+
+        // 4. COMMIT VERIFIED ENTRY
         dao.insertFlowRecord(
             FlowRecord(
                 nature = nature,
