@@ -15,7 +15,6 @@ class VaultLedgerEngine(
     suspend fun executeMovement(record: FlowRecord) {
         val nature = record.movementNature
 
-        // 1. Validation: Outflows require sourcePocketId; Inflows require targetPocketId
         if (nature in listOf(MovementNature.OUTFLOW, MovementNature.CARD_PAYMENT, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
             requireNotNull(record.sourcePocketId) { "Source account must be specified for outflows" }
         }
@@ -38,7 +37,7 @@ class VaultLedgerEngine(
     ) {
         val now = System.currentTimeMillis()
 
-        // 1. Decouple into independent recurring rule table
+        // 1. Decoupled rule creation with strong enum types
         val rule = RecurringRuleEntity(
             sourcePocketId = templateRecord.sourcePocketId,
             targetPocketId = templateRecord.targetPocketId,
@@ -46,13 +45,13 @@ class VaultLedgerEngine(
             movementNature = templateRecord.movementNature,
             category = templateRecord.category,
             note = templateRecord.note,
-            cadence = cadence.name,
+            cadence = cadence,
             nextExecutionTimestamp = if (firstDueDate <= now) calculateNextOccurrence(firstDueDate, cadence) else firstDueDate,
             isActive = true
         )
         recurringRuleDao.insertRule(rule)
 
-        // 2. Only write immediate record to ledger if date is current or past
+        // 2. Only write to ledger immediately if the chosen date is current or in the past
         if (firstDueDate <= now) {
             val concreteRecord = templateRecord.copy(
                 timestamp = firstDueDate,
@@ -68,7 +67,6 @@ class VaultLedgerEngine(
 
         for (rule in activeRules) {
             var nextDue = rule.nextExecutionTimestamp
-            val cadence = CadenceType.valueOf(rule.cadence)
             var hasPosted = false
 
             while (nextDue <= now) {
@@ -84,7 +82,7 @@ class VaultLedgerEngine(
                 )
                 flowRecordDao.insertFlowRecord(record)
                 hasPosted = true
-                nextDue = calculateNextOccurrence(nextDue, cadence)
+                nextDue = calculateNextOccurrence(nextDue, rule.cadence)
             }
 
             if (hasPosted) {
