@@ -33,7 +33,6 @@ fun AllTransactionsSearchSheet(
     val theme = LocalThemeColors.current
     var searchQuery by remember { mutableStateOf("") }
 
-    // skipPartiallyExpanded = true forces sheet to open to full height in a single tap!
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val filteredRecords = remember(flowRecords, searchQuery) {
@@ -107,7 +106,13 @@ fun AllTransactionsSearchSheet(
                     contentPadding = PaddingValues(bottom = 32.dp)
                 ) {
                     items(filteredRecords, key = { it.id }) { flow ->
-                        val isOut = flow.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.CARD_PAYMENT)
+                        // STRICT OUTFLOW CHECK: PEER_REPAY and PEER_LEND are Outflows (Red), while PEER_COLLECT and PEER_BORROW are Inflows (Green)
+                        val isOut = flow.nature in listOf(
+                            MovementNature.OUTFLOW,
+                            MovementNature.CARD_PAYMENT,
+                            MovementNature.PEER_LEND,
+                            MovementNature.PEER_REPAY
+                        )
                         val flowColor = if (isOut) theme.mildRed else theme.mildGreen
                         val dStr = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(flow.timestamp))
 
@@ -153,7 +158,12 @@ fun AllTransactionsSearchSheet(
                             }
 
                             val amtStr = if (isPrivacyMode) "₹ •••" else "${if (isOut) "-" else "+"}₹ ${String.format("%,.0f", flow.amount)}"
-                            Text(amtStr, color = flowColor, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(
+                                amtStr,
+                                color = flowColor,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
                         }
                     }
                 }
