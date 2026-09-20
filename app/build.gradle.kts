@@ -35,10 +35,6 @@ android {
 
     kotlinOptions {
         jvmTarget = "17"
-        freeCompilerArgs += listOf(
-            "-Xjvm-default=all",
-            "-opt-in=kotlin.RequiresOptIn"
-        )
     }
 
     buildFeatures {
@@ -56,11 +52,6 @@ android {
 
 kapt {
     correctErrorTypes = true
-    showProcessorStats = true
-    arguments {
-        arg("room.schemaLocation", "$projectDir/schemas")
-        arg("room.incremental", "true")
-    }
 }
 
 dependencies {
@@ -76,15 +67,14 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
-    // Room Database + Compiler
+    // Room Database + KAPT
     val roomVersion = "2.6.1"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     kapt("androidx.room:room-compiler:$roomVersion")
 
-    // TFLite Support
-    implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
+    // Official LiteRT / TensorFlow Lite Standalone Runtime (No namespace conflict)
+    implementation("com.google.ai.edge.litert:litert:1.0.1")
 
-    // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }
