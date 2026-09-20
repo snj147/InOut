@@ -1,24 +1,21 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
-    kotlin("kapt")
+    id("kotlin-kapt")
 }
 
 android {
-    namespace = "com.personal.inout"
+    namespace = "com.inout.vault"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.personal.inout"
+        applicationId = "com.inout.vault"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        vectorDrawables {
-            useSupportLibrary = true
-        }
     }
 
     buildTypes {
@@ -48,42 +45,34 @@ android {
         kotlinCompilerExtensionVersion = "1.5.14"
     }
 
-    packaging {
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        }
+    // Crucial: Prevents aapt from compressing the .tflite model file in assets,
+    // allowing Interpreter to memory-map it directly from the APK.
+    aaptOptions {
+        noCompress("tflite")
     }
 }
 
 dependencies {
-    implementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(platform(libs.androidx.compose.bom))
-
+    // AndroidX & Compose standard libraries
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.compose.material3)
 
-    // Jetpack Compose UI
-    implementation(libs.androidx.ui)
-    implementation(libs.androidx.ui.graphics)
-    implementation(libs.androidx.ui.tooling.preview)
-    implementation(libs.androidx.material3)
-    implementation(libs.androidx.material.icons.extended)
+    // Room Database + KAPT
+    val roomVersion = "2.6.1"
+    implementation("androidx.room:room-runtime:$roomVersion")
+    implementation("androidx.room:room-ktx:$roomVersion")
+    kapt("androidx.room:room-compiler:$roomVersion")
 
-    // Play Billing & App Lifecycle
-    implementation(libs.google.billing)
-    implementation(libs.google.play.update)
-    implementation(libs.google.play.review)
+    // On-Device LiteRT (TensorFlow Lite) Official Runtime
+    implementation("org.tensorflow.tensorflow-lite:2.14.0")
+    implementation("org.tensorflow.tensorflow-lite-support:0.4.4")
 
-    // ML Kit Receipt Scanner
-    implementation(libs.mlkit.text.recognition)
-
-    // Room Database
-    implementation(libs.androidx.room.runtime)
-    implementation(libs.androidx.room.ktx)
-    kapt(libs.androidx.room.compiler)
-
-    // Debugging Tooling
-    debugImplementation(libs.androidx.ui.tooling)
-    debugImplementation(libs.androidx.ui.test.manifest)
+    // Coroutines
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }
