@@ -2,6 +2,8 @@ package com.personal.inout.data
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import androidx.room.TypeConverter
+import androidx.room.TypeConverters
 
 enum class MovementNature {
     OUTFLOW,
@@ -22,12 +24,6 @@ enum class PocketType {
     COUNTERPARTY
 }
 
-// Global operator overloads allowing seamless comparison between String and Enums across UI
-operator fun String?.equals(other: PocketType): Boolean = this?.equals(other.name, ignoreCase = true) == true
-operator fun PocketType?.equals(other: String): Boolean = this?.name?.equals(other, ignoreCase = true) == true
-operator fun String?.equals(other: MovementNature): Boolean = this?.equals(other.name, ignoreCase = true) == true
-operator fun MovementNature?.equals(other: String): Boolean = this?.name?.equals(other, ignoreCase = true) == true
-
 enum class CadenceType {
     NONE,
     DAILY,
@@ -35,27 +31,52 @@ enum class CadenceType {
     MONTHLY
 }
 
+class FlowConverters {
+    @TypeConverter
+    fun fromMovementNature(nature: MovementNature?): String = nature?.name ?: MovementNature.OUTFLOW.name
+
+    @TypeConverter
+    fun toMovementNature(value: String?): MovementNature = try {
+        MovementNature.valueOf(value ?: MovementNature.OUTFLOW.name)
+    } catch (_: Exception) {
+        MovementNature.OUTFLOW
+    }
+
+    @TypeConverter
+    fun fromPocketType(type: PocketType?): String = type?.name ?: PocketType.LIQUID.name
+
+    @TypeConverter
+    fun toPocketType(value: String?): PocketType = try {
+        PocketType.valueOf(value ?: PocketType.LIQUID.name)
+    } catch (_: Exception) {
+        PocketType.LIQUID
+    }
+}
+
 @Entity(tableName = "flow_records")
+@TypeConverters(FlowConverters::class)
 data class FlowRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
     val sourcePocketId: Long? = null,
     val targetPocketId: Long? = null,
     val amount: Double = 0.0,
-    val movementNature: String = MovementNature.OUTFLOW.name,
+    val movementNature: MovementNature = MovementNature.OUTFLOW,
     val category: String = "",
     val note: String = "",
     val timestamp: Long = System.currentTimeMillis(),
     val isRecurring: Boolean = false,
-    val recurringCadence: String = "NONE"
+    val recurringCadence: String = "NONE",
+    val frequency: String = "NONE"
 ) {
-    val nature: String get() = movementNature
+    val nature: MovementNature get() = movementNature
 }
 
 @Entity(tableName = "pockets")
+@TypeConverters(FlowConverters::class)
 data class VaultPocket(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
     val name: String = "",
-    val pocketType: String = PocketType.LIQUID.name,
+    val pocketType: PocketType = PocketType.LIQUID,
     val subType: String? = null,
     val creditLimit: Double = 0.0,
     val isArchived: Boolean = false
@@ -64,7 +85,6 @@ data class VaultPocket(
     val pocketName: String get() = name
 }
 
-// Factory constructors
 @Suppress("FunctionName")
 fun VaultPocket(
     id: Long = 0L,
@@ -76,7 +96,7 @@ fun VaultPocket(
 ): VaultPocket = VaultPocket(
     id = id,
     name = name,
-    pocketType = pocketType.name,
+    pocketType = pocketType,
     subType = subType,
     creditLimit = creditLimit,
     isArchived = isArchived
@@ -88,15 +108,16 @@ fun VaultPocket(
     pocketType: PocketType,
     subType: String? = null
 ): VaultPocket = VaultPocket(
+    id = 0L,
     name = name,
-    pocketType = pocketType.name,
+    pocketType = pocketType,
     subType = subType
 )
 
 data class PocketBalanceSummary(
     val pocketId: String = "",
     val name: String = "",
-    val pocketType: String = "",
+    val pocketType: PocketType = PocketType.LIQUID,
     val subType: String? = null,
     val creditLimit: Double = 0.0,
     val computedBalance: Double = 0.0
