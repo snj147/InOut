@@ -2,19 +2,17 @@ package com.inout.vault.engine
 
 import android.content.SharedPreferences
 import com.inout.vault.data.*
-import com.inout.vault.data.dao.RecurringRuleDao
-import com.inout.vault.data.entity.RecurringRuleEntity
 import java.util.Calendar
 
 class VaultLedgerEngine(
     private val flowRecordDao: StateFlowDao,
-    private val recurringRuleDao: RecurringRuleDao,
     private val prefs: SharedPreferences
 ) {
 
     suspend fun executeMovement(record: FlowRecord) {
-        val nature = record.movementNature
+        val nature = MovementNature.valueOf(record.movementNature)
 
+        // Strict account assignment enforcement
         if (nature in listOf(MovementNature.OUTFLOW, MovementNature.CARD_PAYMENT, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
             requireNotNull(record.sourcePocketId) { "Source account must be specified for outflows" }
         }
@@ -35,58 +33,33 @@ class VaultLedgerEngine(
         cadence: CadenceType,
         firstDueDate: Long
     ) {
-        val now = System.currentTimeMillis()
-
-        // 1. Decoupled rule creation with strong enum types
-        val rule = RecurringRuleEntity(
-            sourcePocketId = templateRecord.sourcePocketId,
-            targetPocketId = templateRecord.targetPocketId,
-            amount = templateRecord.amount,
-            movementNature = templateRecord.movementNature,
-            category = templateRecord.category,
-            note = templateRecord.note,
-            cadence = cadence,
-            nextExecutionTimestamp = if (firstDueDate <= now) calculateNextOccurrence(firstDueDate, cadence) else firstDueDate,
-            isActive = true
+        // Enforces future gating: If firstDueDate is strictly > currentTimeMillis,
+        // it registers as a recurring schedule, but does NOT impact balance until that date passes.
+        val scheduleRecord = templateRecord.copy(
+            timestamp = firstDueDate,
+            isRecurring = true,
+            recurringCadence = cadence.name
         )
-        recurringRuleDao.insertRule(rule)
-
-        // 2. Only write to ledger immediately if the chosen date is current or in the past
-        if (firstDueDate <= now) {
-            val concreteRecord = templateRecord.copy(
-                timestamp = firstDueDate,
-                isRecurring = true
-            )
-            flowRecordDao.insertFlowRecord(concreteRecord)
-        }
+        flowRecordDao.insertFlowRecord(scheduleRecord)
     }
 
     suspend fun catchUpRecurringRules() {
         val now = System.currentTimeMillis()
-        val activeRules = recurringRuleDao.getActiveRules()
+        val activeSchedules = flowRecordDao.getActiveRecurringSchedulesSync()
 
-        for (rule in activeRules) {
-            var nextDue = rule.nextExecutionTimestamp
-            var hasPosted = false
+        for (schedule in activeSchedules) {
+            val cadence = CadenceType.valueOf(schedule.recurringCadence)
+            if (cadence == CadenceType.NONE) continue
 
+            var nextDue = calculateNextOccurrence(schedule.timestamp, cadence)
             while (nextDue <= now) {
-                val record = FlowRecord(
-                    sourcePocketId = rule.sourcePocketId,
-                    targetPocketId = rule.targetPocketId,
-                    amount = rule.amount,
-                    movementNature = rule.movementNature,
-                    category = rule.category,
-                    note = rule.note,
+                val execution = schedule.copy(
+                    id = 0,
                     timestamp = nextDue,
-                    isRecurring = true
+                    isRecurring = false
                 )
-                flowRecordDao.insertFlowRecord(record)
-                hasPosted = true
-                nextDue = calculateNextOccurrence(nextDue, rule.cadence)
-            }
-
-            if (hasPosted) {
-                recurringRuleDao.updateNextExecution(rule.id, nextDue)
+                flowRecordDao.insertFlowRecord(execution)
+                nextDue = calculateNextOccurrence(nextDue, cadence)
             }
         }
     }
