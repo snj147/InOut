@@ -12,6 +12,7 @@ data class ParsedCommand(
     val merchant: String,
     val matchedPocketId: Long?,
     val targetPersonName: String? = null,
+    val targetPocketId: Long? = null,
     val timestamp: Long = System.currentTimeMillis()
 )
 
@@ -30,7 +31,7 @@ object NaturalLanguageParser {
         val raw = input.trim()
         if (raw.isBlank()) return null
 
-        // 1. EXTRACT NUMERICAL AMOUNT (supports 2000, 2.5k, ₹450)
+        // 1. EXTRACT NUMERICAL AMOUNT
         var amount: Double? = null
         val kMatch = Regex("""(?i)(?:rs\.?|inr|₹)?\s*([0-9]+(?:\.[0-9]+)?)\s*k\b""").find(raw)
         if (kMatch != null) {
@@ -45,7 +46,7 @@ object NaturalLanguageParser {
 
         var workingText = raw
 
-        // 2. PARSE OPTIONAL DATE (on 25/08/2026, yesterday, today)
+        // 2. PARSE OPTIONAL DATE
         var parsedTimestamp = System.currentTimeMillis()
         val dateMatch = Regex("""(?i)\bon\s+([0-3]?[0-9][/\-.][0-1]?[0-9](?:[/\-.](?:20)?[0-9]{2})?)\b""").find(workingText)
         if (dateMatch != null) {
@@ -68,55 +69,82 @@ object NaturalLanguageParser {
             workingText = workingText.replace(Regex("""(?i)\byesterday\b"""), " ")
         }
 
-        // 3. ACTION VERB & INTENT CLASSIFICATION
+        // 3. ACTION VERB & INTENT DETECTION
         var detectedNature: MovementNature? = null
         var targetPerson: String? = null
+        var sourcePocketId: Long? = null
+        var destPocketId: Long? = null
 
-        // Peer Collection: "got 2000 from Rahul", "collected 2000 from Mahesh"
-        val fromPersonMatch = Regex("""(?i)\b(?:got|received|collected|collect)\s+.*?\bfrom\s+([A-Za-z0-9_-]+)""").find(workingText)
-        if (fromPersonMatch != null) {
-            detectedNature = MovementNature.PEER_COLLECT
-            targetPerson = fromPersonMatch.groupValues[1].trim()
-            workingText = workingText.replace(fromPersonMatch.value, " ")
-        } else if (Regex("""(?i)\b(lent|loaned|lend)\b""").containsMatchIn(workingText)) {
-            detectedNature = MovementNature.PEER_LEND
-            val pMatch = Regex("""(?i)\b(?:to\s+)?([A-Za-z0-9_-]+)""").find(
-                workingText.replace(Regex("""(?i)\b(lent|loaned|lend|rs\.?|inr|₹|[0-9]+(?:\.[0-9]+)?\s*k?)\b"""), " ").trim()
-            )
-            targetPerson = pMatch?.groupValues?.get(1)?.trim()
-        } else if (Regex("""(?i)\b(borrowed|borrow)\b""").containsMatchIn(workingText)) {
-            detectedNature = MovementNature.PEER_BORROW
-            val pMatch = Regex("""(?i)\b(?:from\s+)?([A-Za-z0-9_-]+)""").find(
-                workingText.replace(Regex("""(?i)\b(borrowed|borrow|rs\.?|inr|₹|[0-9]+(?:\.[0-9]+)?\s*k?)\b"""), " ").trim()
-            )
-            targetPerson = pMatch?.groupValues?.get(1)?.trim()
-        } else if (Regex("""(?i)\b(transferred|transfer|moved|sent)\b""").containsMatchIn(workingText)) {
+        val liquidPockets = activePockets.filter { it.pocketType == PocketType.LIQUID }
+
+        // A. Transfer: "Transferred 3000 from IDFC to SBI"
+        if (Regex("""(?i)\b(transferred|transfer|moved|sent)\b""").containsMatchIn(workingText)) {
             detectedNature = MovementNature.TRANSFER
-        } else if (Regex("""(?i)\b(spent|paid|gave|bought|spend|pay)\b""").containsMatchIn(workingText)) {
-            detectedNature = MovementNature.OUTFLOW
-        } else if (Regex("""(?i)\b(got|received|salary|earned|income|receive)\b""").containsMatchIn(workingText)) {
-            detectedNature = MovementNature.INFLOW
-        }
 
-        // STRICT ACTION VERB GATE: If no recognized action verb, abort
-        if (detectedNature == null) {
-            return null
-        }
-
-        // 4. MATCH LIQUID POCKET/ACCOUNT
-        var matchedPocket: VaultPocket? = null
-        for (pocket in activePockets.filter { it.pocketType == PocketType.LIQUID }) {
-            if (workingText.contains(pocket.name, ignoreCase = true)) {
-                matchedPocket = pocket
-                workingText = workingText.replace(pocket.name, " ", ignoreCase = true)
-                break
+            val transferRegex = Regex("""(?i)\bfrom\s+([A-Za-z0-9_-]+)\s+to\s+([A-Za-z0-9_-]+)""")
+            val match = transferRegex.find(workingText)
+            if (match != null) {
+                val srcName = match.groupValues[1].trim()
+                val tgtName = match.groupValues[2].trim()
+                sourcePocketId = liquidPockets.firstOrNull { it.name.equals(srcName, ignoreCase = true) }?.id
+                destPocketId = liquidPockets.firstOrNull { it.name.equals(tgtName, ignoreCase = true) }?.id
+                workingText = workingText.replace(match.value, " ")
+            } else {
+                for (pocket in liquidPockets) {
+                    if (workingText.contains(pocket.name, ignoreCase = true)) {
+                        if (sourcePocketId == null) {
+                            sourcePocketId = pocket.id
+                            workingText = workingText.replaceFirst(pocket.name, " ", ignoreCase = true)
+                        } else if (destPocketId == null && pocket.id != sourcePocketId) {
+                            destPocketId = pocket.id
+                            workingText = workingText.replaceFirst(pocket.name, " ", ignoreCase = true)
+                            break
+                        }
+                    }
+                }
             }
-        }
-        if (matchedPocket == null) {
-            matchedPocket = activePockets.firstOrNull { it.pocketType == PocketType.LIQUID }
+        } else {
+            // B. Peer Collection: "got 2000 from Rahul"
+            val fromPersonMatch = Regex("""(?i)\b(?:got|received|collected|collect)\s+.*?\bfrom\s+([A-Za-z0-9_-]+)""").find(workingText)
+            if (fromPersonMatch != null) {
+                detectedNature = MovementNature.PEER_COLLECT
+                targetPerson = fromPersonMatch.groupValues[1].trim()
+                workingText = workingText.replace(fromPersonMatch.value, " ")
+            } else if (Regex("""(?i)\b(lent|loaned|lend)\b""").containsMatchIn(workingText)) {
+                detectedNature = MovementNature.PEER_LEND
+                val pMatch = Regex("""(?i)\b(?:to\s+)?([A-Za-z0-9_-]+)""").find(
+                    workingText.replace(Regex("""(?i)\b(lent|loaned|lend|rs\.?|inr|₹|[0-9]+(?:\.[0-9]+)?\s*k?)\b"""), " ").trim()
+                )
+                targetPerson = pMatch?.groupValues?.get(1)?.trim()
+            } else if (Regex("""(?i)\b(borrowed|borrow)\b""").containsMatchIn(workingText)) {
+                detectedNature = MovementNature.PEER_BORROW
+                val pMatch = Regex("""(?i)\b(?:from\s+)?([A-Za-z0-9_-]+)""").find(
+                    workingText.replace(Regex("""(?i)\b(borrowed|borrow|rs\.?|inr|₹|[0-9]+(?:\.[0-9]+)?\s*k?)\b"""), " ").trim()
+                )
+                targetPerson = pMatch?.groupValues?.get(1)?.trim()
+            } else if (Regex("""(?i)\b(spent|paid|gave|bought|spend|pay)\b""").containsMatchIn(workingText)) {
+                detectedNature = MovementNature.OUTFLOW
+            } else if (Regex("""(?i)\b(got|received|salary|earned|income|receive)\b""").containsMatchIn(workingText)) {
+                detectedNature = MovementNature.INFLOW
+            }
+
+            if (detectedNature == null) return null
+
+            // Match single liquid pocket for non-transfer actions
+            var matchedPocket: VaultPocket? = null
+            for (pocket in liquidPockets) {
+                if (workingText.contains(pocket.name, ignoreCase = true)) {
+                    matchedPocket = pocket
+                    workingText = workingText.replace(pocket.name, " ", ignoreCase = true)
+                    break
+                }
+            }
+            sourcePocketId = matchedPocket?.id ?: liquidPockets.firstOrNull()?.id
         }
 
-        // 5. CATEGORY SELECTION
+        if (detectedNature == null) return null
+
+        // 4. CATEGORY EXTRACTION
         var matchedCategory = if (detectedNature == MovementNature.INFLOW) "Salary" else "General"
         if (detectedNature == MovementNature.OUTFLOW) {
             for ((category, keywords) in expenseCategoryKeywords) {
@@ -127,15 +155,15 @@ object NaturalLanguageParser {
             }
         }
 
-        // 6. CLEAN NOTE / MERCHANT
+        // 5. CLEAN NARRATION
         var cleanNote = workingText
             .replace(Regex("""(?i)\b(?:rs\.?|inr|₹|[0-9]+(?:\.[0-9]+)?\s*k?)\b"""), " ")
-            .replace(Regex("""(?i)\b(?:spent|paid|gave|bought|got|received|salary|lent|borrowed|collected|transferred|for|at|to|from|on|via|in|today|with)\b"""), " ")
+            .replace(Regex("""(?i)\b(?:spent|paid|gave|bought|got|received|salary|lent|borrowed|collected|transferred|transfer|moved|sent|for|at|to|from|on|via|in|today|with)\b"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
 
         if (cleanNote.isBlank()) {
-            cleanNote = targetPerson ?: if (detectedNature == MovementNature.INFLOW) "Income" else matchedCategory
+            cleanNote = targetPerson ?: if (detectedNature == MovementNature.INFLOW) "Income" else if (detectedNature == MovementNature.TRANSFER) "Account Transfer" else matchedCategory
         } else {
             cleanNote = cleanNote.split(" ").joinToString(" ") { it.replaceFirstChar { c -> c.uppercase() } }
         }
@@ -143,10 +171,11 @@ object NaturalLanguageParser {
         return ParsedCommand(
             amount = amount,
             nature = detectedNature,
-            category = if (targetPerson != null) "Peer Transfer" else matchedCategory,
+            category = if (targetPerson != null) "Peer Transfer" else if (detectedNature == MovementNature.TRANSFER) "Transfer" else matchedCategory,
             merchant = cleanNote,
-            matchedPocketId = matchedPocket?.id,
+            matchedPocketId = sourcePocketId,
             targetPersonName = targetPerson,
+            targetPocketId = destPocketId,
             timestamp = parsedTimestamp
         )
     }
