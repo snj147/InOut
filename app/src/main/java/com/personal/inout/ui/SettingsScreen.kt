@@ -61,7 +61,7 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(20.dp))
 
-        // Toggles Section
+        // Automation Toggles
         Text("Preferences & Automation", color = Color(0xFFCCCCCC), fontSize = 14.sp)
         Spacer(modifier = Modifier.height(8.dp))
         Card(
