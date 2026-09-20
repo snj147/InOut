@@ -37,8 +37,6 @@ fun AllTransactionsSearchSheet(
     var selectedCategoryFilter by remember { mutableStateOf("All") }
     var editingRecord by remember { mutableStateOf<FlowRecord?>(null) }
 
-    val categories = listOf("All", "Food & Dining", "Groceries", "Transport", "Shopping", "Bills", "Health", "Leisure", "Salary", "General", "Peer Transfer")
-
     val filteredRecords = remember(records, searchQuery, selectedCategoryFilter) {
         records.filter { record ->
             val matchesCategory = if (selectedCategoryFilter == "All") true else record.category.equals(selectedCategoryFilter, ignoreCase = true)
@@ -209,7 +207,7 @@ fun EditTransactionDialog(
                 Text("Category", color = Color(0xFFCCCCCC), fontSize = 13.sp)
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Aligned 3-column grid
+                // Fixed 3-column uniform grid
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(3),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
