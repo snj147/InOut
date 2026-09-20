@@ -22,6 +22,12 @@ enum class PocketType {
     COUNTERPARTY
 }
 
+// Global operator overloads allowing seamless comparison between String and Enums across UI
+operator fun String?.equals(other: PocketType): Boolean = this?.equals(other.name, ignoreCase = true) == true
+operator fun PocketType?.equals(other: String): Boolean = this?.name?.equals(other, ignoreCase = true) == true
+operator fun String?.equals(other: MovementNature): Boolean = this?.equals(other.name, ignoreCase = true) == true
+operator fun MovementNature?.equals(other: String): Boolean = this?.name?.equals(other, ignoreCase = true) == true
+
 enum class CadenceType {
     NONE,
     DAILY,
@@ -58,7 +64,7 @@ data class VaultPocket(
     val pocketName: String get() = name
 }
 
-// Factory function matching legacy parameter names (id, name, pocketType: PocketType)
+// Factory constructors
 @Suppress("FunctionName")
 fun VaultPocket(
     id: Long = 0L,
@@ -74,6 +80,17 @@ fun VaultPocket(
     subType = subType,
     creditLimit = creditLimit,
     isArchived = isArchived
+)
+
+@Suppress("FunctionName")
+fun VaultPocket(
+    name: String,
+    pocketType: PocketType,
+    subType: String? = null
+): VaultPocket = VaultPocket(
+    name = name,
+    pocketType = pocketType.name,
+    subType = subType
 )
 
 data class PocketBalanceSummary(
