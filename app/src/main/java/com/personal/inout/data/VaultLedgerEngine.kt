@@ -1,6 +1,7 @@
 package com.personal.inout.data
 
 import kotlinx.coroutines.flow.first
+import java.util.*
 
 sealed class VaultExecutionResult {
     data class Success(val summary: String) : VaultExecutionResult()
@@ -17,7 +18,9 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
         category: String,
         note: String,
         timestamp: Long = System.currentTimeMillis(),
-        autoSplitEnabled: Boolean = false
+        autoSplitEnabled: Boolean = false,
+        isRecurring: Boolean = false,
+        frequency: String = "NONE"
     ): VaultExecutionResult {
         if (amount <= 0.0) {
             return VaultExecutionResult.OverdraftError("Amount must be greater than zero.")
@@ -26,7 +29,7 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
         val allSummaries = dao.observePocketBalances().first()
         val liquidPockets = allSummaries.filter { it.pocketType == PocketType.LIQUID }
 
-        // 1. TRANSFERS (Liquid -> Liquid)
+        // 1. TRANSFERS
         if (nature == MovementNature.TRANSFER) {
             if (sourcePocketId == null || targetPocketId == null) {
                 return VaultExecutionResult.OverdraftError("Select valid source and destination accounts.")
@@ -48,7 +51,9 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
                     amount = amount,
                     category = "Transfer",
                     note = note.ifBlank { "Account Transfer" },
-                    timestamp = timestamp
+                    timestamp = timestamp,
+                    isRecurring = isRecurring,
+                    frequency = frequency
                 )
             )
             return VaultExecutionResult.Success("Transferred ₹${amount.toInt()}")
@@ -63,20 +68,15 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
         )
 
         if (isSpendingCash) {
-            // STRICT RULE: Money cannot be spent out of thin air
             if (sourcePocketId == null) {
-                return VaultExecutionResult.OverdraftError("No funding account available. Create or select a Cash/Bank account first.")
+                return VaultExecutionResult.OverdraftError("No funding account available. Select a Cash/Bank account first.")
             }
 
             val srcSummary = allSummaries.firstOrNull { it.pocketId == sourcePocketId }
-            if (srcSummary == null) {
-                return VaultExecutionResult.OverdraftError("Selected funding account does not exist.")
-            }
+                ?: return VaultExecutionResult.OverdraftError("Selected funding account does not exist.")
 
-            // If spending from Bank/Cash, strictly verify balance
             if (srcSummary.pocketType == PocketType.LIQUID) {
                 val available = srcSummary.currentBalance
-
                 if (available < amount) {
                     if (!autoSplitEnabled) {
                         return VaultExecutionResult.OverdraftError("Overdraft Blocked: ${srcSummary.name} has ₹${available.toInt()}, cannot debit ₹${amount.toInt()}.")
@@ -97,7 +97,9 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
                                 amount = available,
                                 category = category,
                                 note = "$note (${srcSummary.name})",
-                                timestamp = timestamp
+                                timestamp = timestamp,
+                                isRecurring = isRecurring,
+                                frequency = frequency
                             )
                         )
                         remaining -= available
@@ -118,7 +120,9 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
                                 amount = take,
                                 category = category,
                                 note = "$note (Auto-Split: ${other.name})",
-                                timestamp = timestamp
+                                timestamp = timestamp,
+                                isRecurring = isRecurring,
+                                frequency = frequency
                             )
                         )
                         remaining -= take
@@ -128,21 +132,12 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
             }
         }
 
-        // 3. INFLOWS & BORROWING (Inflow, Peer Borrow, Peer Collect)
-        val isInwardCash = nature in listOf(
-            MovementNature.INFLOW,
-            MovementNature.PEER_BORROW,
-            MovementNature.PEER_COLLECT
-        )
-
-        if (isInwardCash) {
-            // STRICT RULE: Cash received must have a destination liquid pocket
-            if (targetPocketId == null) {
-                return VaultExecutionResult.OverdraftError("No receiving account available. Create or select a Cash/Bank account first.")
-            }
+        // 3. INFLOWS & BORROWING
+        val isInwardCash = nature in listOf(MovementNature.INFLOW, MovementNature.PEER_BORROW, MovementNature.PEER_COLLECT)
+        if (isInwardCash && targetPocketId == null) {
+            return VaultExecutionResult.OverdraftError("No receiving account available. Select a Cash/Bank account first.")
         }
 
-        // 4. COMMIT VERIFIED ENTRY
         dao.insertFlowRecord(
             FlowRecord(
                 nature = nature,
@@ -151,9 +146,48 @@ class VaultLedgerEngine(private val dao: StateFlowDao) {
                 amount = amount,
                 category = category,
                 note = note,
-                timestamp = timestamp
+                timestamp = timestamp,
+                isRecurring = isRecurring,
+                frequency = frequency
             )
         )
         return VaultExecutionResult.Success("Committed ₹${amount.toInt()} ($category)")
+    }
+
+    // Automated Catch-Up Engine: Backfills missed recurring items on app start
+    suspend fun catchUpRecurringRules(): Int {
+        val records = dao.observeAllFlowRecords().first()
+        val recurringTemplates = records.filter { it.isRecurring && it.frequency != "NONE" }
+        var generatedCount = 0
+        val now = System.currentTimeMillis()
+
+        for (item in recurringTemplates) {
+            val stepMillis = when (item.frequency) {
+                "DAILY" -> 1000L * 60 * 60 * 24
+                "WEEKLY" -> 1000L * 60 * 60 * 24 * 7
+                "MONTHLY" -> 1000L * 60 * 60 * 24 * 30
+                else -> 0L
+            }
+            if (stepMillis == 0L) continue
+
+            // Find latest instance for this specific recurring schedule
+            val latestInstance = records
+                .filter { it.note == item.note && it.amount == item.amount && it.category == item.category }
+                .maxByOrNull { it.timestamp } ?: item
+
+            var nextDue = latestInstance.timestamp + stepMillis
+            while (nextDue <= now) {
+                dao.insertFlowRecord(
+                    latestInstance.copy(
+                        id = 0L,
+                        timestamp = nextDue,
+                        isRecurring = true
+                    )
+                )
+                generatedCount++
+                nextDue += stepMillis
+            }
+        }
+        return generatedCount
     }
 }
