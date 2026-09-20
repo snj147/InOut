@@ -1,6 +1,11 @@
 package com.inout.vault.data
 
-import androidx.room.*
+import androidx.room.Dao
+import androidx.room.Delete
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -29,7 +34,6 @@ interface StateFlowDao {
             pockets.gracePeriodDays,
             COALESCE(SUM(
                 CASE 
-                    -- Only calculate flows that occurred at or before the requested cutoff
                     WHEN flow_records.targetPocketId = pockets.pocketId AND flow_records.timestamp <= :currentTime THEN flow_records.amount
                     WHEN flow_records.sourcePocketId = pockets.pocketId AND flow_records.timestamp <= :currentTime THEN -flow_records.amount
                     ELSE 0 
