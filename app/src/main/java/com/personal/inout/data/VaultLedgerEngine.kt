@@ -9,7 +9,6 @@ sealed class VaultExecutionResult {
         val summary: String = "Transaction recorded successfully"
     ) : VaultExecutionResult()
 
-    // Subclasses OverdraftError with message to satisfy exhaustive when in WidgetCommandActivity
     open class OverdraftError(
         open val message: String
     ) : VaultExecutionResult()
@@ -37,7 +36,7 @@ class VaultLedgerEngine(
             nature = nature,
             sourcePocketId = sourcePocketId,
             targetPocketId = targetPocketId,
-            amount = amount.toLong(),
+            amount = amount,
             category = category,
             note = note,
             timestamp = timestamp
@@ -57,7 +56,7 @@ class VaultLedgerEngine(
             nature = nature,
             sourcePocketId = sourcePocketId,
             targetPocketId = targetPocketId,
-            amount = amount,
+            amount = amount.toDouble(),
             category = category,
             note = note,
             timestamp = timestamp
@@ -89,7 +88,7 @@ class VaultLedgerEngine(
         nature: MovementNature,
         sourcePocketId: Long?,
         targetPocketId: Long?,
-        amount: Long,
+        amount: Double,
         category: String,
         note: String,
         timestamp: Long
