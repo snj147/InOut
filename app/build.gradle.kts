@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.inout.vault"
+    namespace = "com.personal.inout"
     compileSdk = 35
 
     defaultConfig {
@@ -64,6 +64,9 @@ dependencies {
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     kapt("androidx.room:room-compiler:$roomVersion")
+
+    // Play Billing (required by com/personal/inout/billing/PlayBillingManager.kt)
+    implementation("com.android.billingclient:billing-ktx:7.0.0")
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
