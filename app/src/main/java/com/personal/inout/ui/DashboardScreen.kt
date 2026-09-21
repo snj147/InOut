@@ -90,14 +90,12 @@ fun DashboardScreen(db: AppDatabase) {
     val rawPockets by db.stateFlowDao().observeAllActivePockets().collectAsState(initial = emptyList())
     val flowRecords by db.stateFlowDao().observeAllFlowRecords().collectAsState(initial = emptyList())
     val stagedDesires by db.stateFlowDao().observeActiveStagedDesires().collectAsState(initial = emptyList())
-    val savedImpulseCapital by db.stateFlowDao().observeSavedImpulseTotal().collectAsState(initial = 0.0)
 
     val recurringTemplates = remember(flowRecords) {
         flowRecords.filter { it.isRecurring && it.frequency != "NONE" }
             .distinctBy { "${it.note}_${it.amount}_${it.frequency}" }
     }
 
-    // Calculations
     val totalLiquid = remember(pocketBalances) {
         pocketBalances.filter { it.pocketType == PocketType.LIQUID }.sumOf { it.currentBalance }.coerceAtLeast(0.0)
     }
@@ -118,6 +116,7 @@ fun DashboardScreen(db: AppDatabase) {
 
     var editingPocket by remember { mutableStateOf<VaultPocket?>(null) }
     var editingFlowRecord by remember { mutableStateOf<FlowRecord?>(null) }
+    var editingRecurringRule by remember { mutableStateOf<FlowRecord?>(null) }
     var recordPendingDeletion by remember { mutableStateOf<FlowRecord?>(null) }
     var showCreatePocketDialog by remember { mutableStateOf(false) }
     var showAllRecordsSheet by remember { mutableStateOf(false) }
@@ -125,20 +124,14 @@ fun DashboardScreen(db: AppDatabase) {
     var showBurnEditDialog by remember { mutableStateOf(false) }
     var showClearLedgerConfirmation by remember { mutableStateOf(false) }
 
-    // Quick Command Bar & Dynamic Preview
     var naturalLanguageInput by remember { mutableStateOf("") }
-    val previewParsed = remember(naturalLanguageInput, rawPockets) {
-        if (naturalLanguageInput.length >= 4) NaturalLanguageParser.parse(naturalLanguageInput, rawPockets, context) else null
-    }
-
     val placeholderHints = listOf(
         "Spent [Amount] on [Item]",
+        "salary 25000 IDFC monthly",
+        "collected 2000 from ABC",
         "create bank SBI / add card ICICI 50000",
-        "monthly 1500 for wifi from SBI",
         "goal phone 40000 by nov",
-        "burn 600 (update daily target)",
-        "hold 4000 sneakers (cool-off staging)",
-        "settle Rahul with Amit"
+        "burn 600 (update daily target)"
     )
     var currentHintIndex by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
@@ -203,7 +196,7 @@ fun DashboardScreen(db: AppDatabase) {
     fun executeQuickBarCommand(text: String) {
         val parsed = NaturalLanguageParser.parse(text, rawPockets, context)
         if (parsed == null) {
-            alertManager.showAlert("Unrecognized command syntax.", AlertType.WARNING)
+            alertManager.showAlert("Syntax not recognized.", AlertType.WARNING)
             return
         }
 
@@ -212,20 +205,18 @@ fun DashboardScreen(db: AppDatabase) {
                 is ParsedIntent.SetDailyBurn -> {
                     dailyBurnCeiling = parsed.newRate
                     prefs.edit().putFloat("daily_burn_ceiling", parsed.newRate.toFloat()).apply()
-                    alertManager.showAlert("Daily Burn updated to ₹${parsed.newRate.toInt()}/day", AlertType.SUCCESS)
+                    alertManager.showAlert("Daily Burn set to ₹${parsed.newRate.toInt()}/day", AlertType.SUCCESS)
                     naturalLanguageInput = ""
                 }
                 is ParsedIntent.SaveMacroAlias -> {
                     val macroPrefs = context.getSharedPreferences("vault_macros", Context.MODE_PRIVATE)
                     macroPrefs.edit().putString(parsed.alias, parsed.fullCommand).apply()
-                    alertManager.showAlert("Macro '${parsed.alias}' mapped to '${parsed.fullCommand}'", AlertType.SUCCESS)
+                    alertManager.showAlert("Macro '${parsed.alias}' mapped", AlertType.SUCCESS)
                     naturalLanguageInput = ""
                 }
                 is ParsedIntent.StageDesire -> {
-                    db.stateFlowDao().insertStagedDesire(
-                        StagedDesire(name = parsed.name, amount = parsed.amount)
-                    )
-                    alertManager.showAlert("Staged '${parsed.name}' in 48-hr cool-off quarantine", AlertType.INFO)
+                    db.stateFlowDao().insertStagedDesire(StagedDesire(name = parsed.name, amount = parsed.amount))
+                    alertManager.showAlert("Staged '${parsed.name}' in cool-off quarantine", AlertType.INFO)
                     naturalLanguageInput = ""
                 }
                 is ParsedIntent.TriangularSettle -> {
@@ -271,12 +262,25 @@ fun DashboardScreen(db: AppDatabase) {
                             personPocket = VaultPocket(id = newId, name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY, subType = "PEER")
                         }
 
-                        if (parsed.nature == MovementNature.PEER_LEND) {
-                            sourceId = parsed.matchedPocketId
-                            targetId = personPocket.id
-                        } else {
-                            sourceId = personPocket.id
-                            targetId = parsed.matchedPocketId
+                        // Strict Peer Flow Assignment: Collect = into liquid from peer; Lend = from liquid to peer
+                        when (parsed.nature) {
+                            MovementNature.PEER_LEND -> {
+                                sourceId = parsed.matchedPocketId
+                                targetId = personPocket.id
+                            }
+                            MovementNature.PEER_COLLECT -> {
+                                sourceId = personPocket.id
+                                targetId = parsed.matchedPocketId
+                            }
+                            MovementNature.PEER_BORROW -> {
+                                sourceId = personPocket.id
+                                targetId = parsed.matchedPocketId
+                            }
+                            MovementNature.PEER_REPAY -> {
+                                sourceId = parsed.matchedPocketId
+                                targetId = personPocket.id
+                            }
+                            else -> {}
                         }
                     }
 
@@ -295,7 +299,6 @@ fun DashboardScreen(db: AppDatabase) {
                         is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
                         is VaultExecutionResult.Success -> {
                             alertManager.showAlert(res.summary, AlertType.SUCCESS)
-                            res.spikePacingMessage?.let { alertManager.showAlert(it, AlertType.INFO) }
                             naturalLanguageInput = ""
                         }
                     }
@@ -383,18 +386,17 @@ fun DashboardScreen(db: AppDatabase) {
                     when (selectedTab) {
                         0 -> {
                             LazyColumn(
-                                modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp),
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp),
                                 contentPadding = PaddingValues(top = 6.dp, bottom = 96.dp)
                             ) {
-                                // Interactive Hero Card (Runway & Phantom Lock)
                                 item {
                                     Card(
-                                        shape = RoundedCornerShape(20.dp),
+                                        shape = RoundedCornerShape(18.dp),
                                         colors = CardDefaults.cardColors(containerColor = theme.surface),
                                         modifier = Modifier.fillMaxWidth().clickable { showBurnEditDialog = true }
                                     ) {
-                                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -432,141 +434,62 @@ fun DashboardScreen(db: AppDatabase) {
                                             }
 
                                             if (unpaidCardDues > 0.0) {
-                                                Text(
-                                                    "₹${unpaidCardDues.toInt()} auto-reserved for unpaid card liability (Phantom Lock)",
-                                                    color = theme.textMuted,
-                                                    fontSize = 10.sp
-                                                )
+                                                Text("₹${unpaidCardDues.toInt()} auto-reserved for unpaid card liability (Phantom Lock)", color = theme.textMuted, fontSize = 10.sp)
                                             }
                                         }
                                     }
                                 }
 
-                                // Multi-Intent Quick Bar with Dynamic Runway Preview
+                                // Clean Quick Bar: Red warnings removed entirely
                                 item {
                                     Card(
                                         shape = RoundedCornerShape(14.dp),
                                         colors = CardDefaults.cardColors(containerColor = theme.surface),
                                         modifier = Modifier.fillMaxWidth().border(1.5.dp, theme.accent.copy(alpha = 0.8f), RoundedCornerShape(14.dp))
                                     ) {
-                                        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                modifier = Modifier.fillMaxWidth()
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier.clip(CircleShape).background(theme.accent.copy(alpha = 0.2f)).padding(6.dp),
+                                                contentAlignment = Alignment.Center
                                             ) {
-                                                Box(
-                                                    modifier = Modifier.clip(CircleShape).background(theme.accent.copy(alpha = 0.2f)).padding(6.dp),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Icon(Icons.Default.Bolt, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
-                                                }
+                                                Icon(Icons.Default.Bolt, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
+                                            }
 
-                                                Spacer(Modifier.width(10.dp))
+                                            Spacer(Modifier.width(10.dp))
 
-                                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                                                    if (naturalLanguageInput.isEmpty()) {
-                                                        Text(
-                                                            text = placeholderHints[currentHintIndex],
-                                                            color = theme.textMuted.copy(alpha = 0.7f),
-                                                            fontSize = 12.5.sp,
-                                                            maxLines = 1
-                                                        )
-                                                    }
-                                                    BasicTextField(
-                                                        value = naturalLanguageInput,
-                                                        onValueChange = { naturalLanguageInput = it },
-                                                        singleLine = true,
-                                                        textStyle = TextStyle(color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Medium),
-                                                        cursorBrush = SolidColor(theme.accent),
-                                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                                        keyboardActions = KeyboardActions(onDone = { executeQuickBarCommand(naturalLanguageInput) }),
-                                                        modifier = Modifier.fillMaxWidth()
+                                            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                                if (naturalLanguageInput.isEmpty()) {
+                                                    Text(
+                                                        text = placeholderHints[currentHintIndex],
+                                                        color = theme.textMuted.copy(alpha = 0.7f),
+                                                        fontSize = 12.5.sp,
+                                                        maxLines = 1
                                                     )
                                                 }
-
-                                                if (naturalLanguageInput.isNotBlank()) {
-                                                    IconButton(onClick = { executeQuickBarCommand(naturalLanguageInput) }) {
-                                                        Icon(Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
-                                                    }
-                                                }
-                                            }
-
-                                            // Dynamic Impact Preview Chip
-                                            if (previewParsed is ParsedIntent.Transaction && previewParsed.nature == MovementNature.OUTFLOW && previewParsed.amount > 0) {
-                                                val projectedLiquid = (trueSafeLiquid - previewParsed.amount).coerceAtLeast(0.0)
-                                                val projectedDays = if (dailyBurnCeiling > 0) (projectedLiquid / dailyBurnCeiling).toInt() else 0
-                                                val deltaDays = runwayDays - projectedDays
-                                                Spacer(Modifier.height(6.dp))
-                                                Text(
-                                                    text = "Impact: Runway drops from ${runwayDays}d → ${projectedDays}d (-${deltaDays}d)",
-                                                    color = theme.mildRed,
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Bold
+                                                BasicTextField(
+                                                    value = naturalLanguageInput,
+                                                    onValueChange = { naturalLanguageInput = it },
+                                                    singleLine = true,
+                                                    textStyle = TextStyle(color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+                                                    cursorBrush = SolidColor(theme.accent),
+                                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                                    keyboardActions = KeyboardActions(onDone = { executeQuickBarCommand(naturalLanguageInput) }),
+                                                    modifier = Modifier.fillMaxWidth()
                                                 )
                                             }
-                                        }
-                                    }
-                                }
 
-                                // Staged Desires Cool-Off List
-                                if (stagedDesires.isNotEmpty()) {
-                                    item {
-                                        Text("Cool-Off Quarantine (Temptation Delay)", color = theme.textMuted, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                    items(stagedDesires, key = { it.id }) { desire ->
-                                        Card(
-                                            shape = RoundedCornerShape(12.dp),
-                                            colors = CardDefaults.cardColors(containerColor = theme.surfaceAlt),
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth().padding(12.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Column {
-                                                    Text(desire.name, color = theme.textBright, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                                                    Text("₹${desire.amount.toInt()} • 48h Cool-off Active", color = theme.textMuted, fontSize = 11.sp)
-                                                }
-                                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                                    Button(
-                                                        onClick = {
-                                                            scope.launch {
-                                                                db.stateFlowDao().updateStagedDesire(desire.copy(status = "ARCHIVED"))
-                                                                alertManager.showAlert("Desire dropped! Saved ₹${desire.amount.toInt()}", AlertType.SUCCESS)
-                                                            }
-                                                        },
-                                                        colors = ButtonDefaults.buttonColors(containerColor = theme.mildGreen),
-                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                                    ) {
-                                                        Text("Drop (Save)", color = theme.bg, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                                    }
-                                                    Button(
-                                                        onClick = {
-                                                            scope.launch {
-                                                                db.stateFlowDao().updateStagedDesire(desire.copy(status = "EXECUTED"))
-                                                                ledgerEngine.recordMovement(
-                                                                    nature = MovementNature.OUTFLOW,
-                                                                    sourcePocketId = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id,
-                                                                    amount = desire.amount,
-                                                                    category = desire.category,
-                                                                    note = desire.name,
-                                                                    autoSplitEnabled = autoSplitEnabled
-                                                                )
-                                                            }
-                                                        },
-                                                        colors = ButtonDefaults.buttonColors(containerColor = theme.surface),
-                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
-                                                    ) {
-                                                        Text("Buy", color = theme.textBright, fontSize = 10.sp)
-                                                    }
+                                            if (naturalLanguageInput.isNotBlank()) {
+                                                IconButton(onClick = { executeQuickBarCommand(naturalLanguageInput) }) {
+                                                    Icon(Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
                                                 }
                                             }
                                         }
                                     }
                                 }
 
-                                // OCR Buttons
                                 item {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -608,7 +531,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("Real-Time Flow Stream", color = theme.textBright, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
+                                        Text("Real-Time Flow Stream", color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                         if (flowRecords.isNotEmpty()) {
                                             Text(
                                                 "View All (${flowRecords.size}) →",
@@ -623,8 +546,8 @@ fun DashboardScreen(db: AppDatabase) {
 
                                 if (flowRecords.isEmpty()) {
                                     item {
-                                        Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = theme.surface)) {
-                                            Box(Modifier.fillMaxWidth().padding(28.dp), contentAlignment = Alignment.Center) {
+                                        Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface)) {
+                                            Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                                                 Text("No records yet. Type above or tap '+' to commit flow.", color = theme.textMuted, fontSize = 12.sp)
                                             }
                                         }
@@ -637,7 +560,7 @@ fun DashboardScreen(db: AppDatabase) {
                                             theme = theme,
                                             onClick = { editingFlowRecord = flow }
                                         )
-                                        Divider(color = theme.surfaceAlt.copy(alpha = 0.5f), thickness = 0.5.dp)
+                                        HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.5f), thickness = 0.5.dp)
                                     }
                                 }
                             }
@@ -672,7 +595,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     alertManager.showAlert(if (schedule.isPaused) "Resumed rule" else "Paused rule", AlertType.SUCCESS)
                                 }
                             },
-                            onEditRecurring = { schedule -> editingFlowRecord = schedule },
+                            onEditRecurring = { schedule -> editingRecurringRule = schedule },
                             onDeleteRecurringSafe = { schedule ->
                                 scope.launch {
                                     db.stateFlowDao().deleteFlowRecordById(schedule.id)
@@ -721,22 +644,21 @@ fun DashboardScreen(db: AppDatabase) {
                         )
 
                         3 -> {
-                            // Clean Settings Screen: No Daily Burn, Cross-Account Auto-Split Toggle Included
                             Column(
-                                modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp),
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
                                 Text("Settings & Vault Controls", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
 
                                 Card(
-                                    shape = RoundedCornerShape(16.dp),
+                                    shape = RoundedCornerShape(14.dp),
                                     colors = CardDefaults.cardColors(containerColor = theme.surface),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Text("Theme Mode", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            AppThemeMode.values().forEach { mode ->
+                                            AppThemeMode.entries.forEach { mode ->
                                                 val isSel = activeThemeMode == mode
                                                 Box(
                                                     modifier = Modifier
@@ -758,18 +680,18 @@ fun DashboardScreen(db: AppDatabase) {
                                 }
 
                                 Card(
-                                    shape = RoundedCornerShape(16.dp),
+                                    shape = RoundedCornerShape(14.dp),
                                     colors = CardDefaults.cardColors(containerColor = theme.surface),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Row(
-                                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                        modifier = Modifier.fillMaxWidth().padding(14.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Column(Modifier.weight(1f)) {
                                             Text("Cross-Account Auto-Split", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                            Text("Prevent overdrafts by auto-debiting shortfall from other bank accounts.", color = theme.textMuted, fontSize = 11.sp)
+                                            Text("Prevent overdrafts by auto-debiting shortfall from secondary bank accounts.", color = theme.textMuted, fontSize = 11.sp)
                                         }
                                         Switch(
                                             checked = autoSplitEnabled,
@@ -783,11 +705,11 @@ fun DashboardScreen(db: AppDatabase) {
                                 }
 
                                 Card(
-                                    shape = RoundedCornerShape(16.dp),
+                                    shape = RoundedCornerShape(14.dp),
                                     colors = CardDefaults.cardColors(containerColor = theme.surface),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Text("Data & Ledger Operations", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
 
                                         Button(
@@ -847,7 +769,7 @@ fun DashboardScreen(db: AppDatabase) {
                         title = { Text("Update Daily Burn Ceiling", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
                         text = {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("Set your daily survival spending budget. Runway days adjust instantly.", color = theme.textMuted, fontSize = 12.sp)
+                                Text("Set daily spending limit. Runway days adapt dynamically.", color = theme.textMuted, fontSize = 12.sp)
                                 CompactInputField(value = burnInput, onValueChange = { burnInput = it }, placeholder = "Daily amount in ₹")
                             }
                         },
@@ -930,7 +852,25 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
 
-                // In-Place Transaction Editor with strict delete confirmation guard
+                // Dedicated Recurring Rule Editor (Amount, Note, Cadence)
+                editingRecurringRule?.let { rule ->
+                    EditRecurringRuleDialog(
+                        rule = rule,
+                        theme = theme,
+                        onDismiss = { editingRecurringRule = null },
+                        onSave = { newAmt, newNote, newFreq ->
+                            scope.launch {
+                                db.stateFlowDao().updateFlowRecord(
+                                    rule.copy(amount = newAmt, note = newNote, frequency = newFreq, recurringCadence = newFreq)
+                                )
+                                editingRecurringRule = null
+                                alertManager.showAlert("Recurring schedule updated", AlertType.SUCCESS)
+                            }
+                        }
+                    )
+                }
+
+                // Transaction Editor
                 editingFlowRecord?.let { flow ->
                     EditTransactionDialog(
                         record = flow,
@@ -1070,7 +1010,7 @@ private fun CleanVaultHeader(
     onTogglePrivacy: () -> Unit
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 18.dp, vertical = 8.dp),
+        modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1158,6 +1098,58 @@ fun FlowRecordDisplayRow(
             Text(dStr, color = theme.textMuted, fontSize = 10.sp)
         }
     }
+}
+
+@Composable
+private fun EditRecurringRuleDialog(
+    rule: FlowRecord,
+    theme: ThemeColors,
+    onDismiss: () -> Unit,
+    onSave: (amount: Double, note: String, freq: String) -> Unit
+) {
+    var note by remember { mutableStateOf(rule.note) }
+    var amountText by remember { mutableStateOf(rule.amount.toInt().toString()) }
+    var frequency by remember { mutableStateOf(if (rule.frequency != "NONE") rule.frequency else "MONTHLY") }
+
+    AlertDialog(
+        containerColor = theme.surface,
+        onDismissRequest = onDismiss,
+        title = { Text("Edit Recurring Schedule", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                CompactInputField(value = note, onValueChange = { note = it }, placeholder = "Schedule Note / Description")
+                CompactInputField(value = amountText, onValueChange = { amountText = it }, placeholder = "Recurring Amount in ₹")
+
+                Text("Frequency", color = theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("DAILY", "WEEKLY", "MONTHLY").forEach { freq ->
+                        val isSel = frequency == freq
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSel) theme.accent else theme.surfaceAlt)
+                                .clickable { frequency = freq }
+                                .padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(freq, color = if (isSel) theme.bg else theme.textBright, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val amt = amountText.toDoubleOrNull() ?: rule.amount
+                    onSave(amt, note, frequency)
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
+            ) { Text("Save Changes", color = theme.bg, fontWeight = FontWeight.Bold) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) } }
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)
