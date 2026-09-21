@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.personal.inout.data.FlowRecord
+import com.personal.inout.data.MovementNature
 import com.personal.inout.data.PocketBalanceSummary
 import com.personal.inout.data.PocketType
 import com.personal.inout.data.VaultPocket
@@ -26,12 +27,17 @@ fun AccountPocketsView(
     rawPockets: List<VaultPocket> = emptyList(),
     recurringSchedules: List<FlowRecord> = emptyList(),
     isPrivacyMode: Boolean = false,
-    onTransactPocket: (pocketId: String) -> Unit = {},
+    onTransactPocket: (pocket: VaultPocket) -> Unit = {},
     onEditPocket: (pocket: VaultPocket) -> Unit = {},
-    onStopRecurring: (recordId: Long) -> Unit = {},
-    onPocketLongClick: (pocketId: String) -> Unit = {}
+    onDeletePocketSafe: (pocket: VaultPocket, balance: Double) -> Unit = { _, _ -> },
+    onStopRecurringSchedule: (schedule: FlowRecord) -> Unit = {},
+    onRecordCardSettlement: (cardId: Long, liquidId: Long, amt: Double) -> Unit = { _, _, _ -> },
+    onPeerAction: (nature: MovementNature, peerId: Long, liquidId: Long, amt: Double) -> Unit = { _, _, _, _ -> }
 ) {
     var selectedRecordForStop by remember { mutableStateOf<FlowRecord?>(null) }
+    val defaultLiquidId = remember(rawPockets) {
+        rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id ?: 0L
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -53,16 +59,17 @@ fun AccountPocketsView(
                 )
             }
         }
-        items(pocketBalances.filter { it.pocketType == PocketType.LIQUID }, key = { it.pocketId }) { pocket ->
+        items(pocketBalances.filter { it.pocketType == PocketType.LIQUID }, key = { it.pocketId }) { summary ->
+            val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId } ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = PocketType.LIQUID)
             PocketCard(
-                name = pocket.pocketName,
+                name = summary.name,
                 subtitle = "LIQUID",
-                balanceText = if (isPrivacyMode) "••••" else "₹${pocket.computedBalance}",
+                balanceText = if (isPrivacyMode) "••••" else "₹${String.format("%,.0f", summary.computedBalance)}",
                 actionLabel = "Transact",
                 actionColor = Color(0xFF332B22),
                 textColor = Color(0xFFE59C5C),
-                onActionClick = { onTransactPocket(pocket.pocketId) },
-                onLongClick = { onPocketLongClick(pocket.pocketId) }
+                onActionClick = { onTransactPocket(pocket) },
+                onLongClick = { onEditPocket(pocket) }
             )
         }
 
@@ -81,16 +88,23 @@ fun AccountPocketsView(
                 )
             }
         }
-        items(pocketBalances.filter { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }, key = { it.pocketId }) { card ->
+        items(pocketBalances.filter { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }, key = { it.pocketId }) { summary ->
+            val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId } ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = summary.pocketType)
             PocketCard(
-                name = card.pocketName,
-                subtitle = if (isPrivacyMode) "••••" else "Avail: ₹${card.creditLimit + card.computedBalance} / Limit: ₹${card.creditLimit}",
-                balanceText = if (isPrivacyMode) "••••" else "₹${Math.abs(card.computedBalance)}",
-                actionLabel = if (card.computedBalance >= 0) "Settled" else "Pay Due",
+                name = summary.name,
+                subtitle = if (isPrivacyMode) "••••" else "Avail: ₹${String.format("%,.0f", summary.creditLimit + summary.computedBalance)} / Limit: ₹${String.format("%,.0f", summary.creditLimit)}",
+                balanceText = if (isPrivacyMode) "••••" else "₹${String.format("%,.0f", Math.abs(summary.computedBalance))}",
+                actionLabel = if (summary.computedBalance >= 0) "Settled" else "Pay Due",
                 actionColor = Color(0xFF282522),
                 textColor = Color(0xFF9E9E9E),
-                onActionClick = { onTransactPocket(card.pocketId) },
-                onLongClick = { onPocketLongClick(card.pocketId) }
+                onActionClick = {
+                    if (summary.computedBalance < 0 && defaultLiquidId != 0L) {
+                        onRecordCardSettlement(pocket.id, defaultLiquidId, Math.abs(summary.computedBalance))
+                    } else {
+                        onTransactPocket(pocket)
+                    }
+                },
+                onLongClick = { onEditPocket(pocket) }
             )
         }
 
@@ -109,17 +123,25 @@ fun AccountPocketsView(
                 )
             }
         }
-        items(pocketBalances.filter { it.pocketType == PocketType.PEER || it.pocketType == PocketType.COUNTERPARTY || it.subType == "PEER" }, key = { it.pocketId }) { peer ->
-            val isOwedToYou = peer.computedBalance > 0
+        items(pocketBalances.filter { it.pocketType == PocketType.PEER || it.pocketType == PocketType.COUNTERPARTY || it.subType == "PEER" }, key = { it.pocketId }) { summary ->
+            val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId } ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = summary.pocketType)
+            val isOwedToYou = summary.computedBalance > 0
             PocketCard(
-                name = peer.pocketName,
+                name = summary.name,
                 subtitle = if (isOwedToYou) "They owe you" else "You owe them",
-                balanceText = if (isPrivacyMode) "••••" else "₹${Math.abs(peer.computedBalance)}",
+                balanceText = if (isPrivacyMode) "••••" else "₹${String.format("%,.0f", Math.abs(summary.computedBalance))}",
                 actionLabel = if (isOwedToYou) "Collect" else "Repay",
                 actionColor = if (isOwedToYou) Color(0xFF1E3326) else Color(0xFF332020),
                 textColor = if (isOwedToYou) Color(0xFF81C784) else Color(0xFFE57373),
-                onActionClick = { onTransactPocket(peer.pocketId) },
-                onLongClick = { onPocketLongClick(peer.pocketId) }
+                onActionClick = {
+                    val nature = if (isOwedToYou) MovementNature.PEER_COLLECT else MovementNature.PEER_REPAY
+                    if (defaultLiquidId != 0L && summary.computedBalance != 0.0) {
+                        onPeerAction(nature, pocket.id, defaultLiquidId, Math.abs(summary.computedBalance))
+                    } else {
+                        onTransactPocket(pocket)
+                    }
+                },
+                onLongClick = { onEditPocket(pocket) }
             )
         }
 
@@ -162,7 +184,7 @@ fun AccountPocketsView(
                         Spacer(modifier = Modifier.height(2.dp))
                         val freqText = if (record.frequency != "NONE") record.frequency else record.recurringCadence
                         Text(
-                            text = if (isPrivacyMode) "Repeats $freqText • ₹••••" else "Repeats $freqText • ₹${record.amount}",
+                            text = if (isPrivacyMode) "Repeats $freqText • ₹••••" else "Repeats $freqText • ₹${record.amount.toInt()}",
                             color = Color(0xFFE59C5C),
                             fontSize = 12.sp
                         )
@@ -188,14 +210,14 @@ fun AccountPocketsView(
             title = { Text("Stop Recurring Rule", color = Color.White) },
             text = {
                 Text(
-                    "Are you sure you want to stop this recurring schedule? Existing past ledger records will remain safe.",
+                    "Are you sure you want to stop this recurring schedule? Past records remain intact.",
                     color = Color(0xFFCCCCCC)
                 )
             },
             confirmButton = {
                 Button(
                     onClick = {
-                        onStopRecurring(record.id)
+                        onStopRecurringSchedule(record)
                         selectedRecordForStop = null
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE57373))
