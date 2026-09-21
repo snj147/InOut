@@ -24,7 +24,6 @@ import java.util.*
 @Composable
 fun AllTransactionsSearchSheet(
     flowRecords: List<FlowRecord> = emptyList(),
-    sheetState: SheetState = rememberModalBottomSheetState(),
     isPrivacyMode: Boolean = false,
     isProUser: Boolean = true,
     onDismiss: () -> Unit = {},
@@ -33,6 +32,7 @@ fun AllTransactionsSearchSheet(
     onExportPdfDossier: () -> Unit = {}
 ) {
     var searchQuery by remember { mutableStateOf("") }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val filteredRecords = remember(flowRecords, searchQuery) {
         flowRecords.filter { record ->
@@ -52,6 +52,7 @@ fun AllTransactionsSearchSheet(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
                 .padding(top = 16.dp, start = 16.dp, end = 16.dp)
         ) {
             Row(
