@@ -71,7 +71,7 @@ dependencies {
     // Google Play In-App Update
     implementation("com.google.android.play:app-update-ktx:2.1.0")
 
-    // ML Kit Text Recognition (Fixes ReceiptScanner.kt unresolved reference: mlkit)
+    // ML Kit Text Recognition
     implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.0")
 
     // Coroutines
