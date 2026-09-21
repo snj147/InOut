@@ -12,12 +12,10 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -41,7 +39,6 @@ class WidgetCommandActivity : ComponentActivity() {
         val engine = VaultLedgerEngine(db.stateFlowDao())
 
         setContent {
-            val scope = rememberCoroutineScope()
             var input by remember { mutableStateOf("") }
             val theme = AmberTheme
 
@@ -134,11 +131,12 @@ class WidgetCommandActivity : ComponentActivity() {
                         )
                         personPocket = VaultPocket(id = newId, name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY)
                     }
+                    val targetPocketId = personPocket.id
                     if (parsed.nature == MovementNature.PEER_LEND) {
                         sourceId = parsed.matchedPocketId
-                        targetId = personPocket.id
+                        targetId = targetPocketId
                     } else {
-                        sourceId = personPocket.id
+                        sourceId = targetPocketId
                         targetId = parsed.matchedPocketId
                     }
                 }
