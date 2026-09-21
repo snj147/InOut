@@ -10,13 +10,21 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -50,7 +58,7 @@ import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun DashboardScreen(db: AppDatabase) {
     val context = LocalContext.current
@@ -65,7 +73,7 @@ fun DashboardScreen(db: AppDatabase) {
         activity?.let { InAppUpdateHelper.checkForUpdate(it) }
         val generated = ledgerEngine.catchUpRecurringRules()
         if (generated > 0) {
-            alertManager.showAlert("Auto-recorded $generated recurring transaction(s)", AlertType.SUCCESS)
+            alertManager.showAlert("Auto-recorded $generated recurring schedule(s)", AlertType.SUCCESS)
         }
     }
 
@@ -85,6 +93,10 @@ fun DashboardScreen(db: AppDatabase) {
         mutableStateOf(prefs.getBoolean("auto_split_debit", false))
     }
 
+    var phantomLockEnabled by remember {
+        mutableStateOf(prefs.getBoolean("phantom_lock_enabled", true))
+    }
+
     val theme = when (activeThemeMode) {
         AppThemeMode.AMBER_OCHRE -> AmberTheme
         AppThemeMode.OLIVE_MATCHA -> OliveMatchaTheme
@@ -101,6 +113,7 @@ fun DashboardScreen(db: AppDatabase) {
             .distinctBy { "${it.note}_${it.amount}_${it.frequency}" }
     }
 
+    // Ledger Computations
     val totalLiquid = remember(pocketBalances) {
         pocketBalances.filter { it.pocketType == PocketType.LIQUID }.sumOf { it.currentBalance }.coerceAtLeast(0.0)
     }
@@ -109,10 +122,27 @@ fun DashboardScreen(db: AppDatabase) {
             .filter { it.computedBalance < 0.0 }
             .sumOf { Math.abs(it.computedBalance) }
     }
-    val trueSafeLiquid = (totalLiquid - unpaidCardDues).coerceAtLeast(0.0)
+    val trueSafeLiquid = if (phantomLockEnabled) (totalLiquid - unpaidCardDues).coerceAtLeast(0.0) else totalLiquid
     val runwayDays = if (dailyBurnCeiling > 0) (trueSafeLiquid / dailyBurnCeiling).toInt() else 0
 
-    var selectedTab by remember { mutableStateOf(0) }
+    val todayStartEpoch = remember {
+        Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
+    val spentToday = remember(flowRecords) {
+        flowRecords.filter { it.timestamp >= todayStartEpoch && it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY) }
+            .sumOf { it.amount }
+    }
+    val peerNet = remember(pocketBalances) {
+        pocketBalances.filter { it.pocketType == PocketType.COUNTERPARTY || it.pocketType == PocketType.PEER || it.subType == "PEER" }
+            .sumOf { it.computedBalance }
+    }
+
+    var selectedTab by remember { mutableIntStateOf(0) }
     var isPrivacyMode by remember { mutableStateOf(false) }
 
     var showCommandHud by remember { mutableStateOf(false) }
@@ -128,6 +158,16 @@ fun DashboardScreen(db: AppDatabase) {
     var showMockPaywall by remember { mutableStateOf(false) }
     var showBurnEditDialog by remember { mutableStateOf(false) }
     var showClearLedgerConfirmation by remember { mutableStateOf(false) }
+
+    // Speed-Dial FAB State
+    var isFabExpanded by remember { mutableStateOf(false) }
+
+    // Carousel Pager State with Persistence
+    val initialPage = remember { prefs.getInt("saved_carousel_page", 0).coerceIn(0, 3) }
+    val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { 4 })
+    LaunchedEffect(pagerState.currentPage) {
+        prefs.edit().putInt("saved_carousel_page", pagerState.currentPage).apply()
+    }
 
     var naturalLanguageInput by remember { mutableStateOf("") }
     val placeholderHints = listOf(
@@ -280,7 +320,7 @@ fun DashboardScreen(db: AppDatabase) {
                         )
                         if (res is VaultExecutionResult.Success) successCount++
                     }
-                    alertManager.showAlert("Recorded $successCount transactions", AlertType.SUCCESS)
+                    alertManager.showAlert("Recorded $successCount compound transactions", AlertType.SUCCESS)
                     naturalLanguageInput = ""
                 }
                 is ParsedIntent.Transaction -> {
@@ -355,20 +395,14 @@ fun DashboardScreen(db: AppDatabase) {
             Scaffold(
                 containerColor = theme.bg,
                 topBar = {
-                    Column {
-                        CleanVaultHeader(
-                            totalLiquid = trueSafeLiquid,
-                            totalSpent = flowRecords.filter { it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY) }.sumOf { it.amount },
-                            isProUser = isProUnlocked,
-                            isPrivacyMode = isPrivacyMode,
-                            theme = theme,
-                            onTogglePrivacy = { isPrivacyMode = !isPrivacyMode }
-                        )
-                        DevSandboxTogglePill(
-                            isProUnlocked = isProUnlocked,
-                            onOpenPaywall = { showMockPaywall = true }
-                        )
-                    }
+                    CleanVaultHeader(
+                        totalLiquid = trueSafeLiquid,
+                        totalSpent = flowRecords.filter { it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY) }.sumOf { it.amount },
+                        isProUser = isProUnlocked,
+                        isPrivacyMode = isPrivacyMode,
+                        theme = theme,
+                        onTogglePrivacy = { isPrivacyMode = !isPrivacyMode }
+                    )
                 },
                 bottomBar = {
                     NavigationBar(
@@ -384,7 +418,10 @@ fun DashboardScreen(db: AppDatabase) {
                         ).forEach { (idx, title, icon) ->
                             NavigationBarItem(
                                 selected = selectedTab == idx,
-                                onClick = { selectedTab = idx },
+                                onClick = {
+                                    selectedTab = idx
+                                    isFabExpanded = false
+                                },
                                 icon = { Icon(icon, contentDescription = title) },
                                 label = { Text(title, fontSize = 11.sp, fontWeight = if (selectedTab == idx) FontWeight.Bold else FontWeight.Normal) },
                                 colors = NavigationBarItemDefaults.colors(
@@ -400,24 +437,73 @@ fun DashboardScreen(db: AppDatabase) {
                 },
                 floatingActionButton = {
                     if (selectedTab == 0 || selectedTab == 1) {
-                        FloatingActionButton(
-                            onClick = {
-                                if (selectedTab == 1) {
-                                    showCreatePocketDialog = true
-                                } else {
-                                    ocrPrefilledNote = ""
-                                    ocrPrefilledAmount = null
-                                    hudInDialogError = null
-                                    selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
-                                    showCommandHud = true
-                                }
-                            },
-                            containerColor = theme.accent,
-                            contentColor = theme.bg,
-                            shape = CircleShape,
+                        val rotation by animateFloatAsState(
+                            targetValue = if (isFabExpanded) 45f else 0f,
+                            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                            label = "fabRotation"
+                        )
+
+                        Column(
+                            horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
                             modifier = Modifier.navigationBarsPadding()
                         ) {
-                            Icon(if (selectedTab == 1) Icons.Default.AddCard else Icons.Default.Add, contentDescription = "Action", modifier = Modifier.size(26.dp))
+                            AnimatedVisibility(
+                                visible = isFabExpanded,
+                                enter = fadeIn() + slideInVertically { it / 2 },
+                                exit = fadeOut() + slideOutVertically { it / 2 }
+                            ) {
+                                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    SmallFloatingActionButton(
+                                        onClick = {
+                                            isFabExpanded = false
+                                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                                                cameraSnapLauncher.launch(null)
+                                            } else {
+                                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                            }
+                                        },
+                                        containerColor = theme.surfaceAlt,
+                                        contentColor = theme.accent
+                                    ) {
+                                        Icon(Icons.Default.PhotoCamera, contentDescription = "Camera OCR", modifier = Modifier.size(18.dp))
+                                    }
+
+                                    SmallFloatingActionButton(
+                                        onClick = {
+                                            isFabExpanded = false
+                                            photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                        },
+                                        containerColor = theme.surfaceAlt,
+                                        contentColor = theme.accent
+                                    ) {
+                                        Icon(Icons.Default.Image, contentDescription = "Gallery OCR", modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+
+                            FloatingActionButton(
+                                onClick = {
+                                    if (selectedTab == 1) {
+                                        showCreatePocketDialog = true
+                                    } else {
+                                        if (isFabExpanded) {
+                                            isFabExpanded = false
+                                        } else {
+                                            isFabExpanded = true
+                                        }
+                                    }
+                                },
+                                containerColor = theme.accent,
+                                contentColor = theme.bg,
+                                shape = CircleShape
+                            ) {
+                                Icon(
+                                    imageVector = if (selectedTab == 1) Icons.Default.AddCard else Icons.Default.Add,
+                                    contentDescription = "Action",
+                                    modifier = Modifier.size(24.dp).rotate(if (selectedTab == 0) rotation else 0f)
+                                )
+                            }
                         }
                     }
                 }
@@ -428,59 +514,80 @@ fun DashboardScreen(db: AppDatabase) {
                             LazyColumn(
                                 modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp),
-                                contentPadding = PaddingValues(top = 6.dp, bottom = 96.dp)
+                                contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp)
                             ) {
+                                // 1. Swipable 4-Card Hero Carousel (Manual Swipe, Remembers Index)
                                 item {
-                                    Card(
-                                        shape = RoundedCornerShape(18.dp),
-                                        colors = CardDefaults.cardColors(containerColor = theme.surface),
-                                        modifier = Modifier.fillMaxWidth().clickable { showBurnEditDialog = true }
-                                    ) {
-                                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text("RUNWAY SURVIVAL HORIZON", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        HorizontalPager(
+                                            state = pagerState,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) { page ->
+                                            when (page) {
+                                                0 -> MetricCarouselCard(
+                                                    tag = "RUNWAY SURVIVAL HORIZON",
+                                                    status = if (runwayDays > 30) "Solvent" else "Tight",
+                                                    isPositive = runwayDays > 30,
+                                                    heroText = if (isPrivacyMode) "•• Days" else "$runwayDays Days",
+                                                    leftSub = "Burn Target: ₹${dailyBurnCeiling.toInt()}/day ✎",
+                                                    rightSub = "Safe Liquid: ₹${String.format("%,.0f", trueSafeLiquid)}",
+                                                    theme = theme,
+                                                    onCardClick = { showBurnEditDialog = true }
+                                                )
+                                                1 -> MetricCarouselCard(
+                                                    tag = "TRUE LIQUID (PHANTOM LOCK)",
+                                                    status = if (unpaidCardDues > 0) "Locked" else "Clean",
+                                                    isPositive = unpaidCardDues == 0.0,
+                                                    heroText = if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", trueSafeLiquid)}",
+                                                    leftSub = "Gross Cash: ₹${totalLiquid.toInt()}",
+                                                    rightSub = "Card Liability: ₹${unpaidCardDues.toInt()}",
+                                                    theme = theme,
+                                                    onCardClick = {}
+                                                )
+                                                2 -> MetricCarouselCard(
+                                                    tag = "DAILY BURN VELOCITY",
+                                                    status = if (spentToday <= dailyBurnCeiling) "On Track" else "Spiked",
+                                                    isPositive = spentToday <= dailyBurnCeiling,
+                                                    heroText = if (isPrivacyMode) "₹ •••" else "₹${spentToday.toInt()} / ₹${dailyBurnCeiling.toInt()}",
+                                                    leftSub = "Today's Target: ₹${dailyBurnCeiling.toInt()}",
+                                                    rightSub = if (spentToday <= dailyBurnCeiling) "Pacing Normal" else "Over Target",
+                                                    theme = theme,
+                                                    onCardClick = { showBurnEditDialog = true }
+                                                )
+                                                3 -> MetricCarouselCard(
+                                                    tag = "PEER NET POSITION",
+                                                    status = if (peerNet >= 0) "Receivable" else "Payable",
+                                                    isPositive = peerNet >= 0,
+                                                    heroText = if (isPrivacyMode) "₹ •••" else "${if (peerNet >= 0) "+" else "-"}₹${String.format("%,.0f", Math.abs(peerNet))}",
+                                                    leftSub = if (peerNet >= 0) "You are net lender" else "You are net borrower",
+                                                    rightSub = "Across all contacts",
+                                                    theme = theme,
+                                                    onCardClick = {}
+                                                )
+                                            }
+                                        }
+
+                                        // Carousel Dot Indicators
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.Center,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            repeat(4) { idx ->
+                                                val isSel = pagerState.currentPage == idx
                                                 Box(
                                                     modifier = Modifier
-                                                        .clip(RoundedCornerShape(6.dp))
-                                                        .background(if (runwayDays > 30) theme.mildGreen.copy(alpha = 0.2f) else theme.mildRed.copy(alpha = 0.2f))
-                                                        .padding(horizontal = 8.dp, vertical = 2.dp)
-                                                ) {
-                                                    Text(
-                                                        if (runwayDays > 30) "Solvent" else "Tight",
-                                                        color = if (runwayDays > 30) theme.mildGreen else theme.mildRed,
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
-                                                }
-                                            }
-
-                                            Text(
-                                                text = if (isPrivacyMode) "•• Days" else "$runwayDays Days",
-                                                color = theme.textBright,
-                                                fontSize = 28.sp,
-                                                fontWeight = FontWeight.Black
-                                            )
-
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Text("Burn Target: ₹${dailyBurnCeiling.toInt()}/day ✎", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Medium)
-                                                Text("Safe Liquid: ₹${String.format("%,.0f", trueSafeLiquid)}", color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                            }
-
-                                            if (unpaidCardDues > 0.0) {
-                                                Text("₹${unpaidCardDues.toInt()} auto-reserved for unpaid card liability (Phantom Lock)", color = theme.textMuted, fontSize = 10.sp)
+                                                        .padding(horizontal = 3.dp)
+                                                        .size(if (isSel) 6.dp else 4.dp)
+                                                        .clip(CircleShape)
+                                                        .background(if (isSel) theme.accent else theme.surfaceAlt)
+                                                )
                                             }
                                         }
                                     }
                                 }
 
-                                // Prominent, Animated Glowing Border on Quick Bar
+                                // 2. Prominent Animated Glowing Border on Quick Bar
                                 item {
                                     val infiniteTransition = rememberInfiniteTransition(label = "glowTransition")
                                     val angle by infiniteTransition.animateFloat(
@@ -494,18 +601,13 @@ fun DashboardScreen(db: AppDatabase) {
                                     )
 
                                     val glowingBorderBrush = Brush.sweepGradient(
-                                        colors = listOf(
-                                            theme.accent,
-                                            theme.mildGreen,
-                                            theme.mildRed,
-                                            theme.accent
-                                        )
+                                        colors = listOf(theme.accent, theme.mildGreen, theme.mildRed, theme.accent)
                                     )
 
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .shadow(10.dp, RoundedCornerShape(16.dp), spotColor = theme.accent.copy(alpha = 0.6f))
+                                            .shadow(10.dp, RoundedCornerShape(16.dp), spotColor = theme.accent.copy(alpha = 0.5f))
                                             .clip(RoundedCornerShape(16.dp))
                                             .background(theme.surface)
                                     ) {
@@ -519,9 +621,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         Card(
                                             shape = RoundedCornerShape(14.dp),
                                             colors = CardDefaults.cardColors(containerColor = theme.surface),
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(2.dp)
+                                            modifier = Modifier.fillMaxWidth().padding(2.dp)
                                         ) {
                                             Row(
                                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
@@ -567,48 +667,14 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
+                                // 3. Flat, Date-Grouped Flow Stream (Decluttered, Single-line, No Card-Fatigue)
                                 item {
                                     Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        Button(
-                                            onClick = {
-                                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                                                    cameraSnapLauncher.launch(null)
-                                                } else {
-                                                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                                                }
-                                            },
-                                            modifier = Modifier.weight(1f).height(40.dp),
-                                            shape = RoundedCornerShape(10.dp),
-                                            colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt)
-                                        ) {
-                                            Icon(Icons.Default.PhotoCamera, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
-                                            Spacer(Modifier.width(6.dp))
-                                            Text("Scan Receipt", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                                        }
-
-                                        OutlinedButton(
-                                            onClick = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
-                                            modifier = Modifier.weight(1f).height(40.dp),
-                                            shape = RoundedCornerShape(10.dp),
-                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent)
-                                        ) {
-                                            Icon(Icons.Default.Image, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
-                                            Spacer(Modifier.width(6.dp))
-                                            Text("From Gallery", fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                }
-
-                                item {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
+                                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Text("Real-Time Flow Stream", color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        Text("Recent Flow", color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                         if (flowRecords.isNotEmpty()) {
                                             Text(
                                                 "View All (${flowRecords.size}) →",
@@ -623,21 +689,50 @@ fun DashboardScreen(db: AppDatabase) {
 
                                 if (flowRecords.isEmpty()) {
                                     item {
-                                        Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface)) {
-                                            Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                                                Text("No records yet. Type above or tap '+' to commit flow.", color = theme.textMuted, fontSize = 12.sp)
-                                            }
+                                        Box(
+                                            modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text("No records yet. Type above or tap '+' to commit flow.", color = theme.textMuted, fontSize = 12.sp)
                                         }
                                     }
                                 } else {
-                                    items(flowRecords.take(8), key = { it.id }) { flow ->
-                                        FlowRecordDisplayRow(
-                                            flow = flow,
-                                            isPrivacyMode = isPrivacyMode,
-                                            theme = theme,
-                                            onClick = { editingFlowRecord = flow }
-                                        )
-                                        HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.5f), thickness = 0.5.dp)
+                                    // Grouped by Date: Today, Yesterday, or Date string
+                                    val groupedRecords = remember(flowRecords) {
+                                        val calNow = Calendar.getInstance()
+                                        flowRecords.take(12).groupBy { flow ->
+                                            val calRecord = Calendar.getInstance().apply { timeInMillis = flow.timestamp }
+                                            when {
+                                                calNow.get(Calendar.YEAR) == calRecord.get(Calendar.YEAR) &&
+                                                        calNow.get(Calendar.DAY_OF_YEAR) == calRecord.get(Calendar.DAY_OF_YEAR) -> "Today"
+                                                calNow.get(Calendar.YEAR) == calRecord.get(Calendar.YEAR) &&
+                                                        calNow.get(Calendar.DAY_OF_YEAR) - calRecord.get(Calendar.DAY_OF_YEAR) == 1 -> "Yesterday"
+                                                else -> SimpleDateFormat("dd MMMM", Locale.getDefault()).format(Date(flow.timestamp))
+                                            }
+                                        }
+                                    }
+
+                                    groupedRecords.forEach { (dateHeader, records) ->
+                                        item {
+                                            Text(
+                                                text = dateHeader.uppercase(Locale.getDefault()),
+                                                color = theme.textMuted,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                letterSpacing = 1.sp,
+                                                modifier = Modifier.padding(top = 8.dp)
+                                            )
+                                        }
+                                        items(records, key = { it.id }) { flow ->
+                                            FlatStreamRow(
+                                                flow = flow,
+                                                rawPockets = rawPockets,
+                                                isPrivacyMode = isPrivacyMode,
+                                                theme = theme,
+                                                onLongClick = { editingFlowRecord = flow }
+                                            )
+                                            HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.4f), thickness = 0.5.dp)
+                                        }
                                     }
                                 }
                             }
@@ -717,123 +812,56 @@ fun DashboardScreen(db: AppDatabase) {
                         2 -> IntelligenceScreen(
                             pocketBalances = pocketBalances,
                             flowRecords = flowRecords,
-                            isPrivacyMode = isPrivacyMode
+                            recurringSchedules = recurringTemplates,
+                            stagedDesires = stagedDesires,
+                            dailyBurnCeiling = dailyBurnCeiling,
+                            trueSafeLiquid = trueSafeLiquid,
+                            isPrivacyMode = isPrivacyMode,
+                            theme = theme
                         )
 
                         3 -> {
-                            Column(
-                                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp),
-                                verticalArrangement = Arrangement.spacedBy(14.dp)
-                            ) {
-                                Text("Settings & Vault Controls", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-
-                                Card(
-                                    shape = RoundedCornerShape(14.dp),
-                                    colors = CardDefaults.cardColors(containerColor = theme.surface),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Text("Theme Mode", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                            AppThemeMode.entries.forEach { mode ->
-                                                val isSel = activeThemeMode == mode
-                                                Box(
-                                                    modifier = Modifier
-                                                        .weight(1f)
-                                                        .clip(RoundedCornerShape(8.dp))
-                                                        .background(if (isSel) theme.accent else theme.surfaceAlt)
-                                                        .clickable {
-                                                            activeThemeMode = mode
-                                                            prefs.edit().putString("selected_theme", mode.name).apply()
-                                                        }
-                                                        .padding(vertical = 8.dp),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Text(mode.name.replace("_", " "), color = if (isSel) theme.bg else theme.textBright, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Card(
-                                    shape = RoundedCornerShape(14.dp),
-                                    colors = CardDefaults.cardColors(containerColor = theme.surface),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(14.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column(Modifier.weight(1f)) {
-                                            Text("Cross-Account Auto-Split", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                                            Text("Prevent overdrafts by auto-debiting shortfall from secondary bank accounts.", color = theme.textMuted, fontSize = 11.sp)
-                                        }
-                                        Switch(
-                                            checked = autoSplitEnabled,
-                                            onCheckedChange = {
-                                                autoSplitEnabled = it
-                                                prefs.edit().putBoolean("auto_split_debit", it).apply()
-                                            },
-                                            colors = SwitchDefaults.colors(checkedThumbColor = theme.accent, checkedTrackColor = theme.surfaceAlt)
+                            SettingsScreenContent(
+                                theme = theme,
+                                autoSplitEnabled = autoSplitEnabled,
+                                phantomLockEnabled = phantomLockEnabled,
+                                activeThemeMode = activeThemeMode,
+                                isProUnlocked = isProUnlocked,
+                                onAutoSplitToggled = {
+                                    autoSplitEnabled = it
+                                    prefs.edit().putBoolean("auto_split_debit", it).apply()
+                                },
+                                onPhantomLockToggled = {
+                                    phantomLockEnabled = it
+                                    prefs.edit().putBoolean("phantom_lock_enabled", it).apply()
+                                },
+                                onThemeSelected = { mode ->
+                                    activeThemeMode = mode
+                                    prefs.edit().putString("selected_theme", mode.name).apply()
+                                },
+                                onExportPdf = {
+                                    scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords) }
+                                },
+                                onExportCsv = {
+                                    val compatList = flowRecords.map {
+                                        Transaction(
+                                            id = it.id,
+                                            accountId = it.sourcePocketId ?: it.targetPocketId ?: 0L,
+                                            flowType = if (it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.CARD_PAYMENT)) "OUT" else "IN",
+                                            type = it.nature.name,
+                                            category = it.category,
+                                            amount = it.amount,
+                                            timestamp = it.timestamp,
+                                            note = it.note,
+                                            isRecurring = it.isRecurring,
+                                            frequency = it.frequency
                                         )
                                     }
-                                }
-
-                                Card(
-                                    shape = RoundedCornerShape(14.dp),
-                                    colors = CardDefaults.cardColors(containerColor = theme.surface),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Text("Data & Ledger Operations", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-
-                                        Button(
-                                            onClick = { scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords) } },
-                                            colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
-                                            shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Text("Export PDF Ledger Dossier", color = theme.textBright, fontSize = 12.sp)
-                                        }
-
-                                        Button(
-                                            onClick = {
-                                                val compatList = flowRecords.map {
-                                                    Transaction(
-                                                        id = it.id,
-                                                        accountId = it.sourcePocketId ?: it.targetPocketId ?: 0L,
-                                                        flowType = if (it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.CARD_PAYMENT)) "OUT" else "IN",
-                                                        type = it.nature.name,
-                                                        category = it.category,
-                                                        amount = it.amount,
-                                                        timestamp = it.timestamp,
-                                                        note = it.note,
-                                                        isRecurring = it.isRecurring,
-                                                        frequency = it.frequency
-                                                    )
-                                                }
-                                                CsvExporter.exportAndShareTransactions(context, compatList)
-                                            },
-                                            colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
-                                            shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Text("Export CSV Ledger", color = theme.textBright, fontSize = 12.sp)
-                                        }
-
-                                        Button(
-                                            onClick = { showClearLedgerConfirmation = true },
-                                            colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed.copy(alpha = 0.2f)),
-                                            shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier.fillMaxWidth()
-                                        ) {
-                                            Text("Clear Entire Ledger History", color = theme.mildRed, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                    }
-                                }
-                            }
+                                    CsvExporter.exportAndShareTransactions(context, compatList)
+                                },
+                                onClearLedger = { showClearLedgerConfirmation = true },
+                                onOpenPaywall = { showMockPaywall = true }
+                            )
                         }
                     }
                 }
@@ -1088,6 +1116,97 @@ fun DashboardScreen(db: AppDatabase) {
 }
 
 @Composable
+private fun MetricCarouselCard(
+    tag: String,
+    status: String,
+    isPositive: Boolean,
+    heroText: String,
+    leftSub: String,
+    rightSub: String,
+    theme: ThemeColors,
+    onCardClick: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = theme.surface),
+        modifier = Modifier.fillMaxWidth().clickable { onCardClick() }
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(tag, color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (isPositive) theme.mildGreen.copy(alpha = 0.2f) else theme.mildRed.copy(alpha = 0.2f))
+                        .padding(horizontal = 8.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        status,
+                        color = if (isPositive) theme.mildGreen else theme.mildRed,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Text(
+                text = heroText,
+                color = theme.textBright,
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Black
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(leftSub, color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                Text(rightSub, color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun FlatStreamRow(
+    flow: FlowRecord,
+    rawPockets: List<VaultPocket>,
+    isPrivacyMode: Boolean,
+    theme: ThemeColors,
+    onLongClick: () -> Unit
+) {
+    val isOut = flow.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.CARD_PAYMENT)
+    val flowColor = if (isOut) theme.mildRed else theme.mildGreen
+
+    val accountName = remember(flow, rawPockets) {
+        val id = flow.sourcePocketId ?: flow.targetPocketId
+        rawPockets.firstOrNull { it.id == id }?.name ?: "Vault"
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = {}, onLongClick = onLongClick)
+            .padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(flow.note.ifBlank { flow.category }, color = theme.textBright, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+            Text("${flow.category} • $accountName", color = theme.textMuted, fontSize = 10.5.sp)
+        }
+
+        val amtStr = if (isPrivacyMode) "₹ •••" else "${if (isOut) "-" else "+"}₹${String.format("%,.0f", flow.amount)}"
+        Text(amtStr, color = flowColor, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
+    }
+}
+
+@Composable
 private fun CleanVaultHeader(
     totalLiquid: Double,
     totalSpent: Double,
@@ -1141,48 +1260,147 @@ private fun CleanVaultHeader(
 }
 
 @Composable
-fun FlowRecordDisplayRow(
-    flow: FlowRecord,
-    isPrivacyMode: Boolean,
+private fun SettingsScreenContent(
     theme: ThemeColors,
-    onClick: () -> Unit
+    autoSplitEnabled: Boolean,
+    phantomLockEnabled: Boolean,
+    activeThemeMode: AppThemeMode,
+    isProUnlocked: Boolean,
+    onAutoSplitToggled: (Boolean) -> Unit,
+    onPhantomLockToggled: (Boolean) -> Unit,
+    onThemeSelected: (AppThemeMode) -> Unit,
+    onExportPdf: () -> Unit,
+    onExportCsv: () -> Unit,
+    onClearLedger: () -> Unit,
+    onOpenPaywall: () -> Unit
 ) {
-    val isOut = flow.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.CARD_PAYMENT)
-    val flowColor = if (isOut) theme.mildRed else theme.mildGreen
-    val dStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(flow.timestamp))
-
-    Row(
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { onClick() }.padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+        contentPadding = PaddingValues(top = 12.dp, bottom = 96.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(
-                imageVector = if (isOut) Icons.Default.ArrowDownward else Icons.Default.ArrowUpward,
-                contentDescription = null,
-                tint = flowColor,
-                modifier = Modifier.size(16.dp)
-            )
-            Column {
-                Text(flow.note.ifBlank { flow.category }, color = theme.textBright, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
-                val label = when (flow.nature) {
-                    MovementNature.OUTFLOW -> "Spent"
-                    MovementNature.INFLOW -> "Received"
-                    MovementNature.CARD_PAYMENT -> "Card Bill Paid"
-                    MovementNature.PEER_LEND -> "Lent"
-                    MovementNature.PEER_COLLECT -> "Collected"
-                    MovementNature.PEER_BORROW -> "Borrowed"
-                    MovementNature.PEER_REPAY -> "Repaid"
-                    MovementNature.TRANSFER -> "Transferred"
+        item {
+            Text("Settings & Vault Controls", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        }
+
+        // 1. Runway & Ledger Guards
+        item {
+            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("LEDGER GUARDS", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Cross-Account Auto-Split", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Auto-debit secondary bank accounts if primary account lacks liquid funds.", color = theme.textMuted, fontSize = 10.5.sp)
+                        }
+                        Switch(
+                            checked = autoSplitEnabled,
+                            onCheckedChange = onAutoSplitToggled,
+                            colors = SwitchDefaults.colors(checkedThumbColor = theme.accent, checkedTrackColor = theme.surfaceAlt)
+                        )
+                    }
+
+                    HorizontalDivider(color = theme.surfaceAlt, thickness = 0.5.dp)
+
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Credit Card Phantom Lock", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Isolate unbilled card dues from liquid balance to prevent phantom runway.", color = theme.textMuted, fontSize = 10.5.sp)
+                        }
+                        Switch(
+                            checked = phantomLockEnabled,
+                            onCheckedChange = onPhantomLockToggled,
+                            colors = SwitchDefaults.colors(checkedThumbColor = theme.accent, checkedTrackColor = theme.surfaceAlt)
+                        )
+                    }
                 }
-                Text(label, color = theme.textMuted, fontSize = 10.sp)
             }
         }
 
-        Column(horizontalAlignment = Alignment.End) {
-            val amtStr = if (isPrivacyMode) "₹ •••" else "${if (isOut) "-" else "+"}₹ ${String.format("%,.0f", flow.amount)}"
-            Text(amtStr, color = flowColor, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
-            Text(dStr, color = theme.textMuted, fontSize = 10.sp)
+        // 2. Workspace & Appearance
+        item {
+            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("WORKSPACE & THEME", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        AppThemeMode.entries.forEach { mode ->
+                            val isSel = activeThemeMode == mode
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSel) theme.accent else theme.surfaceAlt)
+                                    .clickable { onThemeSelected(mode) }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(mode.name.replace("_", " "), color = if (isSel) theme.bg else theme.textBright, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Data Sovereignty & Export
+        item {
+            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("DATA SOVEREIGNTY", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+
+                    Button(
+                        onClick = onExportPdf,
+                        colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Export PDF Ledger Dossier", color = theme.textBright, fontSize = 12.sp)
+                    }
+
+                    Button(
+                        onClick = onExportCsv,
+                        colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Export CSV Ledger", color = theme.textBright, fontSize = 12.sp)
+                    }
+
+                    Button(
+                        onClick = onClearLedger,
+                        colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed.copy(alpha = 0.2f)),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Clear Entire Ledger History", color = theme.mildRed, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // 4. Developer & Sandbox Tools (Relocated from Top Banner)
+        item {
+            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("SANDBOX & INOUT PRO", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column {
+                            Text("Current Tier", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text(if (isProUnlocked) "Pro License Active" else "Free Sandbox Mode", color = if (isProUnlocked) theme.accent else theme.textMuted, fontSize = 11.sp)
+                        }
+                        Button(
+                            onClick = onOpenPaywall,
+                            colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Text(if (isProUnlocked) "Manage Pro" else "View Pro", color = theme.bg, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -1201,7 +1419,6 @@ private fun EditRecurringRuleDialog(
     var selectedDateEpoch by remember { mutableStateOf(rule.timestamp) }
 
     val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateEpoch))
-
     val calendar = Calendar.getInstance().apply { timeInMillis = selectedDateEpoch }
     val datePickerDialog = remember {
         DatePickerDialog(
