@@ -1,8 +1,6 @@
 package com.personal.inout.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -15,12 +13,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,8 +26,6 @@ fun MockPaywallBottomSheet(
     onSimulateRevokePro: () -> Unit
 ) {
     val theme = LocalThemeColors.current
-    var isSimulatingCheckout by remember { mutableStateOf(false) }
-    var selectedPaymentMethod by remember { mutableStateOf("Google Pay (UPI)") }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -77,7 +70,7 @@ fun MockPaywallBottomSheet(
                                 Text("LIFETIME", color = theme.bg, fontSize = 8.5.sp, fontWeight = FontWeight.ExtraBold)
                             }
                         }
-                        Text("Early Bird Supporter Pass", color = theme.textMuted, fontSize = 11.sp)
+                        Text("The High-Velocity Financial Operating System", color = theme.textMuted, fontSize = 11.sp)
                     }
                 }
 
@@ -92,29 +85,34 @@ fun MockPaywallBottomSheet(
                 }
             }
 
-            Divider(color = theme.surfaceAlt, thickness = 0.8.dp)
+            HorizontalDivider(color = theme.surfaceAlt, thickness = 0.8.dp)
 
-            // Features Checklist
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            // Current Core Features Checklist
+            Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
                 ProFeatureRow(
-                    icon = Icons.Outlined.Speed,
-                    title = "All 3 Cockpit Widgets",
-                    desc = "Unlock Eclipse Speedometer, Vault Orbit & Custom Styles"
+                    icon = Icons.Outlined.Bolt,
+                    title = "Unlimited Shorthand Macros",
+                    desc = "Bind frequent commands to custom 1-word aliases (e.g. alias chai = spent 20 chai)"
                 )
                 ProFeatureRow(
-                    icon = Icons.Outlined.PictureAsPdf,
-                    title = "Accountant PDF Dossiers",
-                    desc = "Watermark-free export with full balance sheets & tax tags"
-                )
-                ProFeatureRow(
-                    icon = Icons.Outlined.AllInclusive,
-                    title = "Unlimited Accounts & Friends",
-                    desc = "Add unlimited credit cards, wallets, borrowers & lenders"
+                    icon = Icons.Outlined.Savings,
+                    title = "Overdue Goal Allocation Guards",
+                    desc = "Dynamic date-bound pacing with missed installment debt tracking"
                 )
                 ProFeatureRow(
                     icon = Icons.Outlined.DocumentScanner,
-                    title = "Unlimited Receipt OCR Scans",
-                    desc = "Instant camera and gallery bill parsing"
+                    title = "On-Device Vision OCR & PDF Dossier",
+                    desc = "Instant camera receipt parsing + complete branded balance sheets for tax filing"
+                )
+                ProFeatureRow(
+                    icon = Icons.Outlined.SyncAlt,
+                    title = "Triangular Peer Debt Matrix",
+                    desc = "Execute zero-cash triangular settlements (settle friend A with friend B directly)"
+                )
+                ProFeatureRow(
+                    icon = Icons.Outlined.Shield,
+                    title = "Temptation Delay Quarantine & Auditor",
+                    desc = "Cool-off impulse capital tracking + automated subscription price creep alerts"
                 )
             }
 
@@ -124,30 +122,16 @@ fun MockPaywallBottomSheet(
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(containerColor = theme.surfaceAlt)
             ) {
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Icon(Icons.Default.Shop, contentDescription = null, tint = theme.textMuted, modifier = Modifier.size(16.dp))
-                            Text("Google Play Billing Sandbox", color = theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                        Text("MOCK ENGINE", color = theme.accent, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(Icons.Default.Shop, contentDescription = null, tint = theme.textMuted, modifier = Modifier.size(16.dp))
+                        Text("Google Play Billing Sandbox", color = theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(selectedPaymentMethod, color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        Text("Tap to test", color = theme.textMuted, fontSize = 10.sp)
-                    }
+                    Text("MOCK ENGINE", color = theme.accent, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                 }
             }
 
@@ -155,7 +139,6 @@ fun MockPaywallBottomSheet(
             if (!currentProState) {
                 Button(
                     onClick = {
-                        isSimulatingCheckout = true
                         onSimulatePurchaseSuccess()
                         onDismiss()
                     },
@@ -214,7 +197,7 @@ private fun ProFeatureRow(icon: androidx.compose.ui.graphics.vector.ImageVector,
     }
 }
 
-// ---------------- DEVELOPER SANDBOX BAR ----------------
+// ---------------- DEVELOPER SANDBOX BAR (Preserved for compatibility) ----------------
 
 @Composable
 fun DevSandboxTogglePill(
