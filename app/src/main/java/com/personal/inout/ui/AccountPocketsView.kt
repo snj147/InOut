@@ -1,5 +1,6 @@
 package com.personal.inout.ui
 
+import android.app.DatePickerDialog
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
@@ -8,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Pause
@@ -17,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -26,6 +29,7 @@ import com.personal.inout.data.PocketBalanceSummary
 import com.personal.inout.data.PocketType
 import com.personal.inout.data.VaultPocket
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -45,9 +49,9 @@ fun AccountPocketsView(
     onRecordCardSettlement: (cardId: Long, liquidId: Long, amt: Double) -> Unit = { _, _, _ -> },
     onPeerAction: (nature: MovementNature, peerId: Long, liquidId: Long, amt: Double) -> Unit = { _, _, _, _ -> }
 ) {
-    var peerActionTarget by remember { mutableStateOf<VaultPocket?>(null) }
+    var peerActionTarget by remember { mutableStateOf<Triple<VaultPocket, Double, MovementNature>?>(null) }
     var peerActionAmount by remember { mutableStateOf("") }
-    var peerSelectedNature by remember { mutableStateOf(MovementNature.PEER_LEND) }
+    var activePeerNature by remember { mutableStateOf(MovementNature.PEER_LEND) }
 
     var pocketToDelete by remember { mutableStateOf<Pair<VaultPocket, Double>?>(null) }
     var recurringToDelete by remember { mutableStateOf<FlowRecord?>(null) }
@@ -72,7 +76,8 @@ fun AccountPocketsView(
             }
         }
         items(pocketBalances.filter { it.pocketType == PocketType.LIQUID }, key = { it.pocketId }) { summary ->
-            val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId } ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = PocketType.LIQUID)
+            val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId }
+                ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = PocketType.LIQUID)
             PocketCard(
                 name = summary.name,
                 subtitle = "LIQUID ACCOUNT",
@@ -85,7 +90,7 @@ fun AccountPocketsView(
             )
         }
 
-        // 2. Goal Pots (Saving Goals) with Target Date & Overdue Indicators
+        // 2. Goal Pots (Saving Goals) - Inert Click, Long Press Edits
         val goalList = pocketBalances.filter { it.pocketType == PocketType.SAVING_GOAL }
         if (goalList.isNotEmpty()) {
             item {
@@ -99,18 +104,24 @@ fun AccountPocketsView(
                 }
             }
             items(goalList, key = { it.pocketId }) { pot ->
-                val rawPocket = rawPockets.firstOrNull { it.id.toString() == pot.pocketId } ?: VaultPocket(id = pot.pocketId.toLongOrNull() ?: 0L, name = pot.name, pocketType = PocketType.SAVING_GOAL)
+                val rawPocket = rawPockets.firstOrNull { it.id.toString() == pot.pocketId }
+                    ?: VaultPocket(id = pot.pocketId.toLongOrNull() ?: 0L, name = pot.name, pocketType = PocketType.SAVING_GOAL)
                 val progress = if (pot.targetAmount > 0) (pot.computedBalance / pot.targetAmount).toFloat().coerceIn(0f, 1f) else 0f
                 val shortfall = (pot.targetAmount - pot.computedBalance).coerceAtLeast(0.0)
 
                 val targetDateStr = if (pot.targetDateEpoch > 0) {
-                    SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(Date(pot.targetDateEpoch))
-                } else "No Date"
+                    SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(pot.targetDateEpoch))
+                } else "No Date Set"
 
                 val isOverdue = pot.targetDateEpoch > 0 && System.currentTimeMillis() > pot.targetDateEpoch && shortfall > 0
 
                 Card(
-                    modifier = Modifier.fillMaxWidth().combinedClickable(onClick = { onTransactPocket(rawPocket) }, onLongClick = { onEditPocket(rawPocket) }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .combinedClickable(
+                            onClick = { /* Clicking on a goal intentionally does nothing */ },
+                            onLongClick = { onEditPocket(rawPocket) }
+                        ),
                     shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF1B1917))
                 ) {
@@ -165,7 +176,8 @@ fun AccountPocketsView(
             }
         }
         items(pocketBalances.filter { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }, key = { it.pocketId }) { summary ->
-            val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId } ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = summary.pocketType)
+            val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId }
+                ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = summary.pocketType)
             val hasOutstanding = summary.computedBalance < 0.0
 
             Card(
@@ -221,7 +233,7 @@ fun AccountPocketsView(
             }
         }
 
-        // 4. People (Owed & Lent) - Permanent Transact Button & Clean Status Pill
+        // 4. People (Owed & Lent) - Restored Dynamic Pill Behavior
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -233,8 +245,25 @@ fun AccountPocketsView(
             }
         }
         items(pocketBalances.filter { it.pocketType == PocketType.PEER || it.pocketType == PocketType.COUNTERPARTY || it.subType == "PEER" }, key = { it.pocketId }) { summary ->
-            val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId } ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = summary.pocketType)
+            val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId }
+                ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = summary.pocketType)
             val bal = summary.computedBalance
+
+            val pillLabel = when {
+                bal > 0 -> "Collect"
+                bal < 0 -> "Repay"
+                else -> "Transact"
+            }
+            val pillBg = when {
+                bal > 0 -> Color(0xFF1E3326)
+                bal < 0 -> Color(0xFF332020)
+                else -> Color(0xFF282420)
+            }
+            val pillText = when {
+                bal > 0 -> Color(0xFF81C784)
+                bal < 0 -> Color(0xFFE57373)
+                else -> Color(0xFFE59C5C)
+            }
 
             Card(
                 modifier = Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = { onEditPocket(pocket) }),
@@ -270,15 +299,15 @@ fun AccountPocketsView(
 
                         Button(
                             onClick = {
-                                peerActionTarget = pocket
+                                peerActionTarget = Triple(pocket, bal, if (bal > 0) MovementNature.PEER_COLLECT else if (bal < 0) MovementNature.PEER_REPAY else MovementNature.PEER_LEND)
+                                activePeerNature = if (bal > 0) MovementNature.PEER_COLLECT else if (bal < 0) MovementNature.PEER_REPAY else MovementNature.PEER_LEND
                                 peerActionAmount = if (bal != 0.0) Math.abs(bal).toInt().toString() else ""
-                                peerSelectedNature = if (bal > 0) MovementNature.PEER_COLLECT else if (bal < 0) MovementNature.PEER_REPAY else MovementNature.PEER_LEND
                             },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF282420)),
+                            colors = ButtonDefaults.buttonColors(containerColor = pillBg),
                             shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 5.dp)
                         ) {
-                            Text("Transact", color = Color(0xFFE59C5C), fontSize = 11.5.sp)
+                            Text(pillLabel, color = pillText, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -324,7 +353,7 @@ fun AccountPocketsView(
                         val freqText = if (record.frequency != "NONE") record.frequency else record.recurringCadence
                         val dateDayStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(record.timestamp))
                         Text(
-                            text = if (isPrivacyMode) "Repeats $freqText • ₹••••" else "Repeats $freqText on $dateDayStr • ₹${record.amount.toInt()}",
+                            text = if (isPrivacyMode) "Repeats $freqText • ₹••••" else "Repeats $freqText (from $dateDayStr) • ₹${record.amount.toInt()}",
                             color = if (record.isPaused) Color(0xFF666666) else Color(0xFFE59C5C),
                             fontSize = 11.5.sp
                         )
@@ -350,31 +379,32 @@ fun AccountPocketsView(
         }
     }
 
-    // Compact Lend / Borrow / Settle Dialog
-    peerActionTarget?.let { peer ->
+    // Contextual Dual-Option Compact Peer Dialog
+    peerActionTarget?.let { (peer, bal, _) ->
+        val options = when {
+            bal > 0 -> listOf(MovementNature.PEER_COLLECT to "Collect", MovementNature.PEER_LEND to "Lend More")
+            bal < 0 -> listOf(MovementNature.PEER_REPAY to "Repay", MovementNature.PEER_BORROW to "Borrow More")
+            else -> listOf(MovementNature.PEER_LEND to "Lend", MovementNature.PEER_BORROW to "Borrow")
+        }
+
         AlertDialog(
             onDismissRequest = { peerActionTarget = null },
             containerColor = Color(0xFF1E1C1A),
             title = { Text("Peer Transaction: ${peer.name}", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf(
-                            MovementNature.PEER_LEND to "Lend",
-                            MovementNature.PEER_COLLECT to "Collect",
-                            MovementNature.PEER_BORROW to "Borrow",
-                            MovementNature.PEER_REPAY to "Repay"
-                        ).forEach { (nat, lbl) ->
-                            val isSel = peerSelectedNature == nat
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        options.forEach { (nat, lbl) ->
+                            val isSel = activePeerNature == nat
                             Box(
                                 modifier = Modifier
                                     .weight(1f)
                                     .background(if (isSel) Color(0xFFE59C5C) else Color(0xFF282420), RoundedCornerShape(6.dp))
-                                    .combinedClickable(onClick = { peerSelectedNature = nat })
-                                    .padding(vertical = 6.dp),
+                                    .combinedClickable(onClick = { activePeerNature = nat })
+                                    .padding(vertical = 7.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(lbl, color = if (isSel) Color(0xFF141211) else Color(0xFFCCCCCC), fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                                Text(lbl, color = if (isSel) Color(0xFF141211) else Color(0xFFCCCCCC), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -386,7 +416,7 @@ fun AccountPocketsView(
                     onClick = {
                         val amt = peerActionAmount.toDoubleOrNull() ?: 0.0
                         if (amt > 0 && defaultLiquidId != 0L) {
-                            onPeerAction(peerSelectedNature, peer.id, defaultLiquidId, amt)
+                            onPeerAction(activePeerNature, peer.id, defaultLiquidId, amt)
                         }
                         peerActionTarget = null
                     },
