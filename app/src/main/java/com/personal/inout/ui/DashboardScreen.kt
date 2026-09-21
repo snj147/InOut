@@ -18,6 +18,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
@@ -39,7 +40,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -189,7 +189,7 @@ fun DashboardScreen(db: AppDatabase) {
     // Pre-computed Date-Grouped Records outside LazyColumn DSL
     val groupedRecords = remember(flowRecords) {
         val calNow = Calendar.getInstance()
-        flowRecords.take(12).groupBy { flow ->
+        flowRecords.take(20).groupBy { flow ->
             val calRecord = Calendar.getInstance().apply { timeInMillis = flow.timestamp }
             when {
                 calNow.get(Calendar.YEAR) == calRecord.get(Calendar.YEAR) &&
@@ -455,6 +455,7 @@ fun DashboardScreen(db: AppDatabase) {
                             label = "fabRotation"
                         )
 
+                        // 3-Action Speed Dial Stack (Manual Entry, Camera OCR, Gallery OCR)
                         Column(
                             horizontalAlignment = Alignment.End,
                             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -466,6 +467,23 @@ fun DashboardScreen(db: AppDatabase) {
                                 exit = fadeOut() + slideOutVertically { it / 2 }
                             ) {
                                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    // 1. Manual Form Entry Action
+                                    SmallFloatingActionButton(
+                                        onClick = {
+                                            isFabExpanded = false
+                                            ocrPrefilledNote = ""
+                                            ocrPrefilledAmount = null
+                                            hudInDialogError = null
+                                            selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
+                                            showCommandHud = true
+                                        },
+                                        containerColor = theme.surfaceAlt,
+                                        contentColor = theme.accent
+                                    ) {
+                                        Icon(Icons.Default.EditNote, contentDescription = "Manual Entry", modifier = Modifier.size(20.dp))
+                                    }
+
+                                    // 2. Camera Receipt Scan Action
                                     SmallFloatingActionButton(
                                         onClick = {
                                             isFabExpanded = false
@@ -481,6 +499,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         Icon(Icons.Default.PhotoCamera, contentDescription = "Camera OCR", modifier = Modifier.size(18.dp))
                                     }
 
+                                    // 3. Gallery Bill Scan Action
                                     SmallFloatingActionButton(
                                         onClick = {
                                             isFabExpanded = false
@@ -519,14 +538,17 @@ fun DashboardScreen(db: AppDatabase) {
                 Box(modifier = Modifier.fillMaxSize().padding(padding).background(theme.bg)) {
                     when (selectedTab) {
                         0 -> {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                                verticalArrangement = Arrangement.spacedBy(14.dp),
-                                contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp)
+                            // Vault Home: Pinned Control Deck + Scrollable Flow Stream Underneath
+                            Column(
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)
                             ) {
-                                // 1. Swipable 4-Card Hero Carousel
-                                item {
-                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                // Pinned Section: 4-Card Carousel + Refined Calm Quick Bar + Flow Header
+                                Column(
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                    modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
+                                ) {
+                                    // 1. Swipable 4-Card Hero Carousel
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         HorizontalPager(
                                             state = pagerState,
                                             modifier = Modifier.fillMaxWidth()
@@ -592,92 +614,61 @@ fun DashboardScreen(db: AppDatabase) {
                                             }
                                         }
                                     }
-                                }
 
-                                // 2. Animated Glowing Border on Quick Bar
-                                item {
-                                    val infiniteTransition = rememberInfiniteTransition(label = "glowTransition")
-                                    val angle by infiniteTransition.animateFloat(
-                                        initialValue = 0f,
-                                        targetValue = 360f,
-                                        animationSpec = infiniteRepeatable(
-                                            animation = tween(durationMillis = 3500, easing = LinearEasing),
-                                            repeatMode = RepeatMode.Restart
-                                        ),
-                                        label = "rotateGlow"
-                                    )
-
-                                    val glowingBorderBrush = Brush.sweepGradient(
-                                        colors = listOf(theme.accent, theme.mildGreen, theme.mildRed, theme.accent)
-                                    )
-
+                                    // 2. Refined Static Border Glow on Quick Bar (No movement animations)
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .shadow(10.dp, RoundedCornerShape(16.dp), spotColor = theme.accent.copy(alpha = 0.5f))
-                                            .clip(RoundedCornerShape(16.dp))
+                                            .shadow(8.dp, RoundedCornerShape(14.dp), spotColor = theme.accent.copy(alpha = 0.45f))
+                                            .clip(RoundedCornerShape(14.dp))
                                             .background(theme.surface)
+                                            .border(1.5.dp, theme.accent.copy(alpha = 0.85f), RoundedCornerShape(14.dp))
                                     ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .matchParentSize()
-                                                .rotate(angle)
-                                                .background(glowingBorderBrush)
-                                        )
-
-                                        Card(
-                                            shape = RoundedCornerShape(14.dp),
-                                            colors = CardDefaults.cardColors(containerColor = theme.surface),
-                                            modifier = Modifier.fillMaxWidth().padding(2.dp)
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
-                                                verticalAlignment = Alignment.CenterVertically
+                                            Box(
+                                                modifier = Modifier.clip(CircleShape).background(theme.accent.copy(alpha = 0.2f)).padding(6.dp),
+                                                contentAlignment = Alignment.Center
                                             ) {
-                                                Box(
-                                                    modifier = Modifier.clip(CircleShape).background(theme.accent.copy(alpha = 0.2f)).padding(6.dp),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Icon(Icons.Default.Bolt, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
-                                                }
+                                                Icon(Icons.Default.Bolt, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
+                                            }
 
-                                                Spacer(Modifier.width(10.dp))
+                                            Spacer(Modifier.width(10.dp))
 
-                                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                                                    if (naturalLanguageInput.isEmpty()) {
-                                                        Text(
-                                                            text = placeholderHints[currentHintIndex],
-                                                            color = theme.textMuted.copy(alpha = 0.7f),
-                                                            fontSize = 12.5.sp,
-                                                            maxLines = 1
-                                                        )
-                                                    }
-                                                    BasicTextField(
-                                                        value = naturalLanguageInput,
-                                                        onValueChange = { naturalLanguageInput = it },
-                                                        singleLine = true,
-                                                        textStyle = TextStyle(color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Medium),
-                                                        cursorBrush = SolidColor(theme.accent),
-                                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                                        keyboardActions = KeyboardActions(onDone = { executeQuickBarCommand(naturalLanguageInput) }),
-                                                        modifier = Modifier.fillMaxWidth()
+                                            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                                if (naturalLanguageInput.isEmpty()) {
+                                                    Text(
+                                                        text = placeholderHints[currentHintIndex],
+                                                        color = theme.textMuted.copy(alpha = 0.7f),
+                                                        fontSize = 12.5.sp,
+                                                        maxLines = 1
                                                     )
                                                 }
+                                                BasicTextField(
+                                                    value = naturalLanguageInput,
+                                                    onValueChange = { naturalLanguageInput = it },
+                                                    singleLine = true,
+                                                    textStyle = TextStyle(color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+                                                    cursorBrush = SolidColor(theme.accent),
+                                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                                    keyboardActions = KeyboardActions(onDone = { executeQuickBarCommand(naturalLanguageInput) }),
+                                                    modifier = Modifier.fillMaxWidth()
+                                                )
+                                            }
 
-                                                if (naturalLanguageInput.isNotBlank()) {
-                                                    IconButton(onClick = { executeQuickBarCommand(naturalLanguageInput) }) {
-                                                        Icon(Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
-                                                    }
+                                            if (naturalLanguageInput.isNotBlank()) {
+                                                IconButton(onClick = { executeQuickBarCommand(naturalLanguageInput) }) {
+                                                    Icon(Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
                                                 }
                                             }
                                         }
                                     }
-                                }
 
-                                // 3. Flat, Date-Grouped Flow Stream
-                                item {
+                                    // Pinned Sub-Header Bar: Recent Flow + View All Link
                                     Row(
-                                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                        modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -694,36 +685,43 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
-                                if (flowRecords.isEmpty()) {
-                                    item {
-                                        Box(
-                                            modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text("No records yet. Type above or tap '+' to commit flow.", color = theme.textMuted, fontSize = 12.sp)
-                                        }
-                                    }
-                                } else {
-                                    groupedRecords.forEach { (dateHeader, records) ->
+                                // Scrollable Flow Stream: Slides underneath the pinned deck
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                    contentPadding = PaddingValues(bottom = 96.dp)
+                                ) {
+                                    if (flowRecords.isEmpty()) {
                                         item {
-                                            Text(
-                                                text = dateHeader.uppercase(Locale.getDefault()),
-                                                color = theme.textMuted,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                letterSpacing = 1.sp,
-                                                modifier = Modifier.padding(top = 8.dp)
-                                            )
+                                            Box(
+                                                modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text("No records yet. Type above or tap '+' to commit flow.", color = theme.textMuted, fontSize = 12.sp)
+                                            }
                                         }
-                                        items(records, key = { it.id }) { flow ->
-                                            FlatStreamRow(
-                                                flow = flow,
-                                                rawPockets = rawPockets,
-                                                isPrivacyMode = isPrivacyMode,
-                                                theme = theme,
-                                                onLongClick = { editingFlowRecord = flow }
-                                            )
-                                            HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.4f), thickness = 0.5.dp)
+                                    } else {
+                                        groupedRecords.forEach { (dateHeader, records) ->
+                                            item {
+                                                Text(
+                                                    text = dateHeader.uppercase(Locale.getDefault()),
+                                                    color = theme.textMuted,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    letterSpacing = 1.sp,
+                                                    modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)
+                                                )
+                                            }
+                                            items(records, key = { it.id }) { flow ->
+                                                FlatStreamRow(
+                                                    flow = flow,
+                                                    rawPockets = rawPockets,
+                                                    isPrivacyMode = isPrivacyMode,
+                                                    theme = theme,
+                                                    onLongClick = { editingFlowRecord = flow }
+                                                )
+                                                HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.4f), thickness = 0.5.dp)
+                                            }
                                         }
                                     }
                                 }
