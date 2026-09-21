@@ -15,6 +15,9 @@ interface StateFlowDao {
     @Delete
     suspend fun deleteFlowRecord(record: FlowRecord)
 
+    @Query("DELETE FROM flow_records WHERE id = :id")
+    suspend fun deleteFlowRecord(id: Long)
+
     @Query("SELECT * FROM flow_records ORDER BY timestamp DESC")
     fun getAllFlowRecords(): Flow<List<FlowRecord>>
 
