@@ -46,23 +46,23 @@ object FuzzyCommandParser {
         var workingInput = trimmed
         if (context != null) {
             val prefs = context.getSharedPreferences("vault_macros", Context.MODE_PRIVATE)
-            val matchedMacro = prefs.getString(trimmed.toLowerCase(Locale.ROOT), null)
+            val matchedMacro = prefs.getString(trimmed.lowercase(Locale.ROOT), null)
             if (matchedMacro != null) {
                 workingInput = matchedMacro
             }
         }
 
-        val lower = workingInput.toLowerCase(Locale.ROOT)
+        val lower = workingInput.lowercase(Locale.ROOT)
 
-        // 1. Macro Alias Definition: alias chai = spent 20 chai from cash
+        // 1. Shorthand Macro Alias
         if (lower.startsWith("alias ")) {
             val parts = workingInput.substring(6).split("=", limit = 2)
             if (parts.size == 2 && parts[0].isNotBlank() && parts[1].isNotBlank()) {
-                return ParsedIntent.SaveMacroAlias(parts[0].trim().toLowerCase(Locale.ROOT), parts[1].trim())
+                return ParsedIntent.SaveMacroAlias(parts[0].trim().lowercase(Locale.ROOT), parts[1].trim())
             }
         }
 
-        // 2. Burn Target Configuration: burn 600 or set burn 500
+        // 2. Set Daily Burn
         if (lower.startsWith("burn ") || lower.startsWith("set burn ")) {
             val amtMatcher = AMOUNT_PATTERN.matcher(workingInput)
             if (amtMatcher.find()) {
@@ -71,7 +71,7 @@ object FuzzyCommandParser {
             }
         }
 
-        // 3. Temptation Delay / Staged Desire: want 12000 watch or hold 4000 shoes
+        // 3. Staged Cool-Off Desires
         if (lower.startsWith("want ") || lower.startsWith("hold ")) {
             val amtMatcher = AMOUNT_PATTERN.matcher(workingInput)
             if (amtMatcher.find()) {
@@ -84,7 +84,7 @@ object FuzzyCommandParser {
             }
         }
 
-        // 4. Triangular Peer Debt Settle: settle rahul with amit [amount]
+        // 4. Triangular Peer Debt Resolution
         if (lower.startsWith("settle ")) {
             val clean = workingInput.substring(7).trim()
             val amtMatcher = AMOUNT_PATTERN.matcher(clean)
@@ -100,10 +100,10 @@ object FuzzyCommandParser {
             }
         }
 
-        // 5. Account Creation: create bank SBI, add card Amazon 50000 limit, add friend Rahul
+        // 5. Account / Pot Creation
         if (lower.startsWith("create ") || lower.startsWith("add ")) {
             val stripped = workingInput.substringAfter(" ").trim()
-            val subLower = stripped.toLowerCase(Locale.ROOT)
+            val subLower = stripped.lowercase(Locale.ROOT)
 
             when {
                 subLower.startsWith("bank ") || subLower.startsWith("account ") -> {
@@ -146,7 +146,7 @@ object FuzzyCommandParser {
             }
         }
 
-        // 7. Standard & Recurring Transactions
+        // 7. General Transactions & Salary Recurring
         val matcher = AMOUNT_PATTERN.matcher(workingInput)
         var amount: Double? = null
         var amountToken = ""
@@ -169,76 +169,91 @@ object FuzzyCommandParser {
         }
 
         val cleanPrompt = workingInput.replace(amountToken, " ").replace(Regex("\\s+"), " ").trim()
-        val cleanLower = cleanPrompt.toLowerCase(Locale.ROOT)
+        val cleanLower = cleanPrompt.lowercase(Locale.ROOT)
+
+        // Strict & Fuzzy Intent Mapping
+        val isCollect = cleanLower.startsWith("collect") || cleanLower.contains("collected") || cleanLower.contains("got back")
+        val isSalary = cleanLower.contains("salary") || cleanLower.contains("stipend")
+        val isLend = (cleanLower.startsWith("lent") || cleanLower.startsWith("lend") || cleanLower.contains(" lend to ") || cleanLower.contains(" lent to ")) && !isCollect
+        val isBorrow = cleanLower.startsWith("borrow") || cleanLower.startsWith("borrowed")
+        val isRepay = cleanLower.startsWith("repay") || cleanLower.startsWith("repaid")
+        val isInflow = (cleanLower.startsWith("got") || cleanLower.startsWith("received") || cleanLower.contains("credited") || isSalary) && !isCollect && !isBorrow
 
         val nature = when {
+            isCollect -> MovementNature.PEER_COLLECT
+            isRepay -> MovementNature.PEER_REPAY
+            isLend -> MovementNature.PEER_LEND
+            isBorrow -> MovementNature.PEER_BORROW
+            isInflow -> MovementNature.INFLOW
             cleanLower.startsWith("spent") || cleanLower.contains(" paid ") || cleanLower.startsWith("paid") || cleanLower.contains(" buy ") || cleanLower.contains(" bought ") -> MovementNature.OUTFLOW
-            cleanLower.startsWith("lent") || cleanLower.contains(" lend ") || cleanLower.contains(" lent to ") -> MovementNature.PEER_LEND
-            cleanLower.startsWith("borrowed") || cleanLower.contains(" borrow ") || cleanLower.contains(" borrowed from ") -> MovementNature.PEER_BORROW
-            cleanLower.startsWith("got") || cleanLower.startsWith("received") || cleanLower.contains(" credited ") || cleanLower.contains(" salary ") -> MovementNature.INFLOW
-            cleanLower.startsWith("collected") || cleanLower.contains(" collect ") -> MovementNature.PEER_COLLECT
-            cleanLower.startsWith("repaid") || cleanLower.contains(" repay ") -> MovementNature.PEER_REPAY
             cleanLower.startsWith("transferred") || cleanLower.contains(" transfer ") || cleanLower.contains(" save ") || cleanLower.contains(" to pot ") -> MovementNature.TRANSFER
             else -> MovementNature.OUTFLOW
         }
-
-        var matchedPocketId: Long? = null
-        var targetPocketId: Long? = null
-        var targetPersonName: String? = null
 
         val liquidPockets = activePockets.filter { it.pocketType == PocketType.LIQUID }
         val peerPockets = activePockets.filter { it.pocketType == PocketType.COUNTERPARTY || it.pocketType == PocketType.PEER }
         val goalPockets = activePockets.filter { it.pocketType == PocketType.SAVING_GOAL }
 
-        var bestPocketScore = Int.MAX_VALUE
-        var bestPocket: VaultPocket? = null
+        var matchedPocketId: Long? = null
+        var targetPocketId: Long? = null
+        var targetPersonName: String? = null
 
-        for (pocket in activePockets) {
-            val pocketNameLower = pocket.name.toLowerCase(Locale.ROOT)
-            if (cleanLower.contains(pocketNameLower)) {
+        // Match Bank / Liquid Pocket
+        var bestScore = Int.MAX_VALUE
+        var bestPocket: VaultPocket? = null
+        for (pocket in activePockets.filter { it.pocketType == PocketType.LIQUID || it.pocketType == PocketType.CREDIT_LINE }) {
+            val pName = pocket.name.lowercase(Locale.ROOT)
+            if (cleanLower.contains(pName)) {
                 bestPocket = pocket
-                bestPocketScore = 0
                 break
             }
             for (word in cleanLower.split(" ")) {
                 if (word.length >= 3) {
-                    val dist = levenshtein(word, pocketNameLower)
-                    if (dist <= 1 && dist < bestPocketScore) {
-                        bestPocketScore = dist
+                    val dist = levenshtein(word, pName)
+                    if (dist <= 1 && dist < bestScore) {
+                        bestScore = dist
                         bestPocket = pocket
                     }
                 }
             }
         }
-
         matchedPocketId = bestPocket?.id ?: liquidPockets.firstOrNull()?.id
 
+        // Goal Pot destination
         if (cleanLower.contains("pot") || cleanLower.contains("goal") || cleanLower.contains("save")) {
-            val matchedGoal = goalPockets.firstOrNull { cleanLower.contains(it.name.toLowerCase(Locale.ROOT)) }
-            if (matchedGoal != null) {
-                targetPocketId = matchedGoal.id
-            }
+            val matchedGoal = goalPockets.firstOrNull { cleanLower.contains(it.name.lowercase(Locale.ROOT)) }
+            if (matchedGoal != null) targetPocketId = matchedGoal.id
         }
 
+        // Peer name extraction
         if (nature in listOf(MovementNature.PEER_LEND, MovementNature.PEER_BORROW, MovementNature.PEER_COLLECT, MovementNature.PEER_REPAY)) {
-            val peerKeywords = listOf("to", "from", "with")
+            val peerKeywords = listOf("to", "from", "with", "by")
             val tokens = cleanPrompt.split(Regex("\\s+"))
             for (i in 0 until tokens.size - 1) {
-                if (tokens[i].toLowerCase(Locale.ROOT) in peerKeywords) {
-                    val candidateName = tokens[i + 1].replace(Regex("[^a-zA-Z0-9]"), "")
-                    if (candidateName.length > 1 && !candidateName.equals("bank", ignoreCase = true)) {
-                        targetPersonName = candidateName
-                        val matchedPeer = peerPockets.firstOrNull { it.name.equals(candidateName, ignoreCase = true) }
+                if (tokens[i].lowercase(Locale.ROOT) in peerKeywords) {
+                    val candidate = tokens[i + 1].replace(Regex("[^a-zA-Z0-9]"), "")
+                    if (candidate.length > 1 && !candidate.equals("bank", ignoreCase = true)) {
+                        targetPersonName = candidate
+                        val matchedPeer = peerPockets.firstOrNull { it.name.equals(candidate, ignoreCase = true) }
                         if (matchedPeer != null) targetPocketId = matchedPeer.id
+                        break
+                    }
+                }
+            }
+            if (targetPersonName == null) {
+                for (peer in peerPockets) {
+                    if (cleanLower.contains(peer.name.lowercase(Locale.ROOT))) {
+                        targetPersonName = peer.name
+                        targetPocketId = peer.id
                         break
                     }
                 }
             }
         }
 
-        val category = inferCategory(cleanLower)
+        val category = if (isSalary) "Salary" else inferCategory(cleanLower)
         val note = cleanPrompt
-            .replace(Regex("(?i)^(spent|paid|bought|got|received|lent|borrowed|transferred|collected|repaid)"), "")
+            .replace(Regex("(?i)^(spent|paid|bought|got|received|lent|lend|borrowed|borrow|transferred|collected|collect|repaid|repay|salary|auto)"), "")
             .replace(Regex("(?i)\\b(on|for|at|from|to|in|via|monthly|weekly|daily|every month)\\b"), "")
             .trim()
             .ifBlank { category }
@@ -267,7 +282,7 @@ object FuzzyCommandParser {
             text.contains("movie") || text.contains("netflix") || text.contains("party") || text.contains("trip") -> "Leisure"
             text.contains("salary") || text.contains("stipend") || text.contains("bonus") -> "Salary"
             text.contains("pot") || text.contains("goal") || text.contains("save") -> "Savings Pot"
-            text.contains("lend") || text.contains("lent") || text.contains("borrow") -> "Peer Transfer"
+            text.contains("lend") || text.contains("lent") || text.contains("borrow") || text.contains("collect") || text.contains("repay") -> "Peer Transfer"
             else -> "General"
         }
     }
