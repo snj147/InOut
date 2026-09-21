@@ -173,6 +173,23 @@ class WidgetCommandActivity : ComponentActivity() {
                         }
                     }
                 }
+                is ParsedIntent.CompoundTransactions -> {
+                    var successCount = 0
+                    for (sub in parsed.transactions) {
+                        val res = engine.recordMovement(
+                            nature = sub.nature,
+                            sourcePocketId = sub.matchedPocketId,
+                            targetPocketId = sub.targetPocketId,
+                            amount = sub.amount,
+                            category = sub.category,
+                            note = sub.merchant,
+                            autoSplitEnabled = autoSplit
+                        )
+                        if (res is VaultExecutionResult.Success) successCount++
+                    }
+                    Toast.makeText(applicationContext, "Recorded $successCount transactions", Toast.LENGTH_SHORT).show()
+                    finish()
+                }
                 is ParsedIntent.CreateAccount -> {
                     db.stateFlowDao().insertPocket(
                         VaultPocket(
@@ -186,6 +203,26 @@ class WidgetCommandActivity : ComponentActivity() {
                     )
                     Toast.makeText(applicationContext, "Account '${parsed.name}' created", Toast.LENGTH_SHORT).show()
                     finish()
+                }
+                is ParsedIntent.BreakGoalPot -> {
+                    val goal = rawPockets.firstOrNull { it.pocketType == PocketType.SAVING_GOAL && it.name.equals(parsed.potName, ignoreCase = true) }
+                    if (goal != null) {
+                        val balances = db.stateFlowDao().getPocketBalancesSync()
+                        val bal = balances.firstOrNull { it.pocketId == goal.id.toString() }?.computedBalance ?: 0.0
+                        if (bal > 0 && parsed.destinationPocketId != null) {
+                            engine.recordMovement(
+                                nature = MovementNature.TRANSFER,
+                                sourcePocketId = goal.id,
+                                targetPocketId = parsed.destinationPocketId,
+                                amount = bal,
+                                category = "Savings Pot",
+                                note = "Broken Pot Funds Return"
+                            )
+                        }
+                        db.stateFlowDao().updatePocket(goal.copy(isArchived = true))
+                        Toast.makeText(applicationContext, "Pot '${goal.name}' broken", Toast.LENGTH_SHORT).show()
+                        finish()
+                    }
                 }
                 is ParsedIntent.SetDailyBurn -> {
                     prefs.edit().putFloat("daily_burn_ceiling", parsed.newRate.toFloat()).apply()
