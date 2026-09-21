@@ -85,35 +85,6 @@ data class VaultPocket(
     val pocketName: String get() = name
 }
 
-@Suppress("FunctionName")
-fun VaultPocket(
-    id: Long = 0L,
-    name: String,
-    pocketType: PocketType,
-    subType: String? = null,
-    creditLimit: Double = 0.0,
-    isArchived: Boolean = false
-): VaultPocket = VaultPocket(
-    id = id,
-    name = name,
-    pocketType = pocketType,
-    subType = subType,
-    creditLimit = creditLimit,
-    isArchived = isArchived
-)
-
-@Suppress("FunctionName")
-fun VaultPocket(
-    name: String,
-    pocketType: PocketType,
-    subType: String? = null
-): VaultPocket = VaultPocket(
-    id = 0L,
-    name = name,
-    pocketType = pocketType,
-    subType = subType
-)
-
 data class PocketBalanceSummary(
     val pocketId: String = "",
     val name: String = "",
