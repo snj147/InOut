@@ -104,7 +104,6 @@ fun DashboardScreen(db: AppDatabase) {
     var showAllRecordsSheet by remember { mutableStateOf(false) }
     var showMockPaywall by remember { mutableStateOf(false) }
 
-    // Quick Command Terminal
     var naturalLanguageInput by remember { mutableStateOf("") }
     val placeholderHints = listOf(
         "Spent [Amount] on [Item]",
@@ -322,7 +321,6 @@ fun DashboardScreen(db: AppDatabase) {
                                 verticalArrangement = Arrangement.spacedBy(14.dp),
                                 contentPadding = PaddingValues(top = 6.dp, bottom = 96.dp)
                             ) {
-                                // Unified Runway & Liquidity Hero Card
                                 item {
                                     val totalLiquid = pocketBalances.filter { it.pocketType == PocketType.LIQUID }.sumOf { it.currentBalance }.coerceAtLeast(0.0)
                                     val runwayDays = if (dailyBurnCeiling > 0) (totalLiquid / dailyBurnCeiling).toInt() else 0
@@ -372,7 +370,6 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
-                                // Quick Command Terminal
                                 item {
                                     Card(
                                         shape = RoundedCornerShape(14.dp),
@@ -433,7 +430,6 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
-                                // OCR Scan Buttons
                                 item {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -629,7 +625,7 @@ fun DashboardScreen(db: AppDatabase) {
                             },
                             onClearLedger = {
                                 scope.launch {
-                                    flowRecords.forEach { db.stateFlowDao().deleteFlowRecord(it.id) }
+                                    flowRecords.forEach { db.stateFlowDao().deleteFlowRecordById(it.id) }
                                     alertManager.showAlert("All vault records cleared", AlertType.SUCCESS)
                                 }
                             }
@@ -678,7 +674,6 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
 
-                // In-Place Transaction Editor: Does NOT close the sheet underneath
                 editingFlowRecord?.let { flow ->
                     EditTransactionDialog(
                         record = flow,
@@ -695,7 +690,7 @@ fun DashboardScreen(db: AppDatabase) {
                         },
                         onDelete = {
                             scope.launch {
-                                db.stateFlowDao().deleteFlowRecord(flow.id)
+                                db.stateFlowDao().deleteFlowRecordById(flow.id)
                                 editingFlowRecord = null
                                 alertManager.showAlert("Transaction deleted and balance restored", AlertType.SUCCESS)
                             }
@@ -710,7 +705,6 @@ fun DashboardScreen(db: AppDatabase) {
                         isProUser = isProUnlocked,
                         onDismiss = { showAllRecordsSheet = false },
                         onEditRecord = { flow ->
-                            // Open editor dialog ON TOP of the sheet without dismissing it
                             editingFlowRecord = flow
                         },
                         onExportCsv = {
@@ -789,7 +783,6 @@ fun DashboardScreen(db: AppDatabase) {
                 }
             }
 
-            // Top Floating Notification Banner
             VaultFloatingTopOverlay(alertManager = alertManager, theme = theme)
         }
     }
@@ -935,7 +928,6 @@ private fun EditTransactionDialog(
 
                 Text("Category", color = theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
 
-                // 2-row wrapping flow containing all categories
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
