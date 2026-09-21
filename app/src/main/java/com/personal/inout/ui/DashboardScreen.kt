@@ -54,7 +54,7 @@ fun DashboardScreen(db: AppDatabase) {
     val prefs = remember { context.getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE) }
 
     val alertManager = remember { VaultAlertManager() }
-    val ledgerEngine = remember { VaultLedgerEngine(db.stateFlowDao()) }
+    val ledgerEngine = remember { VaultLedgerEngine(db.stateFlowDao(), prefs) }
 
     LaunchedEffect(Unit) {
         activity?.let { InAppUpdateHelper.checkForUpdate(it) }
@@ -76,6 +76,10 @@ fun DashboardScreen(db: AppDatabase) {
         mutableStateOf(prefs.getFloat("daily_burn_ceiling", 450f).toDouble())
     }
 
+    var autoSplitEnabled by remember {
+        mutableStateOf(prefs.getBoolean("auto_split_debit", false))
+    }
+
     val theme = when (activeThemeMode) {
         AppThemeMode.AMBER_OCHRE -> AmberTheme
         AppThemeMode.OLIVE_MATCHA -> OliveMatchaTheme
@@ -85,11 +89,25 @@ fun DashboardScreen(db: AppDatabase) {
     val pocketBalances by db.stateFlowDao().observePocketBalances().collectAsState(initial = emptyList())
     val rawPockets by db.stateFlowDao().observeAllActivePockets().collectAsState(initial = emptyList())
     val flowRecords by db.stateFlowDao().observeAllFlowRecords().collectAsState(initial = emptyList())
+    val stagedDesires by db.stateFlowDao().observeActiveStagedDesires().collectAsState(initial = emptyList())
+    val savedImpulseCapital by db.stateFlowDao().observeSavedImpulseTotal().collectAsState(initial = 0.0)
 
     val recurringTemplates = remember(flowRecords) {
         flowRecords.filter { it.isRecurring && it.frequency != "NONE" }
             .distinctBy { "${it.note}_${it.amount}_${it.frequency}" }
     }
+
+    // Calculations
+    val totalLiquid = remember(pocketBalances) {
+        pocketBalances.filter { it.pocketType == PocketType.LIQUID }.sumOf { it.currentBalance }.coerceAtLeast(0.0)
+    }
+    val unpaidCardDues = remember(pocketBalances) {
+        pocketBalances.filter { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }
+            .filter { it.computedBalance < 0.0 }
+            .sumOf { Math.abs(it.computedBalance) }
+    }
+    val trueSafeLiquid = (totalLiquid - unpaidCardDues).coerceAtLeast(0.0)
+    val runwayDays = if (dailyBurnCeiling > 0) (trueSafeLiquid / dailyBurnCeiling).toInt() else 0
 
     var selectedTab by remember { mutableStateOf(0) }
     var isPrivacyMode by remember { mutableStateOf(false) }
@@ -100,22 +118,32 @@ fun DashboardScreen(db: AppDatabase) {
 
     var editingPocket by remember { mutableStateOf<VaultPocket?>(null) }
     var editingFlowRecord by remember { mutableStateOf<FlowRecord?>(null) }
+    var recordPendingDeletion by remember { mutableStateOf<FlowRecord?>(null) }
     var showCreatePocketDialog by remember { mutableStateOf(false) }
     var showAllRecordsSheet by remember { mutableStateOf(false) }
     var showMockPaywall by remember { mutableStateOf(false) }
+    var showBurnEditDialog by remember { mutableStateOf(false) }
+    var showClearLedgerConfirmation by remember { mutableStateOf(false) }
 
+    // Quick Command Bar & Dynamic Preview
     var naturalLanguageInput by remember { mutableStateOf("") }
+    val previewParsed = remember(naturalLanguageInput, rawPockets) {
+        if (naturalLanguageInput.length >= 4) NaturalLanguageParser.parse(naturalLanguageInput, rawPockets, context) else null
+    }
+
     val placeholderHints = listOf(
         "Spent [Amount] on [Item]",
-        "Lent [Amount] to [Name]",
-        "Got [Amount] from [Name/Source]",
-        "Borrowed [Amount] from [Name]",
-        "Transferred [Amount] from [Bank] to [Bank]"
+        "create bank SBI / add card ICICI 50000",
+        "monthly 1500 for wifi from SBI",
+        "goal phone 40000 by nov",
+        "burn 600 (update daily target)",
+        "hold 4000 sneakers (cool-off staging)",
+        "settle Rahul with Amit"
     )
     var currentHintIndex by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) {
-            delay(3400)
+            delay(3600)
             currentHintIndex = (currentHintIndex + 1) % placeholderHints.size
         }
     }
@@ -172,69 +200,107 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    fun executeNaturalLanguageCommand(text: String) {
-        val parsed = NaturalLanguageParser.parse(text, rawPockets)
-        if (parsed != null) {
-            scope.launch {
-                val autoSplit = prefs.getBoolean("auto_split_debit", false)
+    fun executeQuickBarCommand(text: String) {
+        val parsed = NaturalLanguageParser.parse(text, rawPockets, context)
+        if (parsed == null) {
+            alertManager.showAlert("Unrecognized command syntax.", AlertType.WARNING)
+            return
+        }
 
-                var sourceId: Long?
-                var targetId: Long?
-
-                if (parsed.nature == MovementNature.TRANSFER) {
-                    sourceId = parsed.matchedPocketId
-                    targetId = parsed.targetPocketId
-                } else if (parsed.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND)) {
-                    sourceId = parsed.matchedPocketId
-                    targetId = null
-                } else {
-                    sourceId = null
-                    targetId = parsed.matchedPocketId
+        scope.launch {
+            when (parsed) {
+                is ParsedIntent.SetDailyBurn -> {
+                    dailyBurnCeiling = parsed.newRate
+                    prefs.edit().putFloat("daily_burn_ceiling", parsed.newRate.toFloat()).apply()
+                    alertManager.showAlert("Daily Burn updated to ₹${parsed.newRate.toInt()}/day", AlertType.SUCCESS)
+                    naturalLanguageInput = ""
                 }
-
-                if (parsed.targetPersonName != null) {
-                    var personPocket = rawPockets.firstOrNull {
-                        it.pocketType == PocketType.COUNTERPARTY && it.name.equals(parsed.targetPersonName, ignoreCase = true)
+                is ParsedIntent.SaveMacroAlias -> {
+                    val macroPrefs = context.getSharedPreferences("vault_macros", Context.MODE_PRIVATE)
+                    macroPrefs.edit().putString(parsed.alias, parsed.fullCommand).apply()
+                    alertManager.showAlert("Macro '${parsed.alias}' mapped to '${parsed.fullCommand}'", AlertType.SUCCESS)
+                    naturalLanguageInput = ""
+                }
+                is ParsedIntent.StageDesire -> {
+                    db.stateFlowDao().insertStagedDesire(
+                        StagedDesire(name = parsed.name, amount = parsed.amount)
+                    )
+                    alertManager.showAlert("Staged '${parsed.name}' in 48-hr cool-off quarantine", AlertType.INFO)
+                    naturalLanguageInput = ""
+                }
+                is ParsedIntent.TriangularSettle -> {
+                    when (val res = ledgerEngine.triangularPeerSettle(parsed.debtor, parsed.creditor, parsed.amount)) {
+                        is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
+                        is VaultExecutionResult.Success -> {
+                            alertManager.showAlert(res.summary, AlertType.SUCCESS)
+                            naturalLanguageInput = ""
+                        }
                     }
-                    if (personPocket == null) {
-                        val newId = db.stateFlowDao().insertPocket(
-                            VaultPocket(
-                                name = parsed.targetPersonName,
-                                pocketType = PocketType.COUNTERPARTY,
-                                subType = "PEER"
-                            )
+                }
+                is ParsedIntent.CreateAccount -> {
+                    db.stateFlowDao().insertPocket(
+                        VaultPocket(
+                            name = parsed.name,
+                            pocketType = parsed.type,
+                            subType = parsed.type.name,
+                            creditLimit = parsed.limit,
+                            targetAmount = parsed.targetAmount,
+                            targetDateEpoch = parsed.targetDateEpoch
                         )
-                        personPocket = VaultPocket(id = newId, name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY, subType = "PEER")
-                    }
+                    )
+                    alertManager.showAlert("Account '${parsed.name}' created", AlertType.SUCCESS)
+                    naturalLanguageInput = ""
+                }
+                is ParsedIntent.Transaction -> {
+                    var sourceId: Long? = parsed.matchedPocketId
+                    var targetId: Long? = parsed.targetPocketId
 
-                    if (parsed.nature == MovementNature.PEER_LEND) {
-                        sourceId = parsed.matchedPocketId
-                        targetId = personPocket.id
-                    } else {
-                        sourceId = personPocket.id
+                    if (parsed.nature == MovementNature.INFLOW) {
+                        sourceId = null
                         targetId = parsed.matchedPocketId
                     }
-                }
 
-                when (val res = ledgerEngine.recordMovement(
-                    nature = parsed.nature,
-                    sourcePocketId = sourceId,
-                    targetPocketId = targetId,
-                    amount = parsed.amount,
-                    category = parsed.category,
-                    note = parsed.merchant,
-                    timestamp = parsed.timestamp,
-                    autoSplitEnabled = autoSplit
-                )) {
-                    is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
-                    is VaultExecutionResult.Success -> {
-                        alertManager.showAlert(res.summary, AlertType.SUCCESS)
-                        naturalLanguageInput = ""
+                    if (parsed.targetPersonName != null) {
+                        var personPocket = rawPockets.firstOrNull {
+                            it.pocketType == PocketType.COUNTERPARTY && it.name.equals(parsed.targetPersonName, ignoreCase = true)
+                        }
+                        if (personPocket == null) {
+                            val newId = db.stateFlowDao().insertPocket(
+                                VaultPocket(name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY, subType = "PEER")
+                            )
+                            personPocket = VaultPocket(id = newId, name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY, subType = "PEER")
+                        }
+
+                        if (parsed.nature == MovementNature.PEER_LEND) {
+                            sourceId = parsed.matchedPocketId
+                            targetId = personPocket.id
+                        } else {
+                            sourceId = personPocket.id
+                            targetId = parsed.matchedPocketId
+                        }
+                    }
+
+                    when (val res = ledgerEngine.recordMovement(
+                        nature = parsed.nature,
+                        sourcePocketId = sourceId,
+                        targetPocketId = targetId,
+                        amount = parsed.amount,
+                        category = parsed.category,
+                        note = parsed.merchant,
+                        timestamp = parsed.timestamp,
+                        autoSplitEnabled = autoSplitEnabled,
+                        isRecurring = parsed.isRecurring,
+                        frequency = parsed.frequency
+                    )) {
+                        is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
+                        is VaultExecutionResult.Success -> {
+                            alertManager.showAlert(res.summary, AlertType.SUCCESS)
+                            res.spikePacingMessage?.let { alertManager.showAlert(it, AlertType.INFO) }
+                            naturalLanguageInput = ""
+                        }
                     }
                 }
             }
-        } else {
-            alertManager.showAlert("Action missing. Start with: Spent, Lent, Got, Borrowed, Transferred", AlertType.WARNING)
         }
     }
 
@@ -248,7 +314,7 @@ fun DashboardScreen(db: AppDatabase) {
                 topBar = {
                     Column {
                         CleanVaultHeader(
-                            totalLiquid = pocketBalances.filter { it.pocketType == PocketType.LIQUID }.sumOf { it.currentBalance }.coerceAtLeast(0.0),
+                            totalLiquid = trueSafeLiquid,
                             totalSpent = flowRecords.filter { it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY) }.sumOf { it.amount },
                             isProUser = isProUnlocked,
                             isPrivacyMode = isPrivacyMode,
@@ -321,14 +387,12 @@ fun DashboardScreen(db: AppDatabase) {
                                 verticalArrangement = Arrangement.spacedBy(14.dp),
                                 contentPadding = PaddingValues(top = 6.dp, bottom = 96.dp)
                             ) {
+                                // Interactive Hero Card (Runway & Phantom Lock)
                                 item {
-                                    val totalLiquid = pocketBalances.filter { it.pocketType == PocketType.LIQUID }.sumOf { it.currentBalance }.coerceAtLeast(0.0)
-                                    val runwayDays = if (dailyBurnCeiling > 0) (totalLiquid / dailyBurnCeiling).toInt() else 0
-
                                     Card(
                                         shape = RoundedCornerShape(20.dp),
                                         colors = CardDefaults.cardColors(containerColor = theme.surface),
-                                        modifier = Modifier.fillMaxWidth()
+                                        modifier = Modifier.fillMaxWidth().clickable { showBurnEditDialog = true }
                                     ) {
                                         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                             Row(
@@ -363,73 +427,146 @@ fun DashboardScreen(db: AppDatabase) {
                                                 modifier = Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
-                                                Text("Burn Target: ₹${dailyBurnCeiling.toInt()}/day", color = theme.textMuted, fontSize = 11.sp)
-                                                Text("Available: ₹${String.format("%,.0f", totalLiquid)}", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                Text("Burn Target: ₹${dailyBurnCeiling.toInt()}/day ✎", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                                                Text("Safe Liquid: ₹${String.format("%,.0f", trueSafeLiquid)}", color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+
+                                            if (unpaidCardDues > 0.0) {
+                                                Text(
+                                                    "₹${unpaidCardDues.toInt()} auto-reserved for unpaid card liability (Phantom Lock)",
+                                                    color = theme.textMuted,
+                                                    fontSize = 10.sp
+                                                )
                                             }
                                         }
                                     }
                                 }
 
+                                // Multi-Intent Quick Bar with Dynamic Runway Preview
                                 item {
                                     Card(
                                         shape = RoundedCornerShape(14.dp),
                                         colors = CardDefaults.cardColors(containerColor = theme.surface),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .border(1.5.dp, theme.accent.copy(alpha = 0.8f), RoundedCornerShape(14.dp))
+                                        modifier = Modifier.fillMaxWidth().border(1.5.dp, theme.accent.copy(alpha = 0.8f), RoundedCornerShape(14.dp))
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(CircleShape)
-                                                    .background(theme.accent.copy(alpha = 0.2f))
-                                                    .padding(6.dp),
-                                                contentAlignment = Alignment.Center
+                                        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.fillMaxWidth()
                                             ) {
-                                                Icon(Icons.Default.Bolt, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
-                                            }
+                                                Box(
+                                                    modifier = Modifier.clip(CircleShape).background(theme.accent.copy(alpha = 0.2f)).padding(6.dp),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(Icons.Default.Bolt, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
+                                                }
 
-                                            Spacer(Modifier.width(10.dp))
+                                                Spacer(Modifier.width(10.dp))
 
-                                            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                                                if (naturalLanguageInput.isEmpty()) {
-                                                    Text(
-                                                        text = placeholderHints[currentHintIndex],
-                                                        color = theme.textMuted.copy(alpha = 0.7f),
-                                                        fontSize = 13.sp,
-                                                        maxLines = 1
+                                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                                    if (naturalLanguageInput.isEmpty()) {
+                                                        Text(
+                                                            text = placeholderHints[currentHintIndex],
+                                                            color = theme.textMuted.copy(alpha = 0.7f),
+                                                            fontSize = 12.5.sp,
+                                                            maxLines = 1
+                                                        )
+                                                    }
+                                                    BasicTextField(
+                                                        value = naturalLanguageInput,
+                                                        onValueChange = { naturalLanguageInput = it },
+                                                        singleLine = true,
+                                                        textStyle = TextStyle(color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+                                                        cursorBrush = SolidColor(theme.accent),
+                                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                                        keyboardActions = KeyboardActions(onDone = { executeQuickBarCommand(naturalLanguageInput) }),
+                                                        modifier = Modifier.fillMaxWidth()
                                                     )
                                                 }
-                                                BasicTextField(
-                                                    value = naturalLanguageInput,
-                                                    onValueChange = { naturalLanguageInput = it },
-                                                    singleLine = true,
-                                                    textStyle = TextStyle(
-                                                        color = theme.textBright,
-                                                        fontSize = 13.sp,
-                                                        fontWeight = FontWeight.Medium
-                                                    ),
-                                                    cursorBrush = SolidColor(theme.accent),
-                                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                                    keyboardActions = KeyboardActions(onDone = {
-                                                        executeNaturalLanguageCommand(naturalLanguageInput)
-                                                    }),
-                                                    modifier = Modifier.fillMaxWidth()
-                                                )
+
+                                                if (naturalLanguageInput.isNotBlank()) {
+                                                    IconButton(onClick = { executeQuickBarCommand(naturalLanguageInput) }) {
+                                                        Icon(Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
+                                                    }
+                                                }
                                             }
 
-                                            if (naturalLanguageInput.isNotBlank()) {
-                                                IconButton(onClick = { executeNaturalLanguageCommand(naturalLanguageInput) }) {
-                                                    Icon(Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
+                                            // Dynamic Impact Preview Chip
+                                            if (previewParsed is ParsedIntent.Transaction && previewParsed.nature == MovementNature.OUTFLOW && previewParsed.amount > 0) {
+                                                val projectedLiquid = (trueSafeLiquid - previewParsed.amount).coerceAtLeast(0.0)
+                                                val projectedDays = if (dailyBurnCeiling > 0) (projectedLiquid / dailyBurnCeiling).toInt() else 0
+                                                val deltaDays = runwayDays - projectedDays
+                                                Spacer(Modifier.height(6.dp))
+                                                Text(
+                                                    text = "Impact: Runway drops from ${runwayDays}d → ${projectedDays}d (-${deltaDays}d)",
+                                                    color = theme.mildRed,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Staged Desires Cool-Off List
+                                if (stagedDesires.isNotEmpty()) {
+                                    item {
+                                        Text("Cool-Off Quarantine (Temptation Delay)", color = theme.textMuted, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    items(stagedDesires, key = { it.id }) { desire ->
+                                        Card(
+                                            shape = RoundedCornerShape(12.dp),
+                                            colors = CardDefaults.cardColors(containerColor = theme.surfaceAlt),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Column {
+                                                    Text(desire.name, color = theme.textBright, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                                                    Text("₹${desire.amount.toInt()} • 48h Cool-off Active", color = theme.textMuted, fontSize = 11.sp)
+                                                }
+                                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                    Button(
+                                                        onClick = {
+                                                            scope.launch {
+                                                                db.stateFlowDao().updateStagedDesire(desire.copy(status = "ARCHIVED"))
+                                                                alertManager.showAlert("Desire dropped! Saved ₹${desire.amount.toInt()}", AlertType.SUCCESS)
+                                                            }
+                                                        },
+                                                        colors = ButtonDefaults.buttonColors(containerColor = theme.mildGreen),
+                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                                    ) {
+                                                        Text("Drop (Save)", color = theme.bg, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                    }
+                                                    Button(
+                                                        onClick = {
+                                                            scope.launch {
+                                                                db.stateFlowDao().updateStagedDesire(desire.copy(status = "EXECUTED"))
+                                                                ledgerEngine.recordMovement(
+                                                                    nature = MovementNature.OUTFLOW,
+                                                                    sourcePocketId = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id,
+                                                                    amount = desire.amount,
+                                                                    category = desire.category,
+                                                                    note = desire.name,
+                                                                    autoSplitEnabled = autoSplitEnabled
+                                                                )
+                                                            }
+                                                        },
+                                                        colors = ButtonDefaults.buttonColors(containerColor = theme.surface),
+                                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                                    ) {
+                                                        Text("Buy", color = theme.textBright, fontSize = 10.sp)
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 }
 
+                                // OCR Buttons
                                 item {
                                     Row(
                                         modifier = Modifier.fillMaxWidth(),
@@ -453,9 +590,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         }
 
                                         OutlinedButton(
-                                            onClick = {
-                                                photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                                            },
+                                            onClick = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                                             modifier = Modifier.weight(1f).height(40.dp),
                                             shape = RoundedCornerShape(10.dp),
                                             colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent)
@@ -488,11 +623,7 @@ fun DashboardScreen(db: AppDatabase) {
 
                                 if (flowRecords.isEmpty()) {
                                     item {
-                                        Card(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            shape = RoundedCornerShape(16.dp),
-                                            colors = CardDefaults.cardColors(containerColor = theme.surface)
-                                        ) {
+                                        Card(modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = theme.surface)) {
                                             Box(Modifier.fillMaxWidth().padding(28.dp), contentAlignment = Alignment.Center) {
                                                 Text("No records yet. Type above or tap '+' to commit flow.", color = theme.textMuted, fontSize = 12.sp)
                                             }
@@ -535,15 +666,21 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
                             },
-                            onStopRecurringSchedule = { schedule ->
+                            onTogglePauseRecurring = { schedule ->
                                 scope.launch {
-                                    db.stateFlowDao().updateFlowRecord(schedule.copy(isRecurring = false, frequency = "NONE"))
-                                    alertManager.showAlert("Recurring rule cancelled for ${schedule.note.ifBlank { schedule.category }}", AlertType.SUCCESS)
+                                    db.stateFlowDao().setRecurringPausedState(schedule.id, !schedule.isPaused)
+                                    alertManager.showAlert(if (schedule.isPaused) "Resumed rule" else "Paused rule", AlertType.SUCCESS)
+                                }
+                            },
+                            onEditRecurring = { schedule -> editingFlowRecord = schedule },
+                            onDeleteRecurringSafe = { schedule ->
+                                scope.launch {
+                                    db.stateFlowDao().deleteFlowRecordById(schedule.id)
+                                    alertManager.showAlert("Recurring schedule deleted", AlertType.SUCCESS)
                                 }
                             },
                             onRecordCardSettlement = { cardId, liquidId, amt ->
                                 scope.launch {
-                                    val autoSplit = prefs.getBoolean("auto_split_debit", false)
                                     when (val res = ledgerEngine.recordMovement(
                                         nature = MovementNature.CARD_PAYMENT,
                                         sourcePocketId = liquidId,
@@ -551,7 +688,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         amount = amt,
                                         category = "Bill Payment",
                                         note = "Card Dues Clearance",
-                                        autoSplitEnabled = autoSplit
+                                        autoSplitEnabled = autoSplitEnabled
                                     )) {
                                         is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
                                         is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
@@ -560,12 +697,7 @@ fun DashboardScreen(db: AppDatabase) {
                             },
                             onPeerAction = { nature, peerId, liquidId, amt ->
                                 scope.launch {
-                                    val autoSplit = prefs.getBoolean("auto_split_debit", false)
-                                    val (src, tgt) = if (nature in listOf(MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
-                                        liquidId to peerId
-                                    } else {
-                                        peerId to liquidId
-                                    }
+                                    val (src, tgt) = if (nature in listOf(MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) liquidId to peerId else peerId to liquidId
                                     when (val res = ledgerEngine.recordMovement(
                                         nature = nature,
                                         sourcePocketId = src,
@@ -573,7 +705,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         amount = amt,
                                         category = "Peer Transfer",
                                         note = nature.name,
-                                        autoSplitEnabled = autoSplit
+                                        autoSplitEnabled = autoSplitEnabled
                                     )) {
                                         is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
                                         is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
@@ -589,11 +721,9 @@ fun DashboardScreen(db: AppDatabase) {
                         )
 
                         3 -> {
-                            // Settings Tab: Rendered inline to cleanly match all preference operations
+                            // Clean Settings Screen: No Daily Burn, Cross-Account Auto-Split Toggle Included
                             Column(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 12.dp),
                                 verticalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
                                 Text("Settings & Vault Controls", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
@@ -620,15 +750,35 @@ fun DashboardScreen(db: AppDatabase) {
                                                         .padding(vertical = 8.dp),
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    Text(
-                                                        mode.name.replace("_", " "),
-                                                        color = if (isSel) theme.bg else theme.textBright,
-                                                        fontSize = 10.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    )
+                                                    Text(mode.name.replace("_", " "), color = if (isSel) theme.bg else theme.textBright, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                                 }
                                             }
                                         }
+                                    }
+                                }
+
+                                Card(
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = CardDefaults.cardColors(containerColor = theme.surface),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(Modifier.weight(1f)) {
+                                            Text("Cross-Account Auto-Split", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                            Text("Prevent overdrafts by auto-debiting shortfall from other bank accounts.", color = theme.textMuted, fontSize = 11.sp)
+                                        }
+                                        Switch(
+                                            checked = autoSplitEnabled,
+                                            onCheckedChange = {
+                                                autoSplitEnabled = it
+                                                prefs.edit().putBoolean("auto_split_debit", it).apply()
+                                            },
+                                            colors = SwitchDefaults.colors(checkedThumbColor = theme.accent, checkedTrackColor = theme.surfaceAlt)
+                                        )
                                     }
                                 }
 
@@ -641,11 +791,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         Text("Data & Ledger Operations", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
 
                                         Button(
-                                            onClick = {
-                                                scope.launch {
-                                                    PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords)
-                                                }
-                                            },
+                                            onClick = { scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords) } },
                                             colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
                                             shape = RoundedCornerShape(8.dp),
                                             modifier = Modifier.fillMaxWidth()
@@ -679,12 +825,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         }
 
                                         Button(
-                                            onClick = {
-                                                scope.launch {
-                                                    flowRecords.forEach { db.stateFlowDao().deleteFlowRecordById(it.id) }
-                                                    alertManager.showAlert("All vault records cleared", AlertType.SUCCESS)
-                                                }
-                                            },
+                                            onClick = { showClearLedgerConfirmation = true },
                                             colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed.copy(alpha = 0.2f)),
                                             shape = RoundedCornerShape(8.dp),
                                             modifier = Modifier.fillMaxWidth()
@@ -696,6 +837,57 @@ fun DashboardScreen(db: AppDatabase) {
                             }
                         }
                     }
+                }
+
+                if (showBurnEditDialog) {
+                    var burnInput by remember { mutableStateOf(dailyBurnCeiling.toInt().toString()) }
+                    AlertDialog(
+                        onDismissRequest = { showBurnEditDialog = false },
+                        containerColor = theme.surface,
+                        title = { Text("Update Daily Burn Ceiling", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("Set your daily survival spending budget. Runway days adjust instantly.", color = theme.textMuted, fontSize = 12.sp)
+                                CompactInputField(value = burnInput, onValueChange = { burnInput = it }, placeholder = "Daily amount in ₹")
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    val parsed = burnInput.toDoubleOrNull()
+                                    if (parsed != null && parsed > 0) {
+                                        dailyBurnCeiling = parsed
+                                        prefs.edit().putFloat("daily_burn_ceiling", parsed.toFloat()).apply()
+                                    }
+                                    showBurnEditDialog = false
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
+                            ) { Text("Save", color = theme.bg, fontWeight = FontWeight.Bold) }
+                        },
+                        dismissButton = { TextButton(onClick = { showBurnEditDialog = false }) { Text("Cancel", color = theme.textMuted) } }
+                    )
+                }
+
+                if (showClearLedgerConfirmation) {
+                    AlertDialog(
+                        onDismissRequest = { showClearLedgerConfirmation = false },
+                        containerColor = theme.surface,
+                        title = { Text("Confirm Clear Entire Ledger", color = Color.White) },
+                        text = { Text("This will permanently delete all records and zero out balances. Proceed?", color = Color(0xFFCCCCCC)) },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        flowRecords.forEach { db.stateFlowDao().deleteFlowRecordById(it.id) }
+                                        alertManager.showAlert("All vault records purged", AlertType.SUCCESS)
+                                        showClearLedgerConfirmation = false
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed)
+                            ) { Text("Purge Everything", color = Color.White) }
+                        },
+                        dismissButton = { TextButton(onClick = { showClearLedgerConfirmation = false }) { Text("Cancel", color = theme.textMuted) } }
+                    )
                 }
 
                 if (showCommandHud) {
@@ -711,7 +903,6 @@ fun DashboardScreen(db: AppDatabase) {
                         },
                         onSubmit = { nature, srcId, tgtId, amt, cat, note, date, isRec, freq ->
                             scope.launch {
-                                val autoSplit = prefs.getBoolean("auto_split_debit", false)
                                 when (val res = ledgerEngine.recordMovement(
                                     nature = nature,
                                     sourcePocketId = srcId,
@@ -720,7 +911,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     category = cat,
                                     note = note,
                                     timestamp = date,
-                                    autoSplitEnabled = autoSplit,
+                                    autoSplitEnabled = autoSplitEnabled,
                                     isRecurring = isRec,
                                     frequency = freq
                                 )) {
@@ -739,6 +930,7 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
 
+                // In-Place Transaction Editor with strict delete confirmation guard
                 editingFlowRecord?.let { flow ->
                     EditTransactionDialog(
                         record = flow,
@@ -746,20 +938,37 @@ fun DashboardScreen(db: AppDatabase) {
                         onDismiss = { editingFlowRecord = null },
                         onSave = { updatedCategory, updatedNote ->
                             scope.launch {
-                                db.stateFlowDao().updateFlowRecord(
-                                    flow.copy(category = updatedCategory, note = updatedNote)
-                                )
+                                db.stateFlowDao().updateFlowRecord(flow.copy(category = updatedCategory, note = updatedNote))
                                 editingFlowRecord = null
                                 alertManager.showAlert("Transaction updated", AlertType.SUCCESS)
                             }
                         },
                         onDelete = {
-                            scope.launch {
-                                db.stateFlowDao().deleteFlowRecordById(flow.id)
-                                editingFlowRecord = null
-                                alertManager.showAlert("Transaction deleted and balance restored", AlertType.SUCCESS)
-                            }
+                            recordPendingDeletion = flow
+                            editingFlowRecord = null
                         }
+                    )
+                }
+
+                recordPendingDeletion?.let { flow ->
+                    AlertDialog(
+                        onDismissRequest = { recordPendingDeletion = null },
+                        containerColor = theme.surface,
+                        title = { Text("Confirm Deletion", color = Color.White) },
+                        text = { Text("Delete entry of ₹${flow.amount.toInt()} for '${flow.note.ifBlank { flow.category }}'? Balances will adjust.", color = Color(0xFFCCCCCC)) },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        db.stateFlowDao().deleteFlowRecordById(flow.id)
+                                        recordPendingDeletion = null
+                                        alertManager.showAlert("Transaction deleted and balance restored", AlertType.SUCCESS)
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed)
+                            ) { Text("Delete", color = Color.White) }
+                        },
+                        dismissButton = { TextButton(onClick = { recordPendingDeletion = null }) { Text("Cancel", color = theme.textMuted) } }
                     )
                 }
 
@@ -769,9 +978,7 @@ fun DashboardScreen(db: AppDatabase) {
                         isPrivacyMode = isPrivacyMode,
                         isProUser = isProUnlocked,
                         onDismiss = { showAllRecordsSheet = false },
-                        onEditRecord = { flow ->
-                            editingFlowRecord = flow
-                        },
+                        onEditRecord = { flow -> editingFlowRecord = flow },
                         onExportCsv = {
                             val compatList = flowRecords.map {
                                 Transaction(
@@ -790,9 +997,7 @@ fun DashboardScreen(db: AppDatabase) {
                             CsvExporter.exportAndShareTransactions(context, compatList)
                         },
                         onExportPdfDossier = {
-                            scope.launch {
-                                PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords)
-                            }
+                            scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords) }
                         }
                     )
                 }
@@ -801,14 +1006,15 @@ fun DashboardScreen(db: AppDatabase) {
                     CreateAccountDialog(
                         theme = theme,
                         onDismiss = { showCreatePocketDialog = false },
-                        onSave = { name, type, limit ->
+                        onSave = { name, type, limit, targetAmt ->
                             scope.launch {
                                 db.stateFlowDao().insertPocket(
                                     VaultPocket(
                                         name = name,
                                         pocketType = type,
                                         subType = type.name,
-                                        creditLimit = limit
+                                        creditLimit = limit,
+                                        targetAmount = targetAmt
                                     )
                                 )
                                 showCreatePocketDialog = false
@@ -823,12 +1029,13 @@ fun DashboardScreen(db: AppDatabase) {
                         account = pocket,
                         theme = theme,
                         onDismiss = { editingPocket = null },
-                        onSave = { updatedName, updatedLimit ->
+                        onSave = { updatedName, updatedLimit, updatedTarget ->
                             scope.launch {
                                 db.stateFlowDao().updatePocket(
                                     pocket.copy(
                                         name = updatedName,
-                                        creditLimit = updatedLimit
+                                        creditLimit = updatedLimit,
+                                        targetAmount = updatedTarget
                                     )
                                 )
                                 editingPocket = null
@@ -863,10 +1070,7 @@ private fun CleanVaultHeader(
     onTogglePrivacy: () -> Unit
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .padding(horizontal = 18.dp, vertical = 8.dp),
+        modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 18.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -874,12 +1078,7 @@ private fun CleanVaultHeader(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("InOut", color = theme.textBright, fontSize = 22.sp, fontWeight = FontWeight.Black)
                 if (isProUser) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(theme.accent)
-                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                    ) {
+                    Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(theme.accent).padding(horizontal = 6.dp, vertical = 2.dp)) {
                         Text("PRO", color = theme.bg, fontSize = 9.sp, fontWeight = FontWeight.Black)
                     }
                 }
@@ -926,11 +1125,7 @@ fun FlowRecordDisplayRow(
     val dStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(flow.timestamp))
 
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .clickable { onClick() }
-            .padding(vertical = 8.dp),
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { onClick() }.padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -978,8 +1173,8 @@ private fun EditTransactionDialog(
     var category by remember { mutableStateOf(record.category) }
 
     val allCategories = listOf(
-        "Food & Dining", "Groceries", "Transport", "Shopping", 
-        "Bills", "Health", "Leisure", "Salary", "General", "Peer Transfer"
+        "Food & Dining", "Groceries", "Transport", "Shopping",
+        "Bills", "Health", "Leisure", "Salary", "General", "Savings Pot", "Peer Transfer"
     )
 
     AlertDialog(
@@ -1008,12 +1203,7 @@ private fun EditTransactionDialog(
                                 .padding(horizontal = 10.dp, vertical = 6.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                cat,
-                                color = if (isSel) theme.bg else theme.textBright,
-                                fontSize = 10.5.sp,
-                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
-                            )
+                            Text(cat, color = if (isSel) theme.bg else theme.textBright, fontSize = 10.5.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
                         }
                     }
                 }
@@ -1023,9 +1213,7 @@ private fun EditTransactionDialog(
             Button(
                 onClick = { onSave(category, note) },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-            ) {
-                Text("Update", color = theme.bg, fontWeight = FontWeight.Bold)
-            }
+            ) { Text("Update", color = theme.bg, fontWeight = FontWeight.Bold) }
         },
         dismissButton = {
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1040,22 +1228,24 @@ private fun EditTransactionDialog(
 private fun CreateAccountDialog(
     theme: ThemeColors,
     onDismiss: () -> Unit,
-    onSave: (String, PocketType, Double) -> Unit
+    onSave: (String, PocketType, Double, Double) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var type by remember { mutableStateOf(PocketType.LIQUID) }
     var limit by remember { mutableStateOf("") }
+    var targetAmt by remember { mutableStateOf("") }
 
     AlertDialog(
         containerColor = theme.surface,
         onDismissRequest = onDismiss,
-        title = { Text("Add Vault Account", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+        title = { Text("Add Vault Account / Goal", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                CompactInputField(value = name, onValueChange = { name = it }, placeholder = "Account Name (e.g. Cash, HDFC Bank, Rahul)")
+                CompactInputField(value = name, onValueChange = { name = it }, placeholder = "Account / Pot Name")
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     listOf(
-                        PocketType.LIQUID to "Cash & Bank",
+                        PocketType.LIQUID to "Liquid",
+                        PocketType.SAVING_GOAL to "Goal Pot",
                         PocketType.CREDIT_LINE to "Card (CC)",
                         PocketType.COUNTERPARTY to "Person"
                     ).forEach { (t, lbl) ->
@@ -1069,24 +1259,25 @@ private fun CreateAccountDialog(
                                 .padding(vertical = 6.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(lbl, color = if (isSel) theme.bg else theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                            Text(lbl, color = if (isSel) theme.bg else theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
                 if (type == PocketType.CREDIT_LINE) {
                     CompactInputField(value = limit, onValueChange = { limit = it }, placeholder = "Credit Limit (e.g. 50000)")
                 }
+                if (type == PocketType.SAVING_GOAL) {
+                    CompactInputField(value = targetAmt, onValueChange = { targetAmt = it }, placeholder = "Target Goal Amount (e.g. 60000)")
+                }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    if (name.isNotBlank()) onSave(name, type, limit.toDoubleOrNull() ?: 0.0)
+                    if (name.isNotBlank()) onSave(name, type, limit.toDoubleOrNull() ?: 0.0, targetAmt.toDoubleOrNull() ?: 0.0)
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-            ) {
-                Text("Save Account", color = theme.bg, fontWeight = FontWeight.Bold)
-            }
+            ) { Text("Save", color = theme.bg, fontWeight = FontWeight.Bold) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) } }
     )
@@ -1097,10 +1288,11 @@ private fun EditAccountDialog(
     account: VaultPocket,
     theme: ThemeColors,
     onDismiss: () -> Unit,
-    onSave: (String, Double) -> Unit
+    onSave: (String, Double, Double) -> Unit
 ) {
     var name by remember { mutableStateOf(account.name) }
     var limit by remember { mutableStateOf(if (account.creditLimit > 0) String.format("%.0f", account.creditLimit) else "") }
+    var targetAmt by remember { mutableStateOf(if (account.targetAmount > 0) String.format("%.0f", account.targetAmount) else "") }
 
     AlertDialog(
         containerColor = theme.surface,
@@ -1112,17 +1304,22 @@ private fun EditAccountDialog(
                 if (account.pocketType == PocketType.CREDIT_LINE) {
                     CompactInputField(value = limit, onValueChange = { limit = it }, placeholder = "Credit Limit")
                 }
+                if (account.pocketType == PocketType.SAVING_GOAL) {
+                    CompactInputField(value = targetAmt, onValueChange = { targetAmt = it }, placeholder = "Target Goal Amount")
+                }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
-                    if (name.isNotBlank()) onSave(name, limit.toDoubleOrNull() ?: account.creditLimit)
+                    if (name.isNotBlank()) onSave(
+                        name,
+                        limit.toDoubleOrNull() ?: account.creditLimit,
+                        targetAmt.toDoubleOrNull() ?: account.targetAmount
+                    )
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-            ) {
-                Text("Save Changes", color = theme.bg, fontWeight = FontWeight.Bold)
-            }
+            ) { Text("Save", color = theme.bg, fontWeight = FontWeight.Bold) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) } }
     )
