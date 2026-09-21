@@ -3,7 +3,6 @@ package com.personal.inout.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
@@ -14,7 +13,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -62,8 +60,10 @@ fun IntelligenceScreen(
     }
 
     val totalImpulseSaved = remember(stagedDesires) {
-        stagedDesires.filter { it.isArchivedWithoutBuying }.sumOf { it.amount }
+        stagedDesires.sumOf { it.amount }
     }
+
+    val burnProgress = if (dailyBurnCeiling > 0) (spentToday / dailyBurnCeiling).toFloat().coerceIn(0f, 1f) else 0f
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
@@ -100,7 +100,7 @@ fun IntelligenceScreen(
                     }
 
                     LinearProgressIndicator(
-                        progress = { if (dailyBurnCeiling > 0) (spentToday / dailyBurnCeiling).toFloat().coerceIn(0f, 1f) else 0f },
+                        progress = burnProgress,
                         modifier = Modifier.fillMaxWidth().height(4.dp),
                         color = if (isPacingHealthy) theme.mildGreen else theme.mildRed,
                         trackColor = theme.surfaceAlt
@@ -178,7 +178,7 @@ fun IntelligenceScreen(
                         fontSize = 11.sp
                     )
 
-                    val recentDropped = stagedDesires.filter { it.isArchivedWithoutBuying }.take(3)
+                    val recentDropped = stagedDesires.take(3)
                     if (recentDropped.isNotEmpty()) {
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             recentDropped.forEach { item ->
