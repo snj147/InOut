@@ -4,6 +4,7 @@ import android.content.Context
 import com.personal.inout.data.MovementNature
 import com.personal.inout.data.PocketType
 import com.personal.inout.data.VaultPocket
+import java.util.Calendar
 import java.util.Locale
 import java.util.regex.Pattern
 
@@ -21,12 +22,21 @@ sealed class ParsedIntent {
         val timestamp: Long = System.currentTimeMillis()
     ) : ParsedIntent()
 
+    data class CompoundTransactions(
+        val transactions: List<Transaction>
+    ) : ParsedIntent()
+
     data class CreateAccount(
         val name: String,
         val type: PocketType,
         val limit: Double = 0.0,
         val targetAmount: Double = 0.0,
         val targetDateEpoch: Long = 0L
+    ) : ParsedIntent()
+
+    data class BreakGoalPot(
+        val potName: String,
+        val destinationPocketId: Long? = null
     ) : ParsedIntent()
 
     data class SetDailyBurn(val newRate: Double) : ParsedIntent()
@@ -63,7 +73,7 @@ object FuzzyCommandParser {
         }
 
         // 2. Set Daily Burn
-        if (lower.startsWith("burn ") || lower.startsWith("set burn ")) {
+        if (lower.contains("burn") && (lower.contains("set") || lower.startsWith("burn "))) {
             val amtMatcher = AMOUNT_PATTERN.matcher(workingInput)
             if (amtMatcher.find()) {
                 val amt = amtMatcher.group(1)?.toDoubleOrNull()
@@ -71,13 +81,16 @@ object FuzzyCommandParser {
             }
         }
 
-        // 3. Staged Cool-Off Desires
-        if (lower.startsWith("want ") || lower.startsWith("hold ")) {
+        // 3. Temptation Delay Quarantine
+        if (lower.startsWith("want ") || lower.startsWith("hold ") || lower.contains("wishlist") || lower.contains("cool off")) {
             val amtMatcher = AMOUNT_PATTERN.matcher(workingInput)
             if (amtMatcher.find()) {
                 val amt = amtMatcher.group(1)?.toDoubleOrNull()
                 val token = amtMatcher.group(0) ?: ""
-                val item = workingInput.substringAfter(" ").replace(token, "").trim()
+                val item = workingInput
+                    .replace(Regex("(?i)^(want|hold|wishlist|cool\\s*off)"), "")
+                    .replace(token, "")
+                    .trim()
                 if (amt != null && amt > 0 && item.isNotBlank()) {
                     return ParsedIntent.StageDesire(item, amt)
                 }
@@ -85,8 +98,8 @@ object FuzzyCommandParser {
         }
 
         // 4. Triangular Peer Debt Resolution
-        if (lower.startsWith("settle ")) {
-            val clean = workingInput.substring(7).trim()
+        if (lower.startsWith("settle ") || lower.contains("square off")) {
+            val clean = workingInput.replace(Regex("(?i)^(settle|square\\s*off)"), "").trim()
             val amtMatcher = AMOUNT_PATTERN.matcher(clean)
             var optAmt: Double? = null
             var textPart = clean
@@ -100,11 +113,47 @@ object FuzzyCommandParser {
             }
         }
 
-        // 5. Account / Pot Creation
-        if (lower.startsWith("create ") || lower.startsWith("add ")) {
-            val stripped = workingInput.substringAfter(" ").trim()
-            val subLower = stripped.lowercase(Locale.ROOT)
+        // 5. Break Goal Pot
+        if (lower.contains("break") && (lower.contains("pot") || lower.contains("goal"))) {
+            val goalPockets = activePockets.filter { it.pocketType == PocketType.SAVING_GOAL }
+            val matchedGoal = goalPockets.firstOrNull { lower.contains(it.name.lowercase(Locale.ROOT)) }
+            val liquidPockets = activePockets.filter { it.pocketType == PocketType.LIQUID }
+            val targetLiquid = liquidPockets.firstOrNull { lower.contains(it.name.lowercase(Locale.ROOT)) } ?: liquidPockets.firstOrNull()
+            if (matchedGoal != null) {
+                return ParsedIntent.BreakGoalPot(matchedGoal.name, targetLiquid?.id)
+            }
+        }
 
+        // 6. Goal Pot Creation: "set goal phone 40000 by nov", "target 60000 macbook in january"
+        val isGoalCreation = (lower.contains("goal") || lower.contains("pot") || lower.contains("target")) &&
+                (lower.contains("set") || lower.contains("create") || lower.contains("add") || lower.contains("target") || lower.contains("by") || lower.contains("aim")) &&
+                !lower.contains("stash") && !lower.contains("from")
+        if (isGoalCreation) {
+            val amtMatcher = AMOUNT_PATTERN.matcher(workingInput)
+            if (amtMatcher.find()) {
+                val targetAmt = amtMatcher.group(1)?.toDoubleOrNull() ?: 0.0
+                val amtToken = amtMatcher.group(0) ?: ""
+                val targetDateEpoch = parseMonthTargetEpoch(lower)
+                val potName = workingInput
+                    .replace(Regex("(?i)\\b(set|create|add|target|aim|goal|pot|by|in|for)\\b"), "")
+                    .replace(amtToken, "")
+                    .replace(Regex("(?i)\\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december)\\b"), "")
+                    .trim()
+                if (potName.isNotBlank() && targetAmt > 0.0) {
+                    return ParsedIntent.CreateAccount(
+                        name = potName,
+                        type = PocketType.SAVING_GOAL,
+                        targetAmount = targetAmt,
+                        targetDateEpoch = targetDateEpoch
+                    )
+                }
+            }
+        }
+
+        // 7. Account Creation
+        if (lower.startsWith("create ") || lower.startsWith("add ") || lower.startsWith("open ") || lower.startsWith("new ")) {
+            val stripped = workingInput.replace(Regex("(?i)^(create|add|open|new)\\s+"), "").trim()
+            val subLower = stripped.lowercase(Locale.ROOT)
             when {
                 subLower.startsWith("bank ") || subLower.startsWith("account ") -> {
                     val name = stripped.substringAfter(" ").trim()
@@ -132,22 +181,27 @@ object FuzzyCommandParser {
             }
         }
 
-        // 6. Goal Pot Creation: goal phone 40000 by nov
-        if (lower.startsWith("goal ") || lower.startsWith("pot ") || lower.startsWith("target ")) {
-            val body = workingInput.substringAfter(" ").trim()
-            val amtMatcher = AMOUNT_PATTERN.matcher(body)
-            if (amtMatcher.find()) {
-                val targetAmt = amtMatcher.group(1)?.toDoubleOrNull() ?: 0.0
-                val amtToken = amtMatcher.group(0) ?: ""
-                val potName = body.replace(amtToken, "").replace(Regex("(?i)\\bby\\b.*"), "").trim()
-                if (potName.isNotBlank() && targetAmt > 0.0) {
-                    return ParsedIntent.CreateAccount(potName, PocketType.SAVING_GOAL, targetAmount = targetAmt)
-                }
+        // 8. Compound Transactions: "spent 450 groceries and 120 uber from sbi"
+        if (lower.contains(" and ") && (lower.contains("spent") || lower.contains("paid"))) {
+            val subClauses = workingInput.split(Regex("(?i)\\band\\b"))
+            val list = mutableListOf<ParsedIntent.Transaction>()
+            for (clause in subClauses) {
+                val subParsed = parseSingleTransaction(clause.trim(), activePockets)
+                if (subParsed != null) list.add(subParsed)
             }
+            if (list.size > 1) return ParsedIntent.CompoundTransactions(list)
         }
 
-        // 7. General Transactions & Salary Recurring
-        val matcher = AMOUNT_PATTERN.matcher(workingInput)
+        // 9. Single Transaction Parsing
+        val single = parseSingleTransaction(workingInput, activePockets)
+        if (single != null) return single
+
+        return null
+    }
+
+    private fun parseSingleTransaction(input: String, activePockets: List<VaultPocket>): ParsedIntent.Transaction? {
+        val lower = input.lowercase(Locale.ROOT)
+        val matcher = AMOUNT_PATTERN.matcher(input)
         var amount: Double? = null
         var amountToken = ""
         while (matcher.find()) {
@@ -168,71 +222,68 @@ object FuzzyCommandParser {
             else -> "NONE"
         }
 
-        val cleanPrompt = workingInput.replace(amountToken, " ").replace(Regex("\\s+"), " ").trim()
+        val cleanPrompt = input.replace(amountToken, " ").replace(Regex("\\s+"), " ").trim()
         val cleanLower = cleanPrompt.lowercase(Locale.ROOT)
 
-        // Strict & Fuzzy Intent Mapping
-        val isCollect = cleanLower.startsWith("collect") || cleanLower.contains("collected") || cleanLower.contains("got back")
+        val isCollect = cleanLower.contains("collect") || cleanLower.contains("collected") || cleanLower.contains("got back")
         val isSalary = cleanLower.contains("salary") || cleanLower.contains("stipend")
-        val isLend = (cleanLower.startsWith("lent") || cleanLower.startsWith("lend") || cleanLower.contains(" lend to ") || cleanLower.contains(" lent to ")) && !isCollect
-        val isBorrow = cleanLower.startsWith("borrow") || cleanLower.startsWith("borrowed")
-        val isRepay = cleanLower.startsWith("repay") || cleanLower.startsWith("repaid")
-        val isInflow = (cleanLower.startsWith("got") || cleanLower.startsWith("received") || cleanLower.contains("credited") || isSalary) && !isCollect && !isBorrow
+        val isLend = (cleanLower.contains("lent") || cleanLower.contains("lend") || cleanLower.contains("give") || cleanLower.contains("gave")) && !isCollect
+        val isBorrow = cleanLower.contains("borrow") || cleanLower.contains("borrowed")
+        val isRepay = cleanLower.contains("repay") || cleanLower.contains("repaid")
+        val isCardPay = (cleanLower.contains("card") || cleanLower.contains("bill") || cleanLower.contains("dues")) && (cleanLower.contains("pay") || cleanLower.contains("clear"))
+        val isTransfer = cleanLower.contains("transfer") || cleanLower.contains("move") || cleanLower.contains("stash") || cleanLower.contains("to pot") || cleanLower.contains("save")
 
         val nature = when {
+            isCardPay -> MovementNature.CARD_PAYMENT
             isCollect -> MovementNature.PEER_COLLECT
             isRepay -> MovementNature.PEER_REPAY
             isLend -> MovementNature.PEER_LEND
             isBorrow -> MovementNature.PEER_BORROW
-            isInflow -> MovementNature.INFLOW
-            cleanLower.startsWith("spent") || cleanLower.contains(" paid ") || cleanLower.startsWith("paid") || cleanLower.contains(" buy ") || cleanLower.contains(" bought ") -> MovementNature.OUTFLOW
-            cleanLower.startsWith("transferred") || cleanLower.contains(" transfer ") || cleanLower.contains(" save ") || cleanLower.contains(" to pot ") -> MovementNature.TRANSFER
+            isSalary || cleanLower.startsWith("got") || cleanLower.startsWith("received") || cleanLower.contains("credited") -> MovementNature.INFLOW
+            isTransfer -> MovementNature.TRANSFER
             else -> MovementNature.OUTFLOW
         }
 
         val liquidPockets = activePockets.filter { it.pocketType == PocketType.LIQUID }
         val peerPockets = activePockets.filter { it.pocketType == PocketType.COUNTERPARTY || it.pocketType == PocketType.PEER }
         val goalPockets = activePockets.filter { it.pocketType == PocketType.SAVING_GOAL }
+        val cardPockets = activePockets.filter { it.pocketType == PocketType.CREDIT_LINE || it.pocketType == PocketType.CREDIT }
 
         var matchedPocketId: Long? = null
         var targetPocketId: Long? = null
         var targetPersonName: String? = null
 
-        // Match Bank / Liquid Pocket
-        var bestScore = Int.MAX_VALUE
-        var bestPocket: VaultPocket? = null
-        for (pocket in activePockets.filter { it.pocketType == PocketType.LIQUID || it.pocketType == PocketType.CREDIT_LINE }) {
-            val pName = pocket.name.lowercase(Locale.ROOT)
-            if (cleanLower.contains(pName)) {
-                bestPocket = pocket
+        // Detect Source & Target Accounts
+        for (pocket in liquidPockets + cardPockets) {
+            if (cleanLower.contains(pocket.name.lowercase(Locale.ROOT))) {
+                matchedPocketId = pocket.id
                 break
             }
-            for (word in cleanLower.split(" ")) {
-                if (word.length >= 3) {
-                    val dist = levenshtein(word, pName)
-                    if (dist <= 1 && dist < bestScore) {
-                        bestScore = dist
-                        bestPocket = pocket
-                    }
-                }
+        }
+        if (matchedPocketId == null) {
+            matchedPocketId = liquidPockets.firstOrNull()?.id
+        }
+
+        if (nature == MovementNature.CARD_PAYMENT) {
+            val card = cardPockets.firstOrNull { cleanLower.contains(it.name.lowercase(Locale.ROOT)) } ?: cardPockets.firstOrNull()
+            targetPocketId = card?.id
+        } else if (nature == MovementNature.TRANSFER) {
+            val goal = goalPockets.firstOrNull { cleanLower.contains(it.name.lowercase(Locale.ROOT)) }
+            if (goal != null) {
+                targetPocketId = goal.id
+            } else {
+                val secondLiquid = liquidPockets.firstOrNull { it.id != matchedPocketId && cleanLower.contains(it.name.lowercase(Locale.ROOT)) }
+                targetPocketId = secondLiquid?.id
             }
         }
-        matchedPocketId = bestPocket?.id ?: liquidPockets.firstOrNull()?.id
 
-        // Goal Pot destination
-        if (cleanLower.contains("pot") || cleanLower.contains("goal") || cleanLower.contains("save")) {
-            val matchedGoal = goalPockets.firstOrNull { cleanLower.contains(it.name.lowercase(Locale.ROOT)) }
-            if (matchedGoal != null) targetPocketId = matchedGoal.id
-        }
-
-        // Peer name extraction
         if (nature in listOf(MovementNature.PEER_LEND, MovementNature.PEER_BORROW, MovementNature.PEER_COLLECT, MovementNature.PEER_REPAY)) {
             val peerKeywords = listOf("to", "from", "with", "by")
             val tokens = cleanPrompt.split(Regex("\\s+"))
             for (i in 0 until tokens.size - 1) {
                 if (tokens[i].lowercase(Locale.ROOT) in peerKeywords) {
                     val candidate = tokens[i + 1].replace(Regex("[^a-zA-Z0-9]"), "")
-                    if (candidate.length > 1 && !candidate.equals("bank", ignoreCase = true)) {
+                    if (candidate.length > 1 && !candidate.equals("bank", ignoreCase = true) && !candidate.equals("cash", ignoreCase = true)) {
                         targetPersonName = candidate
                         val matchedPeer = peerPockets.firstOrNull { it.name.equals(candidate, ignoreCase = true) }
                         if (matchedPeer != null) targetPocketId = matchedPeer.id
@@ -251,9 +302,15 @@ object FuzzyCommandParser {
             }
         }
 
-        val category = if (isSalary) "Salary" else inferCategory(cleanLower)
+        val category = when {
+            isSalary -> "Salary"
+            nature == MovementNature.CARD_PAYMENT -> "Bill Payment"
+            nature == MovementNature.TRANSFER && targetPocketId in goalPockets.map { it.id } -> "Savings Pot"
+            else -> inferCategory(cleanLower)
+        }
+
         val note = cleanPrompt
-            .replace(Regex("(?i)^(spent|paid|bought|got|received|lent|lend|borrowed|borrow|transferred|collected|collect|repaid|repay|salary|auto)"), "")
+            .replace(Regex("(?i)^(spent|paid|bought|got|received|lent|lend|borrowed|borrow|transferred|transfer|stash|collected|collect|repaid|repay|salary|auto)"), "")
             .replace(Regex("(?i)\\b(on|for|at|from|to|in|via|monthly|weekly|daily|every month)\\b"), "")
             .trim()
             .ifBlank { category }
@@ -281,26 +338,27 @@ object FuzzyCommandParser {
             text.contains("medicine") || text.contains("doctor") || text.contains("pharma") || text.contains("hospital") -> "Health"
             text.contains("movie") || text.contains("netflix") || text.contains("party") || text.contains("trip") -> "Leisure"
             text.contains("salary") || text.contains("stipend") || text.contains("bonus") -> "Salary"
-            text.contains("pot") || text.contains("goal") || text.contains("save") -> "Savings Pot"
+            text.contains("pot") || text.contains("goal") || text.contains("stash") -> "Savings Pot"
             text.contains("lend") || text.contains("lent") || text.contains("borrow") || text.contains("collect") || text.contains("repay") -> "Peer Transfer"
             else -> "General"
         }
     }
 
-    private fun levenshtein(lhs: CharSequence, rhs: CharSequence): Int {
-        var costs = IntArray(rhs.length + 1) { it }
-        for (i in 1..lhs.length) {
-            val newCosts = IntArray(rhs.length + 1)
-            newCosts[0] = i
-            for (j in 1..rhs.length) {
-                val match = if (lhs[i - 1] == rhs[j - 1]) 0 else 1
-                val costReplace = costs[j - 1] + match
-                val costInsert = costs[j] + 1
-                val costDelete = newCosts[j - 1] + 1
-                newCosts[j] = minOf(costInsert, costDelete, costReplace)
+    private fun parseMonthTargetEpoch(text: String): Long {
+        val cal = Calendar.getInstance()
+        val currentYear = cal.get(Calendar.YEAR)
+        val months = listOf("jan" to 0, "feb" to 1, "mar" to 2, "apr" to 3, "may" to 4, "jun" to 5, "jul" to 6, "aug" to 7, "sep" to 8, "oct" to 9, "nov" to 10, "dec" to 11)
+        for ((mStr, mIdx) in months) {
+            if (text.contains(mStr)) {
+                cal.set(Calendar.MONTH, mIdx)
+                cal.set(Calendar.DAY_OF_MONTH, 28)
+                if (cal.timeInMillis < System.currentTimeMillis()) {
+                    cal.set(Calendar.YEAR, currentYear + 1)
+                }
+                return cal.timeInMillis
             }
-            costs = newCosts
         }
-        return costs[rhs.length]
+        cal.add(Calendar.MONTH, 3)
+        return cal.timeInMillis
     }
 }
