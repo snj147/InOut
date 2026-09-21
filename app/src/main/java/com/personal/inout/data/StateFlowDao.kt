@@ -27,8 +27,11 @@ interface StateFlowDao {
     @Query("SELECT * FROM flow_records WHERE isRecurring = 1 ORDER BY timestamp DESC")
     fun getRecurringSchedules(): Flow<List<FlowRecord>>
 
-    @Query("SELECT * FROM flow_records WHERE isRecurring = 1")
+    @Query("SELECT * FROM flow_records WHERE isRecurring = 1 AND isPaused = 0")
     suspend fun getActiveRecurringSchedulesSync(): List<FlowRecord>
+
+    @Query("UPDATE flow_records SET isPaused = :isPaused WHERE id = :id")
+    suspend fun setRecurringPausedState(id: Long, isPaused: Boolean)
 
     @Query("UPDATE flow_records SET isRecurring = 0 WHERE id = :id")
     suspend fun stopRecurringSchedule(id: Long)
@@ -40,27 +43,8 @@ interface StateFlowDao {
             pockets.pocketType AS pocketType,
             pockets.subType AS subType,
             pockets.creditLimit AS creditLimit,
-            COALESCE(SUM(
-                CASE 
-                    WHEN flow_records.targetPocketId = pockets.id AND flow_records.timestamp <= :currentTime THEN flow_records.amount
-                    WHEN flow_records.sourcePocketId = pockets.id AND flow_records.timestamp <= :currentTime THEN -flow_records.amount
-                    ELSE 0.0 
-                END
-            ), 0.0) AS computedBalance
-        FROM pockets
-        LEFT JOIN flow_records ON (pockets.id = flow_records.sourcePocketId OR pockets.id = flow_records.targetPocketId)
-        WHERE pockets.isArchived = 0
-        GROUP BY pockets.id
-    """)
-    fun getPocketBalanceSummaries(currentTime: Long = System.currentTimeMillis()): Flow<List<PocketBalanceSummary>>
-
-    @Query("""
-        SELECT 
-            CAST(pockets.id AS TEXT) AS pocketId,
-            pockets.name AS name,
-            pockets.pocketType AS pocketType,
-            pockets.subType AS subType,
-            pockets.creditLimit AS creditLimit,
+            pockets.targetAmount AS targetAmount,
+            pockets.targetDateEpoch AS targetDateEpoch,
             COALESCE(SUM(
                 CASE 
                     WHEN flow_records.targetPocketId = pockets.id AND flow_records.timestamp <= :currentTime THEN flow_records.amount
@@ -75,8 +59,28 @@ interface StateFlowDao {
     """)
     fun observePocketBalances(currentTime: Long = System.currentTimeMillis()): Flow<List<PocketBalanceSummary>>
 
-    @Query("SELECT * FROM pockets WHERE isArchived = 0")
-    fun getAllActivePockets(): Flow<List<VaultPocket>>
+    @Query("""
+        SELECT 
+            CAST(pockets.id AS TEXT) AS pocketId,
+            pockets.name AS name,
+            pockets.pocketType AS pocketType,
+            pockets.subType AS subType,
+            pockets.creditLimit AS creditLimit,
+            pockets.targetAmount AS targetAmount,
+            pockets.targetDateEpoch AS targetDateEpoch,
+            COALESCE(SUM(
+                CASE 
+                    WHEN flow_records.targetPocketId = pockets.id AND flow_records.timestamp <= :currentTime THEN flow_records.amount
+                    WHEN flow_records.sourcePocketId = pockets.id AND flow_records.timestamp <= :currentTime THEN -flow_records.amount
+                    ELSE 0.0 
+                END
+            ), 0.0) AS computedBalance
+        FROM pockets
+        LEFT JOIN flow_records ON (pockets.id = flow_records.sourcePocketId OR pockets.id = flow_records.targetPocketId)
+        WHERE pockets.isArchived = 0
+        GROUP BY pockets.id
+    """)
+    suspend fun getPocketBalancesSync(currentTime: Long = System.currentTimeMillis()): List<PocketBalanceSummary>
 
     @Query("SELECT * FROM pockets WHERE isArchived = 0")
     fun observeAllActivePockets(): Flow<List<VaultPocket>>
@@ -89,4 +93,16 @@ interface StateFlowDao {
 
     @Update
     suspend fun updatePocket(pocket: VaultPocket)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertStagedDesire(desire: StagedDesire): Long
+
+    @Update
+    suspend fun updateStagedDesire(desire: StagedDesire)
+
+    @Query("SELECT * FROM staged_desires WHERE status = 'STAGED' ORDER BY coolOffUntil ASC")
+    fun observeActiveStagedDesires(): Flow<List<StagedDesire>>
+
+    @Query("SELECT COALESCE(SUM(amount), 0.0) FROM staged_desires WHERE status = 'ARCHIVED'")
+    fun observeSavedImpulseTotal(): Flow<Double>
 }
