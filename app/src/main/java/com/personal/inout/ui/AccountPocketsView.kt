@@ -1,11 +1,17 @@
 package com.personal.inout.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,11 +36,14 @@ fun AccountPocketsView(
     onTransactPocket: (pocket: VaultPocket) -> Unit = {},
     onEditPocket: (pocket: VaultPocket) -> Unit = {},
     onDeletePocketSafe: (pocket: VaultPocket, balance: Double) -> Unit = { _, _ -> },
-    onStopRecurringSchedule: (schedule: FlowRecord) -> Unit = {},
+    onTogglePauseRecurring: (schedule: FlowRecord) -> Unit = {},
+    onEditRecurring: (schedule: FlowRecord) -> Unit = {},
+    onDeleteRecurringSafe: (schedule: FlowRecord) -> Unit = {},
     onRecordCardSettlement: (cardId: Long, liquidId: Long, amt: Double) -> Unit = { _, _, _ -> },
     onPeerAction: (nature: MovementNature, peerId: Long, liquidId: Long, amt: Double) -> Unit = { _, _, _, _ -> }
 ) {
-    var selectedRecordForStop by remember { mutableStateOf<FlowRecord?>(null) }
+    var pocketToDelete by remember { mutableStateOf<Pair<VaultPocket, Double>?>(null) }
+    var recurringToDelete by remember { mutableStateOf<FlowRecord?>(null) }
     val defaultLiquidId = remember(rawPockets) {
         rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id ?: 0L
     }
@@ -52,11 +61,7 @@ fun AccountPocketsView(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("Cash & Bank Accounts", color = Color(0xFFCCCCCC), fontSize = 14.sp)
-                Text(
-                    "${pocketBalances.count { it.pocketType == PocketType.LIQUID }}",
-                    color = Color(0xFF666666),
-                    fontSize = 13.sp
-                )
+                Text("${pocketBalances.count { it.pocketType == PocketType.LIQUID }}", color = Color(0xFF666666), fontSize = 13.sp)
             }
         }
         items(pocketBalances.filter { it.pocketType == PocketType.LIQUID }, key = { it.pocketId }) { summary ->
@@ -73,7 +78,48 @@ fun AccountPocketsView(
             )
         }
 
-        // 2. Cards & Loans
+        // 2. Goal Pots (Saving Goals)
+        val goalList = pocketBalances.filter { it.pocketType == PocketType.SAVING_GOAL }
+        if (goalList.isNotEmpty()) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Goal Pots (Target Savings)", color = Color(0xFFCCCCCC), fontSize = 14.sp)
+                    Text("${goalList.size}", color = Color(0xFF666666), fontSize = 13.sp)
+                }
+            }
+            items(goalList, key = { it.pocketId }) { pot ->
+                val progress = if (pot.targetAmount > 0) (pot.computedBalance / pot.targetAmount).toFloat().coerceIn(0f, 1f) else 0f
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1C1A))
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text(pot.name, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                if (isPrivacyMode) "••••" else "₹${String.format("%,.0f", pot.computedBalance)} / ₹${String.format("%,.0f", pot.targetAmount)}",
+                                color = Color(0xFFE59C5C),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier.fillMaxWidth().height(6.dp),
+                            color = Color(0xFFE59C5C),
+                            trackColor = Color(0xFF2B2826)
+                        )
+                    }
+                }
+            }
+        }
+
+        // 3. Cards & Loans
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -81,11 +127,7 @@ fun AccountPocketsView(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("Cards & Loans (CC / Dues)", color = Color(0xFFCCCCCC), fontSize = 14.sp)
-                Text(
-                    "${pocketBalances.count { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }}",
-                    color = Color(0xFF666666),
-                    fontSize = 13.sp
-                )
+                Text("${pocketBalances.count { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }}", color = Color(0xFF666666), fontSize = 13.sp)
             }
         }
         items(pocketBalances.filter { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }, key = { it.pocketId }) { summary ->
@@ -108,7 +150,7 @@ fun AccountPocketsView(
             )
         }
 
-        // 3. Counterparties (People)
+        // 4. Counterparties (People)
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -116,11 +158,7 @@ fun AccountPocketsView(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("People (Owed & Lent)", color = Color(0xFFCCCCCC), fontSize = 14.sp)
-                Text(
-                    "${pocketBalances.count { it.pocketType == PocketType.PEER || it.pocketType == PocketType.COUNTERPARTY || it.subType == "PEER" }}",
-                    color = Color(0xFF666666),
-                    fontSize = 13.sp
-                )
+                Text("${pocketBalances.count { it.pocketType == PocketType.PEER || it.pocketType == PocketType.COUNTERPARTY || it.subType == "PEER" }}", color = Color(0xFF666666), fontSize = 13.sp)
             }
         }
         items(pocketBalances.filter { it.pocketType == PocketType.PEER || it.pocketType == PocketType.COUNTERPARTY || it.subType == "PEER" }, key = { it.pocketId }) { summary ->
@@ -145,91 +183,105 @@ fun AccountPocketsView(
             )
         }
 
-        // 4. Active Recurring Schedules
+        // 5. Recurring Rules Lifecycle List
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Active Recurring Schedules", color = Color(0xFFCCCCCC), fontSize = 14.sp)
+                Text("Recurring Rules Lifecycle", color = Color(0xFFCCCCCC), fontSize = 14.sp)
                 Text("${recurringSchedules.size}", color = Color(0xFF666666), fontSize = 13.sp)
             }
         }
         items(recurringSchedules, key = { it.id }) { record ->
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .combinedClickable(
-                        onClick = {},
-                        onLongClick = { selectedRecordForStop = record }
-                    ),
+                modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1C1A))
             ) {
                 Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        Text(
-                            text = record.note.ifBlank { record.category },
-                            color = Color.White,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = record.note.ifBlank { record.category },
+                                color = if (record.isPaused) Color(0xFF888888) else Color.White,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            if (record.isPaused) {
+                                Box(modifier = Modifier.background(Color(0xFF3A352F), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                                    Text("PAUSED", color = Color(0xFFE59C5C), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
                         val freqText = if (record.frequency != "NONE") record.frequency else record.recurringCadence
                         Text(
                             text = if (isPrivacyMode) "Repeats $freqText • ₹••••" else "Repeats $freqText • ₹${record.amount.toInt()}",
-                            color = Color(0xFFE59C5C),
+                            color = if (record.isPaused) Color(0xFF666666) else Color(0xFFE59C5C),
                             fontSize = 12.sp
                         )
                     }
 
-                    Button(
-                        onClick = { selectedRecordForStop = record },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF332222)),
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Text("Stop Rule", color = Color(0xFFE57373), fontSize = 12.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        IconButton(onClick = { onTogglePauseRecurring(record) }) {
+                            Icon(
+                                imageVector = if (record.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
+                                contentDescription = if (record.isPaused) "Resume" else "Pause",
+                                tint = if (record.isPaused) Color(0xFF81C784) else Color(0xFFE59C5C)
+                            )
+                        }
+                        IconButton(onClick = { onEditRecurring(record) }) {
+                            Icon(Icons.Default.Edit, contentDescription = "Edit", tint = Color(0xFFCCCCCC))
+                        }
+                        IconButton(onClick = { recurringToDelete = record }) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color(0xFFE57373))
+                        }
                     }
                 }
             }
         }
     }
 
-    selectedRecordForStop?.let { record ->
+    pocketToDelete?.let { (pocket, bal) ->
         AlertDialog(
-            onDismissRequest = { selectedRecordForStop = null },
+            onDismissRequest = { pocketToDelete = null },
             containerColor = Color(0xFF262320),
-            title = { Text("Stop Recurring Rule", color = Color.White) },
-            text = {
-                Text(
-                    "Are you sure you want to stop this recurring schedule? Past records remain intact.",
-                    color = Color(0xFFCCCCCC)
-                )
-            },
+            title = { Text("Delete Account", color = Color.White) },
+            text = { Text("Are you sure you want to delete '${pocket.name}'? Balance is ₹${bal.toInt()}.", color = Color(0xFFCCCCCC)) },
             confirmButton = {
                 Button(
                     onClick = {
-                        onStopRecurringSchedule(record)
-                        selectedRecordForStop = null
+                        onDeletePocketSafe(pocket, bal)
+                        pocketToDelete = null
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE57373))
-                ) {
-                    Text("Stop Rule", color = Color.White)
-                }
+                ) { Text("Delete", color = Color.White) }
             },
-            dismissButton = {
-                TextButton(onClick = { selectedRecordForStop = null }) {
-                    Text("Cancel", color = Color(0xFF9E9E9E))
-                }
-            }
+            dismissButton = { TextButton(onClick = { pocketToDelete = null }) { Text("Cancel", color = Color(0xFF9E9E9E)) } }
+        )
+    }
+
+    recurringToDelete?.let { record ->
+        AlertDialog(
+            onDismissRequest = { recurringToDelete = null },
+            containerColor = Color(0xFF262320),
+            title = { Text("Delete Recurring Rule", color = Color.White) },
+            text = { Text("Are you sure you want to delete this schedule template? Past recorded transactions will not be touched.", color = Color(0xFFCCCCCC)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onDeleteRecurringSafe(record)
+                        recurringToDelete = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE57373))
+                ) { Text("Delete Rule", color = Color.White) }
+            },
+            dismissButton = { TextButton(onClick = { recurringToDelete = null }) { Text("Cancel", color = Color(0xFF9E9E9E)) } }
         )
     }
 }
@@ -247,19 +299,12 @@ fun PocketCard(
     onLongClick: () -> Unit
 ) {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                onClick = {},
-                onLongClick = onLongClick
-            ),
+        modifier = Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = onLongClick),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1C1A))
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
