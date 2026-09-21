@@ -50,12 +50,22 @@ fun IntelligenceScreen(
     val burnDelta = dailyBurnCeiling - spentToday
     val isPacingHealthy = burnDelta >= 0
 
-    // Leakage / Zombie Rule Detection
+    // Leakage / Zombie Rule Detection:
+    // 1. Strictly OUTFLOW subscriptions (Salary and Inflows are explicitly excluded)
+    // 2. 30-day grace period: rules created less than 30 days ago are never flagged
     val inactiveRecurring = remember(recurringSchedules, flowRecords) {
         val thirtyDaysAgo = System.currentTimeMillis() - (30L * 24 * 3600 * 1000L)
         recurringSchedules.filter { rule ->
-            val hasRecent = flowRecords.any { it.note.equals(rule.note, ignoreCase = true) && it.timestamp >= thirtyDaysAgo && !it.isRecurring }
-            !hasRecent && !rule.isPaused
+            val isOutflow = rule.nature !in listOf(MovementNature.INFLOW) &&
+                    !rule.category.equals("Salary", ignoreCase = true) &&
+                    !rule.note.contains("salary", ignoreCase = true)
+
+            val isOlderThan30Days = rule.timestamp < thirtyDaysAgo
+            val hasRecentMatch = flowRecords.any {
+                it.note.equals(rule.note, ignoreCase = true) && it.timestamp >= thirtyDaysAgo && !it.isRecurring
+            }
+
+            isOutflow && isOlderThan30Days && !hasRecentMatch && !rule.isPaused
         }
     }
 
@@ -118,7 +128,7 @@ fun IntelligenceScreen(
             }
         }
 
-        // 2. Leakage & Zombie Rule Detector
+        // 2. Leakage & Zombie Rule Detector (Filtered & Inflows Excluded)
         item {
             Card(
                 shape = RoundedCornerShape(14.dp),
@@ -126,7 +136,7 @@ fun IntelligenceScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("LEAKAGE & ZOMBIE RULES", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+                    Text("LEAKAGE & ZOMBIE RULES", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
 
                     if (inactiveRecurring.isEmpty()) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
