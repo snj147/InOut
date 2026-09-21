@@ -9,9 +9,10 @@ import androidx.room.TypeConverters
 @Database(
     entities = [
         VaultPocket::class,
-        FlowRecord::class
+        FlowRecord::class,
+        StagedDesire::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 @TypeConverters(FlowConverters::class)
