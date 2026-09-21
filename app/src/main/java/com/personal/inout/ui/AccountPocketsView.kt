@@ -117,7 +117,7 @@ fun AccountPocketsView(
                         ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = PocketType.LIQUID)
 
                     StructuralDeckRow(
-                        indicatorColor = Color(0xFF6E6963), // Slate indicator
+                        indicatorColor = Color(0xFF6E6963),
                         onLongClick = { onEditPocket(pocket) }
                     ) {
                         Row(
@@ -157,7 +157,7 @@ fun AccountPocketsView(
                         val isOverdue = pot.targetDateEpoch > 0 && System.currentTimeMillis() > pot.targetDateEpoch && shortfall > 0
 
                         StructuralDeckRow(
-                            indicatorColor = Color(0xFFE59C5C), // Amber indicator
+                            indicatorColor = Color(0xFFE59C5C),
                             onLongClick = { onEditPocket(rawPocket) }
                         ) {
                             Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -209,7 +209,7 @@ fun AccountPocketsView(
                         val hasOutstanding = summary.computedBalance < 0.0
 
                         StructuralDeckRow(
-                            indicatorColor = Color(0xFFE57373), // Terracotta indicator
+                            indicatorColor = Color(0xFFE57373),
                             onLongClick = { onEditPocket(pocket) }
                         ) {
                             Row(
@@ -220,7 +220,7 @@ fun AccountPocketsView(
                                 Column {
                                     Text(summary.name, color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
                                     Text(
-                                        if (isPrivacyMode) "••••" else "Avail: ₹${String.format("%,.0f", summary.creditLimit + summary.computedBalance)} / ₹${String.format("%,.0f", summary.creditLimit)}",
+                                        if (isPrivacyMode) "••••" else "Avail: ₹${String.format("%,.0f", summary.creditLimit + summary.computedBalance)} / Limit: ₹${String.format("%,.0f", summary.creditLimit)}",
                                         color = Color(0xFF888888),
                                         fontSize = 10.5.sp
                                     )
@@ -343,7 +343,7 @@ fun AccountPocketsView(
                     }
                     items(recurringSchedules, key = { it.id }) { record ->
                         StructuralDeckRow(
-                            indicatorColor = Color(0xFFA88950), // Muted bronze indicator
+                            indicatorColor = Color(0xFFA88950),
                             onLongClick = { onEditRecurring(record) }
                         ) {
                             Row(
@@ -496,11 +496,17 @@ private fun StructuralDeckRow(
     content: @Composable () -> Unit
 ) {
     Card(
-        modifier = Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = onLongClick),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = {}, onLongClick = onLongClick),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF1B1917))
     ) {
-        Row(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min) // Ensures the indicator strip matches full card height
+        ) {
             Box(
                 modifier = Modifier
                     .width(3.5.dp)
