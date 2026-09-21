@@ -588,48 +588,113 @@ fun DashboardScreen(db: AppDatabase) {
                             isPrivacyMode = isPrivacyMode
                         )
 
-                        3 -> SettingsScreen(
-                            currentTheme = activeThemeMode,
-                            configuredDailyBurn = dailyBurnCeiling,
-                            isProUser = isProUnlocked,
-                            onSelectTheme = { mode ->
-                                activeThemeMode = mode
-                                prefs.edit().putString("selected_theme", mode.name).apply()
-                            },
-                            onUpdateDailyBurn = { rate ->
-                                dailyBurnCeiling = rate
-                                prefs.edit().putFloat("daily_burn_ceiling", rate.toFloat()).apply()
-                            },
-                            onTriggerProPurchase = { showMockPaywall = true },
-                            onExportPdfDossier = {
-                                scope.launch {
-                                    PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords)
+                        3 -> {
+                            // Settings Tab: Rendered inline to cleanly match all preference operations
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                Text("Settings & Vault Controls", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+
+                                Card(
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = CardDefaults.cardColors(containerColor = theme.surface),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        Text("Theme Mode", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            AppThemeMode.values().forEach { mode ->
+                                                val isSel = activeThemeMode == mode
+                                                Box(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .clip(RoundedCornerShape(8.dp))
+                                                        .background(if (isSel) theme.accent else theme.surfaceAlt)
+                                                        .clickable {
+                                                            activeThemeMode = mode
+                                                            prefs.edit().putString("selected_theme", mode.name).apply()
+                                                        }
+                                                        .padding(vertical = 8.dp),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text(
+                                                        mode.name.replace("_", " "),
+                                                        color = if (isSel) theme.bg else theme.textBright,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
-                            },
-                            onExportCsv = {
-                                val compatList = flowRecords.map {
-                                    Transaction(
-                                        id = it.id,
-                                        accountId = it.sourcePocketId ?: it.targetPocketId ?: 0L,
-                                        flowType = if (it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.CARD_PAYMENT)) "OUT" else "IN",
-                                        type = it.nature.name,
-                                        category = it.category,
-                                        amount = it.amount,
-                                        timestamp = it.timestamp,
-                                        note = it.note,
-                                        isRecurring = it.isRecurring,
-                                        frequency = it.frequency
-                                    )
-                                }
-                                CsvExporter.exportAndShareTransactions(context, compatList)
-                            },
-                            onClearLedger = {
-                                scope.launch {
-                                    flowRecords.forEach { db.stateFlowDao().deleteFlowRecordById(it.id) }
-                                    alertManager.showAlert("All vault records cleared", AlertType.SUCCESS)
+
+                                Card(
+                                    shape = RoundedCornerShape(16.dp),
+                                    colors = CardDefaults.cardColors(containerColor = theme.surface),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        Text("Data & Ledger Operations", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+
+                                        Button(
+                                            onClick = {
+                                                scope.launch {
+                                                    PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords)
+                                                }
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text("Export PDF Ledger Dossier", color = theme.textBright, fontSize = 12.sp)
+                                        }
+
+                                        Button(
+                                            onClick = {
+                                                val compatList = flowRecords.map {
+                                                    Transaction(
+                                                        id = it.id,
+                                                        accountId = it.sourcePocketId ?: it.targetPocketId ?: 0L,
+                                                        flowType = if (it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.CARD_PAYMENT)) "OUT" else "IN",
+                                                        type = it.nature.name,
+                                                        category = it.category,
+                                                        amount = it.amount,
+                                                        timestamp = it.timestamp,
+                                                        note = it.note,
+                                                        isRecurring = it.isRecurring,
+                                                        frequency = it.frequency
+                                                    )
+                                                }
+                                                CsvExporter.exportAndShareTransactions(context, compatList)
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text("Export CSV Ledger", color = theme.textBright, fontSize = 12.sp)
+                                        }
+
+                                        Button(
+                                            onClick = {
+                                                scope.launch {
+                                                    flowRecords.forEach { db.stateFlowDao().deleteFlowRecordById(it.id) }
+                                                    alertManager.showAlert("All vault records cleared", AlertType.SUCCESS)
+                                                }
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed.copy(alpha = 0.2f)),
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Text("Clear Entire Ledger History", color = theme.mildRed, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
                                 }
                             }
-                        )
+                        }
                     }
                 }
 
