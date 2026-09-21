@@ -9,6 +9,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -27,6 +28,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -127,10 +130,10 @@ fun DashboardScreen(db: AppDatabase) {
     var naturalLanguageInput by remember { mutableStateOf("") }
     val placeholderHints = listOf(
         "Spent [Amount] on [Item]",
-        "salary 25000 IDFC monthly",
-        "collected 2000 from ABC",
-        "create bank SBI / add card ICICI 50000",
-        "goal phone 40000 by nov",
+        "set goal phone 40000 by nov",
+        "salary 25000 idfc monthly",
+        "collected 2000 from rahul to sbi",
+        "pay 12000 axis card bill from sbi",
         "burn 600 (update daily target)"
     )
     var currentHintIndex by remember { mutableIntStateOf(0) }
@@ -228,6 +231,25 @@ fun DashboardScreen(db: AppDatabase) {
                         }
                     }
                 }
+                is ParsedIntent.BreakGoalPot -> {
+                    val goal = rawPockets.firstOrNull { it.pocketType == PocketType.SAVING_GOAL && it.name.equals(parsed.potName, ignoreCase = true) }
+                    if (goal != null) {
+                        val bal = pocketBalances.firstOrNull { it.pocketId == goal.id.toString() }?.computedBalance ?: 0.0
+                        if (bal > 0 && parsed.destinationPocketId != null) {
+                            ledgerEngine.recordMovement(
+                                nature = MovementNature.TRANSFER,
+                                sourcePocketId = goal.id,
+                                targetPocketId = parsed.destinationPocketId,
+                                amount = bal,
+                                category = "Savings Pot",
+                                note = "Broken Pot Funds Return"
+                            )
+                        }
+                        db.stateFlowDao().updatePocket(goal.copy(isArchived = true))
+                        alertManager.showAlert("Pot '${goal.name}' broken. ₹${bal.toInt()} returned.", AlertType.SUCCESS)
+                        naturalLanguageInput = ""
+                    }
+                }
                 is ParsedIntent.CreateAccount -> {
                     db.stateFlowDao().insertPocket(
                         VaultPocket(
@@ -239,7 +261,24 @@ fun DashboardScreen(db: AppDatabase) {
                             targetDateEpoch = parsed.targetDateEpoch
                         )
                     )
-                    alertManager.showAlert("Account '${parsed.name}' created", AlertType.SUCCESS)
+                    alertManager.showAlert("Created '${parsed.name}'", AlertType.SUCCESS)
+                    naturalLanguageInput = ""
+                }
+                is ParsedIntent.CompoundTransactions -> {
+                    var successCount = 0
+                    for (sub in parsed.transactions) {
+                        val res = ledgerEngine.recordMovement(
+                            nature = sub.nature,
+                            sourcePocketId = sub.matchedPocketId,
+                            targetPocketId = sub.targetPocketId,
+                            amount = sub.amount,
+                            category = sub.category,
+                            note = sub.merchant,
+                            autoSplitEnabled = autoSplitEnabled
+                        )
+                        if (res is VaultExecutionResult.Success) successCount++
+                    }
+                    alertManager.showAlert("Recorded $successCount compound transactions", AlertType.SUCCESS)
                     naturalLanguageInput = ""
                 }
                 is ParsedIntent.Transaction -> {
@@ -262,7 +301,6 @@ fun DashboardScreen(db: AppDatabase) {
                             personPocket = VaultPocket(id = newId, name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY, subType = "PEER")
                         }
 
-                        // Strict Peer Flow Assignment: Collect = into liquid from peer; Lend = from liquid to peer
                         when (parsed.nature) {
                             MovementNature.PEER_LEND -> {
                                 sourceId = parsed.matchedPocketId
@@ -440,50 +478,71 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
-                                // Clean Quick Bar: Red warnings removed entirely
+                                // Highlighted Glowing Animated Quick Bar
                                 item {
-                                    Card(
-                                        shape = RoundedCornerShape(14.dp),
-                                        colors = CardDefaults.cardColors(containerColor = theme.surface),
-                                        modifier = Modifier.fillMaxWidth().border(1.5.dp, theme.accent.copy(alpha = 0.8f), RoundedCornerShape(14.dp))
+                                    val infiniteTransition = rememberInfiniteTransition(label = "borderGlow")
+                                    val animatedAngle by infiniteTransition.animateFloat(
+                                        initialValue = 0f,
+                                        targetValue = 360f,
+                                        animationSpec = infiniteRepeatable(animation = tween(4000, easing = LinearEasing), repeatMode = RepeatMode.Restart),
+                                        label = "glowAngle"
+                                    )
+
+                                    val glowingBrush = Brush.sweepGradient(
+                                        listOf(theme.accent, theme.mildGreen, theme.mildRed, theme.accent)
+                                    )
+
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .shadow(8.dp, RoundedCornerShape(16.dp), spotColor = theme.accent.copy(alpha = 0.5f))
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .background(glowingBrush)
+                                            .padding(1.8.dp)
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
-                                            verticalAlignment = Alignment.CenterVertically
+                                        Card(
+                                            shape = RoundedCornerShape(14.dp),
+                                            colors = CardDefaults.cardColors(containerColor = theme.surface),
+                                            modifier = Modifier.fillMaxWidth()
                                         ) {
-                                            Box(
-                                                modifier = Modifier.clip(CircleShape).background(theme.accent.copy(alpha = 0.2f)).padding(6.dp),
-                                                contentAlignment = Alignment.Center
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Icon(Icons.Default.Bolt, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
-                                            }
+                                                Box(
+                                                    modifier = Modifier.clip(CircleShape).background(theme.accent.copy(alpha = 0.2f)).padding(6.dp),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(Icons.Default.Bolt, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
+                                                }
 
-                                            Spacer(Modifier.width(10.dp))
+                                                Spacer(Modifier.width(10.dp))
 
-                                            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                                                if (naturalLanguageInput.isEmpty()) {
-                                                    Text(
-                                                        text = placeholderHints[currentHintIndex],
-                                                        color = theme.textMuted.copy(alpha = 0.7f),
-                                                        fontSize = 12.5.sp,
-                                                        maxLines = 1
+                                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                                    if (naturalLanguageInput.isEmpty()) {
+                                                        Text(
+                                                            text = placeholderHints[currentHintIndex],
+                                                            color = theme.textMuted.copy(alpha = 0.7f),
+                                                            fontSize = 12.5.sp,
+                                                            maxLines = 1
+                                                        )
+                                                    }
+                                                    BasicTextField(
+                                                        value = naturalLanguageInput,
+                                                        onValueChange = { naturalLanguageInput = it },
+                                                        singleLine = true,
+                                                        textStyle = TextStyle(color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+                                                        cursorBrush = SolidColor(theme.accent),
+                                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                                        keyboardActions = KeyboardActions(onDone = { executeQuickBarCommand(naturalLanguageInput) }),
+                                                        modifier = Modifier.fillMaxWidth()
                                                     )
                                                 }
-                                                BasicTextField(
-                                                    value = naturalLanguageInput,
-                                                    onValueChange = { naturalLanguageInput = it },
-                                                    singleLine = true,
-                                                    textStyle = TextStyle(color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Medium),
-                                                    cursorBrush = SolidColor(theme.accent),
-                                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                                    keyboardActions = KeyboardActions(onDone = { executeQuickBarCommand(naturalLanguageInput) }),
-                                                    modifier = Modifier.fillMaxWidth()
-                                                )
-                                            }
 
-                                            if (naturalLanguageInput.isNotBlank()) {
-                                                IconButton(onClick = { executeQuickBarCommand(naturalLanguageInput) }) {
-                                                    Icon(Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
+                                                if (naturalLanguageInput.isNotBlank()) {
+                                                    IconButton(onClick = { executeQuickBarCommand(naturalLanguageInput) }) {
+                                                        Icon(Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
+                                                    }
                                                 }
                                             }
                                         }
@@ -852,16 +911,22 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
 
-                // Dedicated Recurring Rule Editor (Amount, Note, Cadence)
+                // Dedicated Recurring Rule Editor with Date & Frequency
                 editingRecurringRule?.let { rule ->
                     EditRecurringRuleDialog(
                         rule = rule,
                         theme = theme,
                         onDismiss = { editingRecurringRule = null },
-                        onSave = { newAmt, newNote, newFreq ->
+                        onSave = { newAmt, newNote, newFreq, newTimestamp ->
                             scope.launch {
                                 db.stateFlowDao().updateFlowRecord(
-                                    rule.copy(amount = newAmt, note = newNote, frequency = newFreq, recurringCadence = newFreq)
+                                    rule.copy(
+                                        amount = newAmt,
+                                        note = newNote,
+                                        frequency = newFreq,
+                                        recurringCadence = newFreq,
+                                        timestamp = newTimestamp
+                                    )
                                 )
                                 editingRecurringRule = null
                                 alertManager.showAlert("Recurring schedule updated", AlertType.SUCCESS)
@@ -870,7 +935,6 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
 
-                // Transaction Editor
                 editingFlowRecord?.let { flow ->
                     EditTransactionDialog(
                         record = flow,
@@ -946,7 +1010,7 @@ fun DashboardScreen(db: AppDatabase) {
                     CreateAccountDialog(
                         theme = theme,
                         onDismiss = { showCreatePocketDialog = false },
-                        onSave = { name, type, limit, targetAmt ->
+                        onSave = { name, type, limit, targetAmt, targetDateEpoch ->
                             scope.launch {
                                 db.stateFlowDao().insertPocket(
                                     VaultPocket(
@@ -954,7 +1018,8 @@ fun DashboardScreen(db: AppDatabase) {
                                         pocketType = type,
                                         subType = type.name,
                                         creditLimit = limit,
-                                        targetAmount = targetAmt
+                                        targetAmount = targetAmt,
+                                        targetDateEpoch = targetDateEpoch
                                     )
                                 )
                                 showCreatePocketDialog = false
@@ -969,13 +1034,14 @@ fun DashboardScreen(db: AppDatabase) {
                         account = pocket,
                         theme = theme,
                         onDismiss = { editingPocket = null },
-                        onSave = { updatedName, updatedLimit, updatedTarget ->
+                        onSave = { updatedName, updatedLimit, updatedTarget, updatedDateEpoch ->
                             scope.launch {
                                 db.stateFlowDao().updatePocket(
                                     pocket.copy(
                                         name = updatedName,
                                         creditLimit = updatedLimit,
-                                        targetAmount = updatedTarget
+                                        targetAmount = updatedTarget,
+                                        targetDateEpoch = updatedDateEpoch
                                     )
                                 )
                                 editingPocket = null
@@ -1105,11 +1171,14 @@ private fun EditRecurringRuleDialog(
     rule: FlowRecord,
     theme: ThemeColors,
     onDismiss: () -> Unit,
-    onSave: (amount: Double, note: String, freq: String) -> Unit
+    onSave: (amount: Double, note: String, freq: String, timestamp: Long) -> Unit
 ) {
     var note by remember { mutableStateOf(rule.note) }
     var amountText by remember { mutableStateOf(rule.amount.toInt().toString()) }
     var frequency by remember { mutableStateOf(if (rule.frequency != "NONE") rule.frequency else "MONTHLY") }
+    var selectedDateEpoch by remember { mutableStateOf(rule.timestamp) }
+
+    val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateEpoch))
 
     AlertDialog(
         containerColor = theme.surface,
@@ -1117,8 +1186,8 @@ private fun EditRecurringRuleDialog(
         title = { Text("Edit Recurring Schedule", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                CompactInputField(value = note, onValueChange = { note = it }, placeholder = "Schedule Note / Description")
-                CompactInputField(value = amountText, onValueChange = { amountText = it }, placeholder = "Recurring Amount in ₹")
+                CompactInputField(value = note, onValueChange = { note = it }, placeholder = "Schedule Description")
+                CompactInputField(value = amountText, onValueChange = { amountText = it }, placeholder = "Amount in ₹")
 
                 Text("Frequency", color = theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1137,13 +1206,15 @@ private fun EditRecurringRuleDialog(
                         }
                     }
                 }
+
+                Text("Start / Due Date: $dateFormatted", color = theme.textMuted, fontSize = 11.sp)
             }
         },
         confirmButton = {
             Button(
                 onClick = {
                     val amt = amountText.toDoubleOrNull() ?: rule.amount
-                    onSave(amt, note, frequency)
+                    onSave(amt, note, frequency, selectedDateEpoch)
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
             ) { Text("Save Changes", color = theme.bg, fontWeight = FontWeight.Bold) }
@@ -1220,7 +1291,7 @@ private fun EditTransactionDialog(
 private fun CreateAccountDialog(
     theme: ThemeColors,
     onDismiss: () -> Unit,
-    onSave: (String, PocketType, Double, Double) -> Unit
+    onSave: (String, PocketType, Double, Double, Long) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var type by remember { mutableStateOf(PocketType.LIQUID) }
@@ -1266,7 +1337,13 @@ private fun CreateAccountDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    if (name.isNotBlank()) onSave(name, type, limit.toDoubleOrNull() ?: 0.0, targetAmt.toDoubleOrNull() ?: 0.0)
+                    if (name.isNotBlank()) onSave(
+                        name,
+                        type,
+                        limit.toDoubleOrNull() ?: 0.0,
+                        targetAmt.toDoubleOrNull() ?: 0.0,
+                        System.currentTimeMillis() + (90L * 24 * 3600 * 1000L)
+                    )
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
             ) { Text("Save", color = theme.bg, fontWeight = FontWeight.Bold) }
@@ -1280,7 +1357,7 @@ private fun EditAccountDialog(
     account: VaultPocket,
     theme: ThemeColors,
     onDismiss: () -> Unit,
-    onSave: (String, Double, Double) -> Unit
+    onSave: (String, Double, Double, Long) -> Unit
 ) {
     var name by remember { mutableStateOf(account.name) }
     var limit by remember { mutableStateOf(if (account.creditLimit > 0) String.format("%.0f", account.creditLimit) else "") }
@@ -1289,10 +1366,10 @@ private fun EditAccountDialog(
     AlertDialog(
         containerColor = theme.surface,
         onDismissRequest = onDismiss,
-        title = { Text("Edit Account", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+        title = { Text(if (account.pocketType == PocketType.SAVING_GOAL) "Edit Goal Pot" else "Edit Account", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                CompactInputField(value = name, onValueChange = { name = it }, placeholder = "Account Name")
+                CompactInputField(value = name, onValueChange = { name = it }, placeholder = "Name")
                 if (account.pocketType == PocketType.CREDIT_LINE) {
                     CompactInputField(value = limit, onValueChange = { limit = it }, placeholder = "Credit Limit")
                 }
@@ -1307,11 +1384,12 @@ private fun EditAccountDialog(
                     if (name.isNotBlank()) onSave(
                         name,
                         limit.toDoubleOrNull() ?: account.creditLimit,
-                        targetAmt.toDoubleOrNull() ?: account.targetAmount
+                        targetAmt.toDoubleOrNull() ?: account.targetAmount,
+                        account.targetDateEpoch
                     )
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-            ) { Text("Save", color = theme.bg, fontWeight = FontWeight.Bold) }
+            ) { Text("Save Changes", color = theme.bg, fontWeight = FontWeight.Bold) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) } }
     )
