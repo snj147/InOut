@@ -1,12 +1,8 @@
 package com.personal.inout.ui
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -28,30 +24,22 @@ import java.util.*
 @Composable
 fun AllTransactionsSearchSheet(
     flowRecords: List<FlowRecord> = emptyList(),
-    records: List<FlowRecord> = flowRecords,
     sheetState: SheetState = rememberModalBottomSheetState(),
     isPrivacyMode: Boolean = false,
     isProUser: Boolean = true,
     onDismiss: () -> Unit = {},
     onEditRecord: (FlowRecord) -> Unit = {},
-    onUpdateRecord: (FlowRecord) -> Unit = onEditRecord,
-    onDeleteRecord: (FlowRecord) -> Unit = {},
     onExportCsv: () -> Unit = {},
     onExportPdfDossier: () -> Unit = {}
 ) {
-    val activeList = if (flowRecords.isNotEmpty()) flowRecords else records
     var searchQuery by remember { mutableStateOf("") }
-    var selectedCategoryFilter by remember { mutableStateOf("All") }
-    var editingRecord by remember { mutableStateOf<FlowRecord?>(null) }
 
-    val filteredRecords = remember(activeList, searchQuery, selectedCategoryFilter) {
-        activeList.filter { record ->
-            val matchesCategory = if (selectedCategoryFilter == "All") true else record.category.equals(selectedCategoryFilter, ignoreCase = true)
-            val matchesQuery = searchQuery.isBlank() ||
+    val filteredRecords = remember(flowRecords, searchQuery) {
+        flowRecords.filter { record ->
+            searchQuery.isBlank() ||
                     record.note.contains(searchQuery, ignoreCase = true) ||
                     record.category.contains(searchQuery, ignoreCase = true) ||
                     record.amount.toString().contains(searchQuery)
-            matchesCategory && matchesQuery
         }
     }
 
@@ -72,9 +60,9 @@ fun AllTransactionsSearchSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "All Vault Records (${activeList.size})",
+                    text = "All Vault Records (${flowRecords.size})",
                     color = Color.White,
-                    fontSize = 18.sp,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Bold
                 )
                 IconButton(onClick = onDismiss) {
@@ -82,13 +70,13 @@ fun AllTransactionsSearchSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
                 modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Search by note, amount, category...", color = Color(0xFF666666)) },
+                placeholder = { Text("Search by note, amount, category...", color = Color(0xFF666666), fontSize = 13.sp) },
                 leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = Color(0xFFE59C5C)) },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
@@ -102,7 +90,7 @@ fun AllTransactionsSearchSheet(
                 )
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
@@ -113,29 +101,11 @@ fun AllTransactionsSearchSheet(
                     TransactionSearchItem(
                         record = record,
                         isPrivacyMode = isPrivacyMode,
-                        onClick = {
-                            editingRecord = record
-                            onEditRecord(record)
-                        }
+                        onClick = { onEditRecord(record) }
                     )
                 }
             }
         }
-    }
-
-    editingRecord?.let { record ->
-        EditTransactionDialog(
-            record = record,
-            onDismiss = { editingRecord = null },
-            onUpdate = { updated ->
-                onUpdateRecord(updated)
-                editingRecord = null
-            },
-            onDelete = { toDelete ->
-                onDeleteRecord(toDelete)
-                editingRecord = null
-            }
-        )
     }
 }
 
@@ -151,162 +121,23 @@ fun TransactionSearchItem(
     }
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() },
+        modifier = Modifier.fillMaxWidth().clickable { onClick() },
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1C1A))
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text(record.note.ifBlank { record.category }, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                Text(record.category, color = Color(0xFF888888), fontSize = 12.sp)
+                Text(record.note.ifBlank { record.category }, color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold)
+                Text(record.category, color = Color(0xFF888888), fontSize = 11.sp)
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text(if (isPrivacyMode) "₹••••" else "₹${record.amount.toInt()}", color = Color(0xFFE59C5C), fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                Text(dateStr, color = Color(0xFF666666), fontSize = 11.sp)
+                Text(if (isPrivacyMode) "₹ •••" else "₹${record.amount.toInt()}", color = Color(0xFFE59C5C), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(dateStr, color = Color(0xFF666666), fontSize = 10.5.sp)
             }
         }
-    }
-}
-
-@Composable
-fun EditTransactionDialog(
-    record: FlowRecord,
-    onDismiss: () -> Unit,
-    onUpdate: (FlowRecord) -> Unit,
-    onDelete: (FlowRecord) -> Unit
-) {
-    var note by remember { mutableStateOf(record.note) }
-    var selectedCategory by remember { mutableStateOf(record.category) }
-    var showDeleteConfirmation by remember { mutableStateOf(false) }
-
-    val categories = remember {
-        listOf(
-            "Food & Dining", "Groceries", "Transport",
-            "Shopping", "Bills", "Health",
-            "Leisure", "Salary", "General", "Peer Transfer"
-        )
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        containerColor = Color(0xFF1E1C1A),
-        shape = RoundedCornerShape(20.dp),
-        title = { Text("Edit Entry", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold) },
-        text = {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Text(text = "Amount: ₹${record.amount.toInt()}", color = Color(0xFF9E9E9E), fontSize = 14.sp)
-                Spacer(modifier = Modifier.height(12.dp))
-
-                OutlinedTextField(
-                    value = note,
-                    onValueChange = { note = it },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        focusedContainerColor = Color(0xFF2B2826),
-                        unfocusedContainerColor = Color(0xFF2B2826),
-                        focusedBorderColor = Color(0xFFE59C5C),
-                        unfocusedBorderColor = Color.Transparent
-                    )
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-                Text("Category", color = Color(0xFFCCCCCC), fontSize = 13.sp)
-                Spacer(modifier = Modifier.height(8.dp))
-
-                LazyVerticalGrid(
-                    columns = GridCells.Fixed(3),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(160.dp)
-                ) {
-                    items(categories) { cat ->
-                        val isSelected = cat.equals(selectedCategory, ignoreCase = true)
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(38.dp)
-                                .background(
-                                    color = if (isSelected) Color(0xFFE59C5C) else Color(0xFF2B2826),
-                                    shape = RoundedCornerShape(8.dp)
-                                )
-                                .clickable { selectedCategory = cat },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = cat,
-                                fontSize = 11.sp,
-                                maxLines = 1,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                color = if (isSelected) Color(0xFF1C1917) else Color(0xFFCCCCCC)
-                            )
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = { onUpdate(record.copy(note = note, category = selectedCategory)) },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE59C5C)),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Text("Update", color = Color(0xFF1C1917), fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            Row {
-                TextButton(onClick = { showDeleteConfirmation = true }) {
-                    Text("Delete", color = Color(0xFFE57373))
-                }
-                Spacer(modifier = Modifier.width(4.dp))
-                TextButton(onClick = onDismiss) {
-                    Text("Cancel", color = Color(0xFF9E9E9E))
-                }
-            }
-        }
-    )
-
-    if (showDeleteConfirmation) {
-        AlertDialog(
-            onDismissRequest = { showDeleteConfirmation = false },
-            containerColor = Color(0xFF262320),
-            title = { Text("Confirm Deletion", color = Color.White) },
-            text = {
-                Text(
-                    "Are you sure you want to delete this record? This will adjust your ledger balances accordingly.",
-                    color = Color(0xFFCCCCCC)
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showDeleteConfirmation = false
-                        onDelete(record)
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE57373))
-                ) {
-                    Text("Delete", color = Color.White)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDeleteConfirmation = false }) {
-                    Text("Cancel", color = Color(0xFF9E9E9E))
-                }
-            }
-        )
     }
 }
