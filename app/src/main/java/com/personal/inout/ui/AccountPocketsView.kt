@@ -42,16 +42,20 @@ fun AccountPocketsView(
     onRecordCardSettlement: (cardId: Long, liquidId: Long, amt: Double) -> Unit = { _, _, _ -> },
     onPeerAction: (nature: MovementNature, peerId: Long, liquidId: Long, amt: Double) -> Unit = { _, _, _, _ -> }
 ) {
+    var peerActionTarget by remember { mutableStateOf<Pair<VaultPocket, MovementNature>?>(null) }
+    var peerActionAmount by remember { mutableStateOf("") }
+    var selectedLiquidId by remember { mutableStateOf<Long?>(null) }
+
     var pocketToDelete by remember { mutableStateOf<Pair<VaultPocket, Double>?>(null) }
     var recurringToDelete by remember { mutableStateOf<FlowRecord?>(null) }
-    val defaultLiquidId = remember(rawPockets) {
-        rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id ?: 0L
-    }
+
+    val liquidPockets = remember(rawPockets) { rawPockets.filter { it.pocketType == PocketType.LIQUID } }
+    val defaultLiquidId = remember(liquidPockets) { liquidPockets.firstOrNull()?.id ?: 0L }
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 100.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        contentPadding = PaddingValues(top = 16.dp, bottom = 100.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         // 1. Cash & Bank Accounts
         item {
@@ -60,25 +64,25 @@ fun AccountPocketsView(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Cash & Bank Accounts", color = Color(0xFFCCCCCC), fontSize = 14.sp)
-                Text("${pocketBalances.count { it.pocketType == PocketType.LIQUID }}", color = Color(0xFF666666), fontSize = 13.sp)
+                Text("Cash & Bank Accounts", color = Color(0xFFCCCCCC), fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+                Text("${pocketBalances.count { it.pocketType == PocketType.LIQUID }}", color = Color(0xFF666666), fontSize = 12.sp)
             }
         }
         items(pocketBalances.filter { it.pocketType == PocketType.LIQUID }, key = { it.pocketId }) { summary ->
             val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId } ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = PocketType.LIQUID)
             PocketCard(
                 name = summary.name,
-                subtitle = "LIQUID",
-                balanceText = if (isPrivacyMode) "••••" else "₹${String.format("%,.0f", summary.computedBalance)}",
+                subtitle = "LIQUID ACCOUNT",
+                balanceText = if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", summary.computedBalance)}",
                 actionLabel = "Transact",
-                actionColor = Color(0xFF332B22),
+                actionColor = Color(0xFF282420),
                 textColor = Color(0xFFE59C5C),
                 onActionClick = { onTransactPocket(pocket) },
                 onLongClick = { onEditPocket(pocket) }
             )
         }
 
-        // 2. Goal Pots (Saving Goals)
+        // 2. Goal Pots (Saving Goals) with Breakdown and Break/Delete
         val goalList = pocketBalances.filter { it.pocketType == PocketType.SAVING_GOAL }
         if (goalList.isNotEmpty()) {
             item {
@@ -87,30 +91,44 @@ fun AccountPocketsView(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Goal Pots (Target Savings)", color = Color(0xFFCCCCCC), fontSize = 14.sp)
-                    Text("${goalList.size}", color = Color(0xFF666666), fontSize = 13.sp)
+                    Text("Goal Pots (Target Savings)", color = Color(0xFFCCCCCC), fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+                    Text("${goalList.size}", color = Color(0xFF666666), fontSize = 12.sp)
                 }
             }
             items(goalList, key = { it.pocketId }) { pot ->
+                val rawPocket = rawPockets.firstOrNull { it.id.toString() == pot.pocketId } ?: VaultPocket(id = pot.pocketId.toLongOrNull() ?: 0L, name = pot.name, pocketType = PocketType.SAVING_GOAL)
                 val progress = if (pot.targetAmount > 0) (pot.computedBalance / pot.targetAmount).toFloat().coerceIn(0f, 1f) else 0f
+                val shortfall = (pot.targetAmount - pot.computedBalance).coerceAtLeast(0.0)
+
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1C1A))
+                    modifier = Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = { onEditPocket(rawPocket) }),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF1B1917))
                 ) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text(pot.name, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                            Text(
-                                if (isPrivacyMode) "••••" else "₹${String.format("%,.0f", pot.computedBalance)} / ₹${String.format("%,.0f", pot.targetAmount)}",
-                                color = Color(0xFFE59C5C),
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Column {
+                                Text(pot.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                Text("Remaining: ₹${shortfall.toInt()} (Pacing: ₹${(shortfall / 30).toInt()}/day)", color = Color(0xFF888888), fontSize = 11.sp)
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    if (isPrivacyMode) "••••" else "₹${String.format("%,.0f", pot.computedBalance)} / ₹${String.format("%,.0f", pot.targetAmount)}",
+                                    color = Color(0xFFE59C5C),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                IconButton(
+                                    onClick = { pocketToDelete = rawPocket to pot.computedBalance },
+                                    modifier = Modifier.size(26.dp)
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Break Pot", tint = Color(0xFFE57373), modifier = Modifier.size(16.dp))
+                                }
+                            }
                         }
                         LinearProgressIndicator(
                             progress = { progress },
-                            modifier = Modifier.fillMaxWidth().height(6.dp),
+                            modifier = Modifier.fillMaxWidth().height(5.dp),
                             color = Color(0xFFE59C5C),
                             trackColor = Color(0xFF2B2826)
                         )
@@ -119,89 +137,182 @@ fun AccountPocketsView(
             }
         }
 
-        // 3. Cards & Loans
+        // 3. Cards & Loans (Dual Buttons: Always Transact, Pay Bill only if dues exist)
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Cards & Loans (CC / Dues)", color = Color(0xFFCCCCCC), fontSize = 14.sp)
-                Text("${pocketBalances.count { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }}", color = Color(0xFF666666), fontSize = 13.sp)
+                Text("Cards & Loans (CC / Dues)", color = Color(0xFFCCCCCC), fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+                Text("${pocketBalances.count { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }}", color = Color(0xFF666666), fontSize = 12.sp)
             }
         }
         items(pocketBalances.filter { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }, key = { it.pocketId }) { summary ->
             val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId } ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = summary.pocketType)
-            PocketCard(
-                name = summary.name,
-                subtitle = if (isPrivacyMode) "••••" else "Avail: ₹${String.format("%,.0f", summary.creditLimit + summary.computedBalance)} / Limit: ₹${String.format("%,.0f", summary.creditLimit)}",
-                balanceText = if (isPrivacyMode) "••••" else "₹${String.format("%,.0f", Math.abs(summary.computedBalance))}",
-                actionLabel = if (summary.computedBalance >= 0) "Settled" else "Pay Due",
-                actionColor = Color(0xFF282522),
-                textColor = Color(0xFF9E9E9E),
-                onActionClick = {
-                    if (summary.computedBalance < 0 && defaultLiquidId != 0L) {
-                        onRecordCardSettlement(pocket.id, defaultLiquidId, Math.abs(summary.computedBalance))
-                    } else {
-                        onTransactPocket(pocket)
+            val hasOutstanding = summary.computedBalance < 0.0
+
+            Card(
+                modifier = Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = { onEditPocket(pocket) }),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1B1917))
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(summary.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            if (isPrivacyMode) "••••" else "Avail: ₹${String.format("%,.0f", summary.creditLimit + summary.computedBalance)} / Limit: ₹${String.format("%,.0f", summary.creditLimit)}",
+                            color = Color(0xFF888888),
+                            fontSize = 11.sp
+                        )
                     }
-                },
-                onLongClick = { onEditPocket(pocket) }
-            )
+
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            if (isPrivacyMode) "••••" else "₹${String.format("%,.0f", Math.abs(summary.computedBalance))}",
+                            color = if (hasOutstanding) Color(0xFFE57373) else Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Button(
+                            onClick = { onTransactPocket(pocket) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF282420)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Text("Transact", color = Color(0xFFE59C5C), fontSize = 11.5.sp)
+                        }
+                        if (hasOutstanding) {
+                            Button(
+                                onClick = {
+                                    if (defaultLiquidId != 0L) {
+                                        onRecordCardSettlement(pocket.id, defaultLiquidId, Math.abs(summary.computedBalance))
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF332020)),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
+                            ) {
+                                Text("Pay Bill", color = Color(0xFFE57373), fontSize = 11.5.sp)
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        // 4. Counterparties (People)
+        // 4. Counterparties (People) - With Exact Collect/Repay Dialog and Zero Settle Pill
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("People (Owed & Lent)", color = Color(0xFFCCCCCC), fontSize = 14.sp)
-                Text("${pocketBalances.count { it.pocketType == PocketType.PEER || it.pocketType == PocketType.COUNTERPARTY || it.subType == "PEER" }}", color = Color(0xFF666666), fontSize = 13.sp)
+                Text("People (Owed & Lent)", color = Color(0xFFCCCCCC), fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+                Text("${pocketBalances.count { it.pocketType == PocketType.PEER || it.pocketType == PocketType.COUNTERPARTY || it.subType == "PEER" }}", color = Color(0xFF666666), fontSize = 12.sp)
             }
         }
         items(pocketBalances.filter { it.pocketType == PocketType.PEER || it.pocketType == PocketType.COUNTERPARTY || it.subType == "PEER" }, key = { it.pocketId }) { summary ->
             val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId } ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = summary.pocketType)
-            val isOwedToYou = summary.computedBalance > 0
-            PocketCard(
-                name = summary.name,
-                subtitle = if (isOwedToYou) "They owe you" else "You owe them",
-                balanceText = if (isPrivacyMode) "••••" else "₹${String.format("%,.0f", Math.abs(summary.computedBalance))}",
-                actionLabel = if (isOwedToYou) "Collect" else "Repay",
-                actionColor = if (isOwedToYou) Color(0xFF1E3326) else Color(0xFF332020),
-                textColor = if (isOwedToYou) Color(0xFF81C784) else Color(0xFFE57373),
-                onActionClick = {
-                    val nature = if (isOwedToYou) MovementNature.PEER_COLLECT else MovementNature.PEER_REPAY
-                    if (defaultLiquidId != 0L && summary.computedBalance != 0.0) {
-                        onPeerAction(nature, pocket.id, defaultLiquidId, Math.abs(summary.computedBalance))
-                    } else {
-                        onTransactPocket(pocket)
+            val bal = summary.computedBalance
+
+            Card(
+                modifier = Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = { onEditPocket(pocket) }),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1B1917))
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text(summary.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        val subText = when {
+                            bal > 0 -> "They owe you"
+                            bal < 0 -> "You owe them"
+                            else -> "Settled cleanly"
+                        }
+                        Text(subText, color = Color(0xFF888888), fontSize = 11.sp)
                     }
-                },
-                onLongClick = { onEditPocket(pocket) }
-            )
+
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            if (isPrivacyMode) "••••" else "₹${String.format("%,.0f", Math.abs(bal))}",
+                            color = when {
+                                bal > 0 -> Color(0xFF81C784)
+                                bal < 0 -> Color(0xFFE57373)
+                                else -> Color(0xFF888888)
+                            },
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        when {
+                            bal > 0 -> {
+                                Button(
+                                    onClick = {
+                                        peerActionAmount = Math.abs(bal).toInt().toString()
+                                        selectedLiquidId = defaultLiquidId
+                                        peerActionTarget = pocket to MovementNature.PEER_COLLECT
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E3326)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
+                                ) {
+                                    Text("Collect", color = Color(0xFF81C784), fontSize = 11.5.sp)
+                                }
+                            }
+                            bal < 0 -> {
+                                Button(
+                                    onClick = {
+                                        peerActionAmount = Math.abs(bal).toInt().toString()
+                                        selectedLiquidId = defaultLiquidId
+                                        peerActionTarget = pocket to MovementNature.PEER_REPAY
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF332020)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
+                                ) {
+                                    Text("Repay", color = Color(0xFFE57373), fontSize = 11.5.sp)
+                                }
+                            }
+                            else -> {
+                                Box(
+                                    modifier = Modifier.background(Color(0xFF262320), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text("Settled", color = Color(0xFF888888), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        // 5. Recurring Rules Lifecycle List
+        // 5. Recurring Rules Lifecycle
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Recurring Rules Lifecycle", color = Color(0xFFCCCCCC), fontSize = 14.sp)
-                Text("${recurringSchedules.size}", color = Color(0xFF666666), fontSize = 13.sp)
+                Text("Recurring Rules Lifecycle", color = Color(0xFFCCCCCC), fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+                Text("${recurringSchedules.size}", color = Color(0xFF666666), fontSize = 12.sp)
             }
         }
         items(recurringSchedules, key = { it.id }) { record ->
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1C1A))
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1B1917))
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    modifier = Modifier.fillMaxWidth().padding(14.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -210,12 +321,12 @@ fun AccountPocketsView(
                             Text(
                                 text = record.note.ifBlank { record.category },
                                 color = if (record.isPaused) Color(0xFF888888) else Color.White,
-                                fontSize = 15.sp,
+                                fontSize = 14.5.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                             if (record.isPaused) {
-                                Box(modifier = Modifier.background(Color(0xFF3A352F), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                                    Text("PAUSED", color = Color(0xFFE59C5C), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                Box(modifier = Modifier.background(Color(0xFF3A352F), RoundedCornerShape(4.dp)).padding(horizontal = 5.dp, vertical = 1.dp)) {
+                                    Text("PAUSED", color = Color(0xFFE59C5C), fontSize = 8.5.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
@@ -223,7 +334,7 @@ fun AccountPocketsView(
                         Text(
                             text = if (isPrivacyMode) "Repeats $freqText • ₹••••" else "Repeats $freqText • ₹${record.amount.toInt()}",
                             color = if (record.isPaused) Color(0xFF666666) else Color(0xFFE59C5C),
-                            fontSize = 12.sp
+                            fontSize = 11.5.sp
                         )
                     }
 
@@ -247,11 +358,46 @@ fun AccountPocketsView(
         }
     }
 
+    // Collect / Repay Partial Settle Dialog
+    peerActionTarget?.let { (peer, nature) ->
+        val isCollect = nature == MovementNature.PEER_COLLECT
+        AlertDialog(
+            onDismissRequest = { peerActionTarget = null },
+            containerColor = Color(0xFF1E1C1A),
+            title = { Text(if (isCollect) "Collect from ${peer.name}" else "Repay to ${peer.name}", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Enter settlement amount and account to receive/pay funds:", color = Color(0xFF888888), fontSize = 12.sp)
+                    OutlinedTextField(
+                        value = peerActionAmount,
+                        onValueChange = { peerActionAmount = it },
+                        singleLine = true,
+                        placeholder = { Text("Amount in ₹", color = Color(0xFF666666)) },
+                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val amt = peerActionAmount.toDoubleOrNull() ?: 0.0
+                        if (amt > 0 && defaultLiquidId != 0L) {
+                            onPeerAction(nature, peer.id, defaultLiquidId, amt)
+                        }
+                        peerActionTarget = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = if (isCollect) Color(0xFF81C784) else Color(0xFFE57373))
+                ) { Text("Confirm", color = Color(0xFF141211), fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { peerActionTarget = null }) { Text("Cancel", color = Color(0xFF888888)) } }
+        )
+    }
+
     pocketToDelete?.let { (pocket, bal) ->
         AlertDialog(
             onDismissRequest = { pocketToDelete = null },
             containerColor = Color(0xFF262320),
-            title = { Text("Delete Account", color = Color.White) },
+            title = { Text(if (pocket.pocketType == PocketType.SAVING_GOAL) "Break / Delete Goal Pot" else "Delete Account", color = Color.White) },
             text = { Text("Are you sure you want to delete '${pocket.name}'? Balance is ₹${bal.toInt()}.", color = Color(0xFFCCCCCC)) },
             confirmButton = {
                 Button(
@@ -271,7 +417,7 @@ fun AccountPocketsView(
             onDismissRequest = { recurringToDelete = null },
             containerColor = Color(0xFF262320),
             title = { Text("Delete Recurring Rule", color = Color.White) },
-            text = { Text("Are you sure you want to delete this schedule template? Past recorded transactions will not be touched.", color = Color(0xFFCCCCCC)) },
+            text = { Text("Are you sure you want to delete this schedule template? Past transactions will remain intact.", color = Color(0xFFCCCCCC)) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -300,29 +446,28 @@ fun PocketCard(
 ) {
     Card(
         modifier = Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = onLongClick),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1C1A))
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFF1B1917))
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text(name, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text(name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 Spacer(modifier = Modifier.height(2.dp))
-                Text(subtitle, color = Color(0xFF888888), fontSize = 12.sp)
+                Text(subtitle, color = Color(0xFF888888), fontSize = 11.sp)
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(balanceText, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                Spacer(modifier = Modifier.width(12.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(balanceText, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 Button(
                     onClick = onActionClick,
                     colors = ButtonDefaults.buttonColors(containerColor = actionColor),
                     shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 5.dp)
                 ) {
-                    Text(actionLabel, color = textColor, fontSize = 12.sp)
+                    Text(actionLabel, color = textColor, fontSize = 11.5.sp)
                 }
             }
         }
