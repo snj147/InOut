@@ -21,7 +21,8 @@ enum class PocketType {
     CREDIT,
     CREDIT_LINE,
     PEER,
-    COUNTERPARTY
+    COUNTERPARTY,
+    SAVING_GOAL
 }
 
 enum class CadenceType {
@@ -66,7 +67,8 @@ data class FlowRecord(
     val timestamp: Long = System.currentTimeMillis(),
     val isRecurring: Boolean = false,
     val recurringCadence: String = "NONE",
-    val frequency: String = "NONE"
+    val frequency: String = "NONE",
+    val isPaused: Boolean = false
 ) {
     val nature: MovementNature get() = movementNature
 }
@@ -79,6 +81,8 @@ data class VaultPocket(
     val pocketType: PocketType = PocketType.LIQUID,
     val subType: String? = null,
     val creditLimit: Double = 0.0,
+    val targetAmount: Double = 0.0,
+    val targetDateEpoch: Long = 0L,
     val isArchived: Boolean = false
 ) {
     val pocketId: String get() = id.toString()
@@ -91,8 +95,21 @@ data class PocketBalanceSummary(
     val pocketType: PocketType = PocketType.LIQUID,
     val subType: String? = null,
     val creditLimit: Double = 0.0,
+    val targetAmount: Double = 0.0,
+    val targetDateEpoch: Long = 0L,
     val computedBalance: Double = 0.0
 ) {
     val pocketName: String get() = name
     val currentBalance: Double get() = computedBalance
 }
+
+@Entity(tableName = "staged_desires")
+data class StagedDesire(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0L,
+    val name: String,
+    val amount: Double,
+    val category: String = "Shopping",
+    val createdAt: Long = System.currentTimeMillis(),
+    val coolOffUntil: Long = System.currentTimeMillis() + (48 * 3600 * 1000L),
+    val status: String = "STAGED"
+)
