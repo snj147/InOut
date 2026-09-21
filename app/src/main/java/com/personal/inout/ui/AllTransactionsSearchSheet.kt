@@ -27,8 +27,8 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AllTransactionsSearchSheet(
-    records: List<FlowRecord> = emptyList(),
-    flowRecords: List<FlowRecord> = records,
+    flowRecords: List<FlowRecord> = emptyList(),
+    records: List<FlowRecord> = flowRecords,
     sheetState: SheetState = rememberModalBottomSheetState(),
     isPrivacyMode: Boolean = false,
     isProUser: Boolean = true,
@@ -36,9 +36,10 @@ fun AllTransactionsSearchSheet(
     onEditRecord: (FlowRecord) -> Unit = {},
     onUpdateRecord: (FlowRecord) -> Unit = onEditRecord,
     onDeleteRecord: (FlowRecord) -> Unit = {},
+    onExportCsv: () -> Unit = {},
     onExportPdfDossier: () -> Unit = {}
 ) {
-    val activeList = if (records.isNotEmpty()) records else flowRecords
+    val activeList = if (flowRecords.isNotEmpty()) flowRecords else records
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategoryFilter by remember { mutableStateOf("All") }
     var editingRecord by remember { mutableStateOf<FlowRecord?>(null) }
@@ -168,7 +169,7 @@ fun TransactionSearchItem(
                 Text(record.category, color = Color(0xFF888888), fontSize = 12.sp)
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text(if (isPrivacyMode) "₹••••" else "₹${record.amount}", color = Color(0xFFE59C5C), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(if (isPrivacyMode) "₹••••" else "₹${record.amount.toInt()}", color = Color(0xFFE59C5C), fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 Text(dateStr, color = Color(0xFF666666), fontSize = 11.sp)
             }
         }
@@ -201,7 +202,7 @@ fun EditTransactionDialog(
         title = { Text("Edit Entry", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold) },
         text = {
             Column(modifier = Modifier.fillMaxWidth()) {
-                Text(text = "Amount: ₹${record.amount}", color = Color(0xFF9E9E9E), fontSize = 14.sp)
+                Text(text = "Amount: ₹${record.amount.toInt()}", color = Color(0xFF9E9E9E), fontSize = 14.sp)
                 Spacer(modifier = Modifier.height(12.dp))
 
                 OutlinedTextField(
