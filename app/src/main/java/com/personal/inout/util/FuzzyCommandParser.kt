@@ -25,9 +25,6 @@ object FuzzyCommandParser {
         val trimmed = input.trim()
         if (trimmed.isBlank()) return null
 
-        val lower = trimmed.toLowerCase(Locale.ROOT)
-
-        // 1. Extract Amount
         val matcher = AMOUNT_PATTERN.matcher(trimmed)
         var amount: Double? = null
         var amountToken = ""
@@ -41,11 +38,9 @@ object FuzzyCommandParser {
         }
         if (amount == null) return null
 
-        // Remove amount token to isolate intent and notes
         val cleanPrompt = trimmed.replace(amountToken, " ").replace(Regex("\\s+"), " ").trim()
         val cleanLower = cleanPrompt.toLowerCase(Locale.ROOT)
 
-        // 2. Identify Intent / MovementNature
         val nature = when {
             cleanLower.startsWith("spent") || cleanLower.contains(" paid ") || cleanLower.startsWith("paid") || cleanLower.contains(" buy ") || cleanLower.contains(" bought ") -> MovementNature.OUTFLOW
             cleanLower.startsWith("lent") || cleanLower.contains(" lend ") || cleanLower.contains(" lent to ") -> MovementNature.PEER_LEND
@@ -57,7 +52,6 @@ object FuzzyCommandParser {
             else -> MovementNature.OUTFLOW
         }
 
-        // 3. Match Accounts / Counterparties using Levenshtein distance
         var matchedPocketId: Long? = null
         var targetPocketId: Long? = null
         var targetPersonName: String? = null
@@ -65,7 +59,6 @@ object FuzzyCommandParser {
         val liquidPockets = activePockets.filter { it.pocketType == PocketType.LIQUID }
         val peerPockets = activePockets.filter { it.pocketType == PocketType.COUNTERPARTY || it.pocketType == PocketType.PEER }
 
-        // Find primary matching pocket
         var bestPocketScore = Int.MAX_VALUE
         var bestPocket: VaultPocket? = null
 
@@ -90,7 +83,6 @@ object FuzzyCommandParser {
 
         matchedPocketId = bestPocket?.id ?: liquidPockets.firstOrNull()?.id
 
-        // 4. Handle Peer names if Lent / Borrowed
         if (nature in listOf(MovementNature.PEER_LEND, MovementNature.PEER_BORROW, MovementNature.PEER_COLLECT, MovementNature.PEER_REPAY)) {
             val peerKeywords = listOf("to", "from", "with")
             val tokens = cleanPrompt.split(Regex("\\s+"))
@@ -109,7 +101,6 @@ object FuzzyCommandParser {
             }
         }
 
-        // 5. Category Inference & Clean Merchant Note
         val category = inferCategory(cleanLower)
         val note = cleanPrompt
             .replace(Regex("(?i)^(spent|paid|bought|got|received|lent|borrowed|transferred|collected|repaid)"), "")
