@@ -1,6 +1,7 @@
 package com.personal.inout.ui
 
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -60,12 +61,15 @@ fun AllTransactionsSearchSheet(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = "All Vault Records (${flowRecords.size})",
-                    color = Color.White,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                Column {
+                    Text(
+                        text = "All Vault Records (${flowRecords.size})",
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text("Long-press any entry to edit", color = Color(0xFF666666), fontSize = 10.5.sp)
+                }
                 IconButton(onClick = onDismiss) {
                     Icon(Icons.Default.Close, contentDescription = "Close", tint = Color(0xFF888888))
                 }
@@ -84,8 +88,8 @@ fun AllTransactionsSearchSheet(
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedTextColor = Color.White,
                     unfocusedTextColor = Color.White,
-                    focusedContainerColor = Color(0xFF1E1C1A),
-                    unfocusedContainerColor = Color(0xFF1E1C1A),
+                    focusedContainerColor = Color(0xFF1B1917),
+                    unfocusedContainerColor = Color(0xFF1B1917),
                     focusedBorderColor = Color(0xFFE59C5C),
                     unfocusedBorderColor = Color.Transparent
                 )
@@ -93,52 +97,73 @@ fun AllTransactionsSearchSheet(
 
             Spacer(modifier = Modifier.height(14.dp))
 
+            // Slick & Slim High-Density Terminal Rows
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(bottom = 32.dp)
             ) {
                 items(filteredRecords, key = { it.id }) { record ->
-                    TransactionSearchItem(
+                    SlimTransactionItem(
                         record = record,
                         isPrivacyMode = isPrivacyMode,
-                        onClick = { onEditRecord(record) }
+                        onLongClick = { onEditRecord(record) }
                     )
+                    HorizontalDivider(color = Color(0xFF262320), thickness = 0.5.dp)
                 }
             }
         }
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TransactionSearchItem(
+fun SlimTransactionItem(
     record: FlowRecord,
     isPrivacyMode: Boolean = false,
-    onClick: () -> Unit
+    onLongClick: () -> Unit
 ) {
     val dateStr = remember(record.timestamp) {
         val sdf = SimpleDateFormat("dd MMM", Locale.getDefault())
         sdf.format(Date(record.timestamp))
     }
 
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() },
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1C1A))
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = { /* Clicking does nothing to prevent mis-triggers */ },
+                onLongClick = onLongClick
+            )
+            .padding(vertical = 11.dp, horizontal = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(record.note.ifBlank { record.category }, color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.SemiBold)
-                Text(record.category, color = Color(0xFF888888), fontSize = 11.sp)
-            }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(if (isPrivacyMode) "₹ •••" else "₹${record.amount.toInt()}", color = Color(0xFFE59C5C), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                Text(dateStr, color = Color(0xFF666666), fontSize = 10.5.sp)
-            }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                record.note.ifBlank { record.category },
+                color = Color.White,
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.Medium
+            )
+            Text(
+                record.category,
+                color = Color(0xFF888888),
+                fontSize = 10.5.sp
+            )
+        }
+
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                if (isPrivacyMode) "₹ •••" else "₹${record.amount.toInt()}",
+                color = Color(0xFFE59C5C),
+                fontSize = 13.5.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                dateStr,
+                color = Color(0xFF666666),
+                fontSize = 10.sp
+            )
         }
     }
 }
