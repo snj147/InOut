@@ -113,7 +113,6 @@ fun DashboardScreen(db: AppDatabase) {
             .distinctBy { "${it.note}_${it.amount}_${it.frequency}" }
     }
 
-    // Ledger Computations
     val totalLiquid = remember(pocketBalances) {
         pocketBalances.filter { it.pocketType == PocketType.LIQUID }.sumOf { it.currentBalance }.coerceAtLeast(0.0)
     }
@@ -159,10 +158,8 @@ fun DashboardScreen(db: AppDatabase) {
     var showBurnEditDialog by remember { mutableStateOf(false) }
     var showClearLedgerConfirmation by remember { mutableStateOf(false) }
 
-    // Speed-Dial FAB State
     var isFabExpanded by remember { mutableStateOf(false) }
 
-    // Carousel Pager State with Persistence
     val initialPage = remember { prefs.getInt("saved_carousel_page", 0).coerceIn(0, 3) }
     val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { 4 })
     LaunchedEffect(pagerState.currentPage) {
@@ -188,6 +185,21 @@ fun DashboardScreen(db: AppDatabase) {
 
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
+
+    // Pre-computed Date-Grouped Records outside LazyColumn DSL
+    val groupedRecords = remember(flowRecords) {
+        val calNow = Calendar.getInstance()
+        flowRecords.take(12).groupBy { flow ->
+            val calRecord = Calendar.getInstance().apply { timeInMillis = flow.timestamp }
+            when {
+                calNow.get(Calendar.YEAR) == calRecord.get(Calendar.YEAR) &&
+                        calNow.get(Calendar.DAY_OF_YEAR) == calRecord.get(Calendar.DAY_OF_YEAR) -> "Today"
+                calNow.get(Calendar.YEAR) == calRecord.get(Calendar.YEAR) &&
+                        calNow.get(Calendar.DAY_OF_YEAR) - calRecord.get(Calendar.DAY_OF_YEAR) == 1 -> "Yesterday"
+                else -> SimpleDateFormat("dd MMMM", Locale.getDefault()).format(Date(flow.timestamp))
+            }
+        }
+    }
 
     fun processReceiptResult(bitmap: Bitmap) {
         scope.launch {
@@ -487,11 +499,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     if (selectedTab == 1) {
                                         showCreatePocketDialog = true
                                     } else {
-                                        if (isFabExpanded) {
-                                            isFabExpanded = false
-                                        } else {
-                                            isFabExpanded = true
-                                        }
+                                        isFabExpanded = !isFabExpanded
                                     }
                                 },
                                 containerColor = theme.accent,
@@ -516,7 +524,7 @@ fun DashboardScreen(db: AppDatabase) {
                                 verticalArrangement = Arrangement.spacedBy(14.dp),
                                 contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp)
                             ) {
-                                // 1. Swipable 4-Card Hero Carousel (Manual Swipe, Remembers Index)
+                                // 1. Swipable 4-Card Hero Carousel
                                 item {
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         HorizontalPager(
@@ -567,7 +575,6 @@ fun DashboardScreen(db: AppDatabase) {
                                             }
                                         }
 
-                                        // Carousel Dot Indicators
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
                                             horizontalArrangement = Arrangement.Center,
@@ -587,7 +594,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
-                                // 2. Prominent Animated Glowing Border on Quick Bar
+                                // 2. Animated Glowing Border on Quick Bar
                                 item {
                                     val infiniteTransition = rememberInfiniteTransition(label = "glowTransition")
                                     val angle by infiniteTransition.animateFloat(
@@ -667,7 +674,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
-                                // 3. Flat, Date-Grouped Flow Stream (Decluttered, Single-line, No Card-Fatigue)
+                                // 3. Flat, Date-Grouped Flow Stream
                                 item {
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -697,21 +704,6 @@ fun DashboardScreen(db: AppDatabase) {
                                         }
                                     }
                                 } else {
-                                    // Grouped by Date: Today, Yesterday, or Date string
-                                    val groupedRecords = remember(flowRecords) {
-                                        val calNow = Calendar.getInstance()
-                                        flowRecords.take(12).groupBy { flow ->
-                                            val calRecord = Calendar.getInstance().apply { timeInMillis = flow.timestamp }
-                                            when {
-                                                calNow.get(Calendar.YEAR) == calRecord.get(Calendar.YEAR) &&
-                                                        calNow.get(Calendar.DAY_OF_YEAR) == calRecord.get(Calendar.DAY_OF_YEAR) -> "Today"
-                                                calNow.get(Calendar.YEAR) == calRecord.get(Calendar.YEAR) &&
-                                                        calNow.get(Calendar.DAY_OF_YEAR) - calRecord.get(Calendar.DAY_OF_YEAR) == 1 -> "Yesterday"
-                                                else -> SimpleDateFormat("dd MMMM", Locale.getDefault()).format(Date(flow.timestamp))
-                                            }
-                                        }
-                                    }
-
                                     groupedRecords.forEach { (dateHeader, records) ->
                                         item {
                                             Text(
@@ -957,7 +949,6 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
 
-                // Dedicated Recurring Rule Editor with Native DatePickerDialog Trigger
                 editingRecurringRule?.let { rule ->
                     EditRecurringRuleDialog(
                         rule = rule,
@@ -1379,7 +1370,7 @@ private fun SettingsScreenContent(
             }
         }
 
-        // 4. Developer & Sandbox Tools (Relocated from Top Banner)
+        // 4. Developer & Sandbox Tools
         item {
             Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
