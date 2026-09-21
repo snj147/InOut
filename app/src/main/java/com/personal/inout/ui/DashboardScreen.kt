@@ -2,6 +2,7 @@ package com.personal.inout.ui
 
 import android.Manifest
 import android.app.Activity
+import android.app.DatePickerDialog
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -28,6 +29,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -278,7 +280,7 @@ fun DashboardScreen(db: AppDatabase) {
                         )
                         if (res is VaultExecutionResult.Success) successCount++
                     }
-                    alertManager.showAlert("Recorded $successCount compound transactions", AlertType.SUCCESS)
+                    alertManager.showAlert("Recorded $successCount transactions", AlertType.SUCCESS)
                     naturalLanguageInput = ""
                 }
                 is ParsedIntent.Transaction -> {
@@ -478,32 +480,48 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
-                                // Highlighted Glowing Animated Quick Bar
+                                // Prominent, Animated Glowing Border on Quick Bar
                                 item {
-                                    val infiniteTransition = rememberInfiniteTransition(label = "borderGlow")
-                                    val animatedAngle by infiniteTransition.animateFloat(
+                                    val infiniteTransition = rememberInfiniteTransition(label = "glowTransition")
+                                    val angle by infiniteTransition.animateFloat(
                                         initialValue = 0f,
                                         targetValue = 360f,
-                                        animationSpec = infiniteRepeatable(animation = tween(4000, easing = LinearEasing), repeatMode = RepeatMode.Restart),
-                                        label = "glowAngle"
+                                        animationSpec = infiniteRepeatable(
+                                            animation = tween(durationMillis = 3500, easing = LinearEasing),
+                                            repeatMode = RepeatMode.Restart
+                                        ),
+                                        label = "rotateGlow"
                                     )
 
-                                    val glowingBrush = Brush.sweepGradient(
-                                        listOf(theme.accent, theme.mildGreen, theme.mildRed, theme.accent)
+                                    val glowingBorderBrush = Brush.sweepGradient(
+                                        colors = listOf(
+                                            theme.accent,
+                                            theme.mildGreen,
+                                            theme.mildRed,
+                                            theme.accent
+                                        )
                                     )
 
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .shadow(8.dp, RoundedCornerShape(16.dp), spotColor = theme.accent.copy(alpha = 0.5f))
+                                            .shadow(10.dp, RoundedCornerShape(16.dp), spotColor = theme.accent.copy(alpha = 0.6f))
                                             .clip(RoundedCornerShape(16.dp))
-                                            .background(glowingBrush)
-                                            .padding(1.8.dp)
+                                            .background(theme.surface)
                                     ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .matchParentSize()
+                                                .rotate(angle)
+                                                .background(glowingBorderBrush)
+                                        )
+
                                         Card(
                                             shape = RoundedCornerShape(14.dp),
                                             colors = CardDefaults.cardColors(containerColor = theme.surface),
-                                            modifier = Modifier.fillMaxWidth()
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(2.dp)
                                         ) {
                                             Row(
                                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
@@ -911,11 +929,12 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
 
-                // Dedicated Recurring Rule Editor with Date & Frequency
+                // Dedicated Recurring Rule Editor with Native DatePickerDialog Trigger
                 editingRecurringRule?.let { rule ->
                     EditRecurringRuleDialog(
                         rule = rule,
                         theme = theme,
+                        context = context,
                         onDismiss = { editingRecurringRule = null },
                         onSave = { newAmt, newNote, newFreq, newTimestamp ->
                             scope.launch {
@@ -1009,6 +1028,7 @@ fun DashboardScreen(db: AppDatabase) {
                 if (showCreatePocketDialog) {
                     CreateAccountDialog(
                         theme = theme,
+                        context = context,
                         onDismiss = { showCreatePocketDialog = false },
                         onSave = { name, type, limit, targetAmt, targetDateEpoch ->
                             scope.launch {
@@ -1033,6 +1053,7 @@ fun DashboardScreen(db: AppDatabase) {
                     EditAccountDialog(
                         account = pocket,
                         theme = theme,
+                        context = context,
                         onDismiss = { editingPocket = null },
                         onSave = { updatedName, updatedLimit, updatedTarget, updatedDateEpoch ->
                             scope.launch {
@@ -1170,6 +1191,7 @@ fun FlowRecordDisplayRow(
 private fun EditRecurringRuleDialog(
     rule: FlowRecord,
     theme: ThemeColors,
+    context: Context,
     onDismiss: () -> Unit,
     onSave: (amount: Double, note: String, freq: String, timestamp: Long) -> Unit
 ) {
@@ -1179,6 +1201,24 @@ private fun EditRecurringRuleDialog(
     var selectedDateEpoch by remember { mutableStateOf(rule.timestamp) }
 
     val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateEpoch))
+
+    val calendar = Calendar.getInstance().apply { timeInMillis = selectedDateEpoch }
+    val datePickerDialog = remember {
+        DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                val updatedCal = Calendar.getInstance().apply {
+                    set(Calendar.YEAR, year)
+                    set(Calendar.MONTH, month)
+                    set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                }
+                selectedDateEpoch = updatedCal.timeInMillis
+            },
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH)
+        )
+    }
 
     AlertDialog(
         containerColor = theme.surface,
@@ -1207,7 +1247,22 @@ private fun EditRecurringRuleDialog(
                     }
                 }
 
-                Text("Start / Due Date: $dateFormatted", color = theme.textMuted, fontSize = 11.sp)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(theme.surfaceAlt)
+                        .clickable { datePickerDialog.show() }
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Cadence / Starting Date", color = theme.textMuted, fontSize = 10.sp)
+                        Text(dateFormatted, color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                    Icon(Icons.Default.CalendarToday, contentDescription = "Pick Date", tint = theme.accent, modifier = Modifier.size(16.dp))
+                }
             }
         },
         confirmButton = {
@@ -1290,6 +1345,7 @@ private fun EditTransactionDialog(
 @Composable
 private fun CreateAccountDialog(
     theme: ThemeColors,
+    context: Context,
     onDismiss: () -> Unit,
     onSave: (String, PocketType, Double, Double, Long) -> Unit
 ) {
@@ -1297,6 +1353,26 @@ private fun CreateAccountDialog(
     var type by remember { mutableStateOf(PocketType.LIQUID) }
     var limit by remember { mutableStateOf("") }
     var targetAmt by remember { mutableStateOf("") }
+    var targetDateEpoch by remember { mutableStateOf(System.currentTimeMillis() + (90L * 24 * 3600 * 1000L)) }
+
+    val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(targetDateEpoch))
+    val calendar = Calendar.getInstance().apply { timeInMillis = targetDateEpoch }
+    val datePicker = remember {
+        DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                val cal = Calendar.getInstance().apply {
+                    set(Calendar.YEAR, year)
+                    set(Calendar.MONTH, month)
+                    set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                }
+                targetDateEpoch = cal.timeInMillis
+            },
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH)
+        )
+    }
 
     AlertDialog(
         containerColor = theme.surface,
@@ -1331,6 +1407,19 @@ private fun CreateAccountDialog(
                 }
                 if (type == PocketType.SAVING_GOAL) {
                     CompactInputField(value = targetAmt, onValueChange = { targetAmt = it }, placeholder = "Target Goal Amount (e.g. 60000)")
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(theme.surfaceAlt)
+                            .clickable { datePicker.show() }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Target: $dateFormatted", color = theme.textBright, fontSize = 11.5.sp)
+                        Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
+                    }
                 }
             }
         },
@@ -1342,7 +1431,7 @@ private fun CreateAccountDialog(
                         type,
                         limit.toDoubleOrNull() ?: 0.0,
                         targetAmt.toDoubleOrNull() ?: 0.0,
-                        System.currentTimeMillis() + (90L * 24 * 3600 * 1000L)
+                        targetDateEpoch
                     )
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
@@ -1356,12 +1445,33 @@ private fun CreateAccountDialog(
 private fun EditAccountDialog(
     account: VaultPocket,
     theme: ThemeColors,
+    context: Context,
     onDismiss: () -> Unit,
     onSave: (String, Double, Double, Long) -> Unit
 ) {
     var name by remember { mutableStateOf(account.name) }
     var limit by remember { mutableStateOf(if (account.creditLimit > 0) String.format("%.0f", account.creditLimit) else "") }
     var targetAmt by remember { mutableStateOf(if (account.targetAmount > 0) String.format("%.0f", account.targetAmount) else "") }
+    var targetDateEpoch by remember { mutableStateOf(if (account.targetDateEpoch > 0) account.targetDateEpoch else System.currentTimeMillis() + (90L * 24 * 3600 * 1000L)) }
+
+    val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(targetDateEpoch))
+    val calendar = Calendar.getInstance().apply { timeInMillis = targetDateEpoch }
+    val datePicker = remember {
+        DatePickerDialog(
+            context,
+            { _, year, month, dayOfMonth ->
+                val cal = Calendar.getInstance().apply {
+                    set(Calendar.YEAR, year)
+                    set(Calendar.MONTH, month)
+                    set(Calendar.DAY_OF_MONTH, dayOfMonth)
+                }
+                targetDateEpoch = cal.timeInMillis
+            },
+            calendar.get(Calendar.YEAR),
+            calendar.get(Calendar.MONTH),
+            calendar.get(Calendar.DAY_OF_MONTH)
+        )
+    }
 
     AlertDialog(
         containerColor = theme.surface,
@@ -1375,6 +1485,19 @@ private fun EditAccountDialog(
                 }
                 if (account.pocketType == PocketType.SAVING_GOAL) {
                     CompactInputField(value = targetAmt, onValueChange = { targetAmt = it }, placeholder = "Target Goal Amount")
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(theme.surfaceAlt)
+                            .clickable { datePicker.show() }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Target: $dateFormatted", color = theme.textBright, fontSize = 11.5.sp)
+                        Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
+                    }
                 }
             }
         },
@@ -1385,7 +1508,7 @@ private fun EditAccountDialog(
                         name,
                         limit.toDoubleOrNull() ?: account.creditLimit,
                         targetAmt.toDoubleOrNull() ?: account.targetAmount,
-                        account.targetDateEpoch
+                        targetDateEpoch
                     )
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
