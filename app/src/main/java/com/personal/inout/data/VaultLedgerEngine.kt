@@ -30,63 +30,10 @@ class VaultLedgerEngine(
         amount: Double,
         category: String,
         note: String = "",
-        timestamp: Long = System.currentTimeMillis()
-    ): VaultExecutionResult {
-        return recordMovementInternal(
-            nature = nature,
-            sourcePocketId = sourcePocketId,
-            targetPocketId = targetPocketId,
-            amount = amount,
-            category = category,
-            note = note,
-            timestamp = timestamp
-        )
-    }
-
-    suspend fun recordMovement(
-        nature: MovementNature,
-        sourcePocketId: Long? = null,
-        targetPocketId: Long? = null,
-        amount: Long,
-        category: String,
-        note: String = "",
-        timestamp: Long = System.currentTimeMillis()
-    ): VaultExecutionResult {
-        return recordMovementInternal(
-            nature = nature,
-            sourcePocketId = sourcePocketId,
-            targetPocketId = targetPocketId,
-            amount = amount.toDouble(),
-            category = category,
-            note = note,
-            timestamp = timestamp
-        )
-    }
-
-    suspend fun recordMovement(record: FlowRecord): VaultExecutionResult {
-        return recordMovementInternal(
-            nature = record.movementNature,
-            sourcePocketId = record.sourcePocketId,
-            targetPocketId = record.targetPocketId,
-            amount = record.amount,
-            category = record.category,
-            note = record.note,
-            timestamp = record.timestamp
-        )
-    }
-
-    suspend fun executeMovement(record: FlowRecord) {
-        recordMovement(record)
-    }
-
-    private suspend fun recordMovementInternal(
-        nature: MovementNature,
-        sourcePocketId: Long?,
-        targetPocketId: Long?,
-        amount: Double,
-        category: String,
-        note: String,
-        timestamp: Long
+        timestamp: Long = System.currentTimeMillis(),
+        autoSplitEnabled: Boolean = false,
+        isRecurring: Boolean = false,
+        frequency: String = "NONE"
     ): VaultExecutionResult {
         return try {
             if (nature in listOf(MovementNature.OUTFLOW, MovementNature.CARD_PAYMENT, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
@@ -119,19 +66,37 @@ class VaultLedgerEngine(
                 category = category.ifBlank { "General" },
                 note = note,
                 timestamp = timestamp,
-                isRecurring = false,
-                recurringCadence = "NONE",
-                frequency = "NONE"
+                isRecurring = isRecurring,
+                recurringCadence = frequency,
+                frequency = frequency
             )
 
             val id = flowRecordDao.insertFlowRecord(entity)
             VaultExecutionResult.Success(
                 recordId = id,
-                summary = "₹$amount logged for ${entity.note.ifBlank { entity.category }}"
+                summary = "₹${amount.toInt()} logged for ${entity.note.ifBlank { entity.category }}"
             )
         } catch (e: Exception) {
             VaultExecutionResult.OverdraftError(e.message ?: "Failed to log transaction")
         }
+    }
+
+    suspend fun recordMovement(record: FlowRecord): VaultExecutionResult {
+        return recordMovement(
+            nature = record.movementNature,
+            sourcePocketId = record.sourcePocketId,
+            targetPocketId = record.targetPocketId,
+            amount = record.amount,
+            category = record.category,
+            note = record.note,
+            timestamp = record.timestamp,
+            isRecurring = record.isRecurring,
+            frequency = record.frequency
+        )
+    }
+
+    suspend fun executeMovement(record: FlowRecord) {
+        recordMovement(record)
     }
 
     suspend fun registerRecurringMovement(
@@ -148,13 +113,15 @@ class VaultLedgerEngine(
         flowRecordDao.insertFlowRecord(scheduleRecord)
     }
 
-    suspend fun catchUpRecurringRules() {
+    suspend fun catchUpRecurringRules(): Int {
         val now = System.currentTimeMillis()
         val activeSchedules = flowRecordDao.getActiveRecurringSchedulesSync()
+        var generatedCount = 0
 
         for (schedule in activeSchedules) {
+            val cadenceStr = if (schedule.frequency != "NONE") schedule.frequency else schedule.recurringCadence
             val cadence = try {
-                CadenceType.valueOf(if (schedule.frequency != "NONE") schedule.frequency else schedule.recurringCadence)
+                CadenceType.valueOf(cadenceStr)
             } catch (_: Exception) {
                 CadenceType.NONE
             }
@@ -168,9 +135,11 @@ class VaultLedgerEngine(
                     isRecurring = false
                 )
                 flowRecordDao.insertFlowRecord(execution)
+                generatedCount++
                 nextDue = calculateNextOccurrence(nextDue, cadence)
             }
         }
+        return generatedCount
     }
 
     fun calculateNextOccurrence(currentTimestamp: Long, cadence: CadenceType): Long {
