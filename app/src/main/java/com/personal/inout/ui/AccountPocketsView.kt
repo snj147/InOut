@@ -25,6 +25,9 @@ import com.personal.inout.data.MovementNature
 import com.personal.inout.data.PocketBalanceSummary
 import com.personal.inout.data.PocketType
 import com.personal.inout.data.VaultPocket
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -42,9 +45,9 @@ fun AccountPocketsView(
     onRecordCardSettlement: (cardId: Long, liquidId: Long, amt: Double) -> Unit = { _, _, _ -> },
     onPeerAction: (nature: MovementNature, peerId: Long, liquidId: Long, amt: Double) -> Unit = { _, _, _, _ -> }
 ) {
-    var peerActionTarget by remember { mutableStateOf<Pair<VaultPocket, MovementNature>?>(null) }
+    var peerActionTarget by remember { mutableStateOf<VaultPocket?>(null) }
     var peerActionAmount by remember { mutableStateOf("") }
-    var selectedLiquidId by remember { mutableStateOf<Long?>(null) }
+    var peerSelectedNature by remember { mutableStateOf(MovementNature.PEER_LEND) }
 
     var pocketToDelete by remember { mutableStateOf<Pair<VaultPocket, Double>?>(null) }
     var recurringToDelete by remember { mutableStateOf<FlowRecord?>(null) }
@@ -82,7 +85,7 @@ fun AccountPocketsView(
             )
         }
 
-        // 2. Goal Pots (Saving Goals) with Breakdown and Break/Delete
+        // 2. Goal Pots (Saving Goals) with Target Date & Overdue Indicators
         val goalList = pocketBalances.filter { it.pocketType == PocketType.SAVING_GOAL }
         if (goalList.isNotEmpty()) {
             item {
@@ -100,16 +103,29 @@ fun AccountPocketsView(
                 val progress = if (pot.targetAmount > 0) (pot.computedBalance / pot.targetAmount).toFloat().coerceIn(0f, 1f) else 0f
                 val shortfall = (pot.targetAmount - pot.computedBalance).coerceAtLeast(0.0)
 
+                val targetDateStr = if (pot.targetDateEpoch > 0) {
+                    SimpleDateFormat("MMM yyyy", Locale.getDefault()).format(Date(pot.targetDateEpoch))
+                } else "No Date"
+
+                val isOverdue = pot.targetDateEpoch > 0 && System.currentTimeMillis() > pot.targetDateEpoch && shortfall > 0
+
                 Card(
-                    modifier = Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = { onEditPocket(rawPocket) }),
+                    modifier = Modifier.fillMaxWidth().combinedClickable(onClick = { onTransactPocket(rawPocket) }, onLongClick = { onEditPocket(rawPocket) }),
                     shape = RoundedCornerShape(14.dp),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF1B1917))
                 ) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Column {
-                                Text(pot.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                                Text("Remaining: ₹${shortfall.toInt()} (Pacing: ₹${(shortfall / 30).toInt()}/day)", color = Color(0xFF888888), fontSize = 11.sp)
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(pot.name, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                    if (isOverdue) {
+                                        Box(modifier = Modifier.background(Color(0xFF332020), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+                                            Text("OVERDUE", color = Color(0xFFE57373), fontSize = 8.5.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                }
+                                Text("Target: $targetDateStr • Remaining: ₹${shortfall.toInt()}", color = if (isOverdue) Color(0xFFE57373) else Color(0xFF888888), fontSize = 11.sp)
                             }
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text(
@@ -129,7 +145,7 @@ fun AccountPocketsView(
                         LinearProgressIndicator(
                             progress = { progress },
                             modifier = Modifier.fillMaxWidth().height(5.dp),
-                            color = Color(0xFFE59C5C),
+                            color = if (isOverdue) Color(0xFFE57373) else Color(0xFFE59C5C),
                             trackColor = Color(0xFF2B2826)
                         )
                     }
@@ -137,7 +153,7 @@ fun AccountPocketsView(
             }
         }
 
-        // 3. Cards & Loans (Dual Buttons: Always Transact, Pay Bill only if dues exist)
+        // 3. Cards & Loans
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -205,7 +221,7 @@ fun AccountPocketsView(
             }
         }
 
-        // 4. Counterparties (People) - With Exact Collect/Repay Dialog and Zero Settle Pill
+        // 4. People (Owed & Lent) - Permanent Transact Button & Clean Status Pill
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -235,9 +251,9 @@ fun AccountPocketsView(
                         val subText = when {
                             bal > 0 -> "They owe you"
                             bal < 0 -> "You owe them"
-                            else -> "Settled cleanly"
+                            else -> "Settled"
                         }
-                        Text(subText, color = Color(0xFF888888), fontSize = 11.sp)
+                        Text(subText, color = if (bal > 0) Color(0xFF81C784) else if (bal < 0) Color(0xFFE57373) else Color(0xFF888888), fontSize = 11.sp)
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -252,42 +268,17 @@ fun AccountPocketsView(
                             fontWeight = FontWeight.Bold
                         )
 
-                        when {
-                            bal > 0 -> {
-                                Button(
-                                    onClick = {
-                                        peerActionAmount = Math.abs(bal).toInt().toString()
-                                        selectedLiquidId = defaultLiquidId
-                                        peerActionTarget = pocket to MovementNature.PEER_COLLECT
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E3326)),
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
-                                ) {
-                                    Text("Collect", color = Color(0xFF81C784), fontSize = 11.5.sp)
-                                }
-                            }
-                            bal < 0 -> {
-                                Button(
-                                    onClick = {
-                                        peerActionAmount = Math.abs(bal).toInt().toString()
-                                        selectedLiquidId = defaultLiquidId
-                                        peerActionTarget = pocket to MovementNature.PEER_REPAY
-                                    },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF332020)),
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
-                                ) {
-                                    Text("Repay", color = Color(0xFFE57373), fontSize = 11.5.sp)
-                                }
-                            }
-                            else -> {
-                                Box(
-                                    modifier = Modifier.background(Color(0xFF262320), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    Text("Settled", color = Color(0xFF888888), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
+                        Button(
+                            onClick = {
+                                peerActionTarget = pocket
+                                peerActionAmount = if (bal != 0.0) Math.abs(bal).toInt().toString() else ""
+                                peerSelectedNature = if (bal > 0) MovementNature.PEER_COLLECT else if (bal < 0) MovementNature.PEER_REPAY else MovementNature.PEER_LEND
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF282420)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)
+                        ) {
+                            Text("Transact", color = Color(0xFFE59C5C), fontSize = 11.5.sp)
                         }
                     }
                 }
@@ -331,8 +322,9 @@ fun AccountPocketsView(
                             }
                         }
                         val freqText = if (record.frequency != "NONE") record.frequency else record.recurringCadence
+                        val dateDayStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(record.timestamp))
                         Text(
-                            text = if (isPrivacyMode) "Repeats $freqText • ₹••••" else "Repeats $freqText • ₹${record.amount.toInt()}",
+                            text = if (isPrivacyMode) "Repeats $freqText • ₹••••" else "Repeats $freqText on $dateDayStr • ₹${record.amount.toInt()}",
                             color = if (record.isPaused) Color(0xFF666666) else Color(0xFFE59C5C),
                             fontSize = 11.5.sp
                         )
@@ -358,23 +350,35 @@ fun AccountPocketsView(
         }
     }
 
-    // Collect / Repay Partial Settle Dialog
-    peerActionTarget?.let { (peer, nature) ->
-        val isCollect = nature == MovementNature.PEER_COLLECT
+    // Compact Lend / Borrow / Settle Dialog
+    peerActionTarget?.let { peer ->
         AlertDialog(
             onDismissRequest = { peerActionTarget = null },
             containerColor = Color(0xFF1E1C1A),
-            title = { Text(if (isCollect) "Collect from ${peer.name}" else "Repay to ${peer.name}", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
+            title = { Text("Peer Transaction: ${peer.name}", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Enter settlement amount and account to receive/pay funds:", color = Color(0xFF888888), fontSize = 12.sp)
-                    OutlinedTextField(
-                        value = peerActionAmount,
-                        onValueChange = { peerActionAmount = it },
-                        singleLine = true,
-                        placeholder = { Text("Amount in ₹", color = Color(0xFF666666)) },
-                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White)
-                    )
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(
+                            MovementNature.PEER_LEND to "Lend",
+                            MovementNature.PEER_COLLECT to "Collect",
+                            MovementNature.PEER_BORROW to "Borrow",
+                            MovementNature.PEER_REPAY to "Repay"
+                        ).forEach { (nat, lbl) ->
+                            val isSel = peerSelectedNature == nat
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .background(if (isSel) Color(0xFFE59C5C) else Color(0xFF282420), RoundedCornerShape(6.dp))
+                                    .combinedClickable(onClick = { peerSelectedNature = nat })
+                                    .padding(vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(lbl, color = if (isSel) Color(0xFF141211) else Color(0xFFCCCCCC), fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    CompactInputField(value = peerActionAmount, onValueChange = { peerActionAmount = it }, placeholder = "Amount in ₹")
                 }
             },
             confirmButton = {
@@ -382,11 +386,11 @@ fun AccountPocketsView(
                     onClick = {
                         val amt = peerActionAmount.toDoubleOrNull() ?: 0.0
                         if (amt > 0 && defaultLiquidId != 0L) {
-                            onPeerAction(nature, peer.id, defaultLiquidId, amt)
+                            onPeerAction(peerSelectedNature, peer.id, defaultLiquidId, amt)
                         }
                         peerActionTarget = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = if (isCollect) Color(0xFF81C784) else Color(0xFFE57373))
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE59C5C))
                 ) { Text("Confirm", color = Color(0xFF141211), fontWeight = FontWeight.Bold) }
             },
             dismissButton = { TextButton(onClick = { peerActionTarget = null }) { Text("Cancel", color = Color(0xFF888888)) } }
