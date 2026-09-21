@@ -27,18 +27,24 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AllTransactionsSearchSheet(
-    records: List<FlowRecord>,
-    sheetState: SheetState,
-    onDismiss: () -> Unit,
-    onUpdateRecord: (FlowRecord) -> Unit,
-    onDeleteRecord: (FlowRecord) -> Unit
+    records: List<FlowRecord> = emptyList(),
+    flowRecords: List<FlowRecord> = records,
+    sheetState: SheetState = rememberModalBottomSheetState(),
+    isPrivacyMode: Boolean = false,
+    isProUser: Boolean = true,
+    onDismiss: () -> Unit = {},
+    onEditRecord: (FlowRecord) -> Unit = {},
+    onUpdateRecord: (FlowRecord) -> Unit = onEditRecord,
+    onDeleteRecord: (FlowRecord) -> Unit = {},
+    onExportPdfDossier: () -> Unit = {}
 ) {
+    val activeList = if (records.isNotEmpty()) records else flowRecords
     var searchQuery by remember { mutableStateOf("") }
     var selectedCategoryFilter by remember { mutableStateOf("All") }
     var editingRecord by remember { mutableStateOf<FlowRecord?>(null) }
 
-    val filteredRecords = remember(records, searchQuery, selectedCategoryFilter) {
-        records.filter { record ->
+    val filteredRecords = remember(activeList, searchQuery, selectedCategoryFilter) {
+        activeList.filter { record ->
             val matchesCategory = if (selectedCategoryFilter == "All") true else record.category.equals(selectedCategoryFilter, ignoreCase = true)
             val matchesQuery = searchQuery.isBlank() ||
                     record.note.contains(searchQuery, ignoreCase = true) ||
@@ -65,7 +71,7 @@ fun AllTransactionsSearchSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "All Vault Records (${records.size})",
+                    text = "All Vault Records (${activeList.size})",
                     color = Color.White,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
@@ -103,7 +109,14 @@ fun AllTransactionsSearchSheet(
                 contentPadding = PaddingValues(bottom = 32.dp)
             ) {
                 items(filteredRecords, key = { it.id }) { record ->
-                    TransactionSearchItem(record = record, onClick = { editingRecord = record })
+                    TransactionSearchItem(
+                        record = record,
+                        isPrivacyMode = isPrivacyMode,
+                        onClick = {
+                            editingRecord = record
+                            onEditRecord(record)
+                        }
+                    )
                 }
             }
         }
@@ -126,7 +139,11 @@ fun AllTransactionsSearchSheet(
 }
 
 @Composable
-fun TransactionSearchItem(record: FlowRecord, onClick: () -> Unit) {
+fun TransactionSearchItem(
+    record: FlowRecord,
+    isPrivacyMode: Boolean = false,
+    onClick: () -> Unit
+) {
     val dateStr = remember(record.timestamp) {
         val sdf = SimpleDateFormat("dd MMM", Locale.getDefault())
         sdf.format(Date(record.timestamp))
@@ -151,7 +168,7 @@ fun TransactionSearchItem(record: FlowRecord, onClick: () -> Unit) {
                 Text(record.category, color = Color(0xFF888888), fontSize = 12.sp)
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text("₹${record.amount}", color = Color(0xFFE59C5C), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(if (isPrivacyMode) "₹••••" else "₹${record.amount}", color = Color(0xFFE59C5C), fontSize = 15.sp, fontWeight = FontWeight.Bold)
                 Text(dateStr, color = Color(0xFF666666), fontSize = 11.sp)
             }
         }
