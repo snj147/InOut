@@ -3,7 +3,12 @@ package com.personal.inout.util
 import android.content.Context
 import android.net.Uri
 import com.personal.inout.data.AppDatabase
+import com.personal.inout.data.FlowRecord
+import com.personal.inout.data.MovementNature
+import com.personal.inout.data.PocketType
+import com.personal.inout.data.VaultPocket
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -32,15 +37,15 @@ object VaultBackupManager {
         passphrase: String
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            val pockets = db.stateFlowDao().getAllActivePocketsDirect()
-            val flows = db.stateFlowDao().getAllFlowRecordsDirect()
+            val pockets: List<VaultPocket> = db.stateFlowDao().observeAllActivePockets().first()
+            val flows: List<FlowRecord> = db.stateFlowDao().observeAllFlowRecords().first()
 
             val rootJson = JSONObject().apply {
                 put("version", 1)
                 put("exportedAt", System.currentTimeMillis())
 
                 val pocketsArray = JSONArray()
-                pockets.forEach { p ->
+                for (p in pockets) {
                     pocketsArray.put(JSONObject().apply {
                         put("id", p.id)
                         put("name", p.name)
@@ -55,7 +60,7 @@ object VaultBackupManager {
                 put("pockets", pocketsArray)
 
                 val flowsArray = JSONArray()
-                flows.forEach { f ->
+                for (f in flows) {
                     flowsArray.put(JSONObject().apply {
                         put("id", f.id)
                         put("nature", f.nature.name)
@@ -127,16 +132,17 @@ object VaultBackupManager {
             val pocketsArray = rootJson.getJSONArray("pockets")
             val flowsArray = rootJson.getJSONArray("flows")
 
-            // Clear and restore
-            val existingFlows = db.stateFlowDao().getAllFlowRecordsDirect()
-            existingFlows.forEach { db.stateFlowDao().deleteFlowRecordById(it.id) }
+            val existingFlows = db.stateFlowDao().observeAllFlowRecords().first()
+            for (f in existingFlows) {
+                db.stateFlowDao().deleteFlowRecordById(f.id)
+            }
 
             for (i in 0 until pocketsArray.length()) {
                 val p = pocketsArray.getJSONObject(i)
-                val pocketObj = com.personal.inout.data.VaultPocket(
+                val pocketObj = VaultPocket(
                     id = p.getLong("id"),
                     name = p.getString("name"),
-                    pocketType = com.personal.inout.data.PocketType.valueOf(p.getString("pocketType")),
+                    pocketType = PocketType.valueOf(p.getString("pocketType")),
                     subType = p.optString("subType", "LIQUID"),
                     creditLimit = p.optDouble("creditLimit", 0.0),
                     targetAmount = p.optDouble("targetAmount", 0.0),
@@ -149,9 +155,9 @@ object VaultBackupManager {
             var importedCount = 0
             for (i in 0 until flowsArray.length()) {
                 val f = flowsArray.getJSONObject(i)
-                val flowObj = com.personal.inout.data.FlowRecord(
+                val flowObj = FlowRecord(
                     id = f.optLong("id", 0L),
-                    nature = com.personal.inout.data.MovementNature.valueOf(f.getString("nature")),
+                    nature = MovementNature.valueOf(f.getString("nature")),
                     sourcePocketId = if (f.isNull("sourcePocketId")) null else f.getLong("sourcePocketId"),
                     targetPocketId = if (f.isNull("targetPocketId")) null else f.getLong("targetPocketId"),
                     amount = f.getDouble("amount"),
