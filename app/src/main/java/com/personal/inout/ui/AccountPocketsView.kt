@@ -118,6 +118,7 @@ fun AccountPocketsView(
                 items(bankBalances, key = { it.pocketId }) { summary ->
                     val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId }
                         ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = PocketType.LIQUID)
+                    val bal = summary.computedBalance ?: 0.0
 
                     StructuralDeckRow(
                         indicatorColor = Color(0xFF6E6963),
@@ -132,9 +133,15 @@ fun AccountPocketsView(
                                 Text(summary.name, color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
                                 Text("Liquid Account", color = Color(0xFF888888), fontSize = 10.5.sp)
                             }
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text(if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", summary.computedBalance ?: 0.0)}", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", bal)}", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                                 ActionPill(label = "Transact", bg = Color(0xFF282420), text = Color(0xFFE59C5C)) { onTransactPocket(pocket) }
+                                IconButton(
+                                    onClick = { pocketToDelete = pocket to bal },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete Account", tint = Color(0xFFE57373), modifier = Modifier.size(15.dp))
+                                }
                             }
                         }
                     }
@@ -200,7 +207,7 @@ fun AccountPocketsView(
                 }
             }
 
-            // 3. Cards & Loans (With Contextual Payment Dialog)
+            // 3. Cards & Loans
             if (selectedFilter == AccountFilter.ALL || selectedFilter == AccountFilter.CARDS) {
                 if (cardBalances.isNotEmpty()) {
                     item { SectionHeader("Cards & Credit Lines", cardBalances.size) }
@@ -243,6 +250,12 @@ fun AccountPocketsView(
                                             cardPaymentAmountText = Math.abs(current).toInt().toString()
                                             selectedCardSourcePocketId = defaultLiquidId
                                         }
+                                    }
+                                    IconButton(
+                                        onClick = { pocketToDelete = pocket to current },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete Card", tint = Color(0xFFE57373), modifier = Modifier.size(15.dp))
                                     }
                                 }
                             }
@@ -330,6 +343,13 @@ fun AccountPocketsView(
                                         peerActionTarget = Triple(pocket, bal, if (bal > 0) MovementNature.PEER_COLLECT else if (bal < 0) MovementNature.PEER_REPAY else MovementNature.PEER_LEND)
                                         activePeerNature = if (bal > 0) MovementNature.PEER_COLLECT else if (bal < 0) MovementNature.PEER_REPAY else MovementNature.PEER_LEND
                                         peerActionAmount = if (bal != 0.0) Math.abs(bal).toInt().toString() else ""
+                                    }
+
+                                    IconButton(
+                                        onClick = { pocketToDelete = pocket to bal },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete Peer", tint = Color(0xFFE57373), modifier = Modifier.size(15.dp))
                                     }
                                 }
                             }
