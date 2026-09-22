@@ -1175,7 +1175,9 @@ fun DashboardScreen(db: AppDatabase) {
                 if (showFeedbackDialog) {
                     FeedbackDialog(
                         theme = theme,
-                        onShowAlert = { msg, type -> alertManager.showAlert(msg, type) },
+                        onShowAlert = { msg, isError ->
+                            alertManager.showAlert(msg, if (isError) AlertType.ERROR else AlertType.SUCCESS)
+                        },
                         onDismiss = { showFeedbackDialog = false }
                     )
                 }
