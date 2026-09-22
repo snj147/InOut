@@ -148,6 +148,28 @@ fun DashboardScreen(db: AppDatabase) {
         }.sumOf { it.amount ?: 0.0 }
     }
 
+    // Accurate Historical Flow Accounting
+    val totalInflowLifetime = remember(flowRecords) {
+        flowRecords.filter {
+            it.nature in listOf(
+                MovementNature.INFLOW,
+                MovementNature.PEER_COLLECT,
+                MovementNature.PEER_BORROW
+            )
+        }.sumOf { it.amount ?: 0.0 }
+    }
+
+    val totalOutflowLifetime = remember(flowRecords) {
+        flowRecords.filter {
+            it.nature in listOf(
+                MovementNature.OUTFLOW,
+                MovementNature.PEER_LEND,
+                MovementNature.PEER_REPAY,
+                MovementNature.CARD_PAYMENT
+            )
+        }.sumOf { it.amount ?: 0.0 }
+    }
+
     val peerNet = remember(pocketBalances) {
         pocketBalances.filter { it.pocketType == PocketType.COUNTERPARTY || it.pocketType == PocketType.PEER || it.subType == "PEER" }
             .sumOf { it.computedBalance ?: 0.0 }
@@ -197,7 +219,6 @@ fun DashboardScreen(db: AppDatabase) {
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
 
-    // Live Predictive As-You-Type Suggestions: Evaluates with or without slash
     val liveSuggestions by remember(naturalLanguageInput, rawPockets) {
         derivedStateOf {
             QuickBarSuggester.evaluate(naturalLanguageInput, rawPockets)
@@ -601,14 +622,8 @@ fun DashboardScreen(db: AppDatabase) {
                 containerColor = theme.bg,
                 topBar = {
                     CleanVaultHeader(
-                        totalLiquid = trueSafeLiquid,
-                        totalSpent = flowRecords.filter {
-                            it.nature in listOf(
-                                MovementNature.OUTFLOW,
-                                MovementNature.PEER_LEND,
-                                MovementNature.PEER_REPAY
-                            )
-                        }.sumOf { it.amount ?: 0.0 },
+                        totalInflow = totalInflowLifetime,
+                        totalSpent = totalOutflowLifetime,
                         isProUser = isProUnlocked,
                         isPrivacyMode = isPrivacyMode,
                         theme = theme,
@@ -864,7 +879,7 @@ fun DashboardScreen(db: AppDatabase) {
                                                 }
                                             }
 
-                                            // Real-Time Action Suggester: Appears actively as you type
+                                            // Real-Time Action Suggester
                                             if (liveSuggestions.isNotEmpty()) {
                                                 HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.6f), thickness = 0.8.dp)
                                                 LazyRow(
@@ -1040,7 +1055,6 @@ fun DashboardScreen(db: AppDatabase) {
                                     .fillMaxSize()
                                     .padding(horizontal = 16.dp)
                             ) {
-                                // Pinned Header
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -1054,7 +1068,6 @@ fun DashboardScreen(db: AppDatabase) {
                                     )
                                 }
 
-                                // Scrollable Content Underneath
                                 SettingsCardsList(
                                     theme = theme,
                                     autoSplitEnabled = autoSplitEnabled,
@@ -1152,25 +1165,55 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
 
+                // Security PIN / Verification Challenge before Vault Purge
                 if (showClearLedgerConfirmation) {
+                    var verificationInput by remember { mutableStateOf("") }
                     AlertDialog(
-                        onDismissRequest = { showClearLedgerConfirmation = false },
+                        onDismissRequest = {
+                            showClearLedgerConfirmation = false
+                            verificationInput = ""
+                        },
                         containerColor = theme.surface,
-                        title = { Text("Confirm Clear Entire Ledger", color = Color.White) },
-                        text = { Text("This will permanently delete all records and zero out balances. Proceed?", color = Color(0xFFCCCCCC)) },
+                        title = { Text("CONFIRM TOTAL PURGE", color = theme.mildRed, fontWeight = FontWeight.Black) },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    "This action will permanently delete all records AND archive all accounts. To verify this destructive action, type PURGE below:",
+                                    color = theme.textMuted,
+                                    fontSize = 12.5.sp
+                                )
+                                CompactInputField(
+                                    value = verificationInput,
+                                    onValueChange = { verificationInput = it },
+                                    placeholder = "Type PURGE"
+                                )
+                            }
+                        },
                         confirmButton = {
                             Button(
                                 onClick = {
-                                    scope.launch {
-                                        flowRecords.forEach { db.stateFlowDao().deleteFlowRecordById(it.id) }
-                                        alertManager.showAlert("All vault records purged", AlertType.SUCCESS)
-                                        showClearLedgerConfirmation = false
+                                    if (verificationInput.trim() == "PURGE") {
+                                        scope.launch {
+                                            flowRecords.forEach { db.stateFlowDao().deleteFlowRecordById(it.id) }
+                                            rawPockets.forEach { db.stateFlowDao().updatePocket(it.copy(isArchived = true)) }
+                                            alertManager.showAlert("All vault records and accounts purged", AlertType.SUCCESS)
+                                            showClearLedgerConfirmation = false
+                                            verificationInput = ""
+                                        }
+                                    } else {
+                                        alertManager.showAlert("Verification phrase did not match 'PURGE'", AlertType.ERROR)
                                     }
                                 },
-                                colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed)
-                            ) { Text("Purge Everything", color = Color.White) }
+                                colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed),
+                                enabled = verificationInput.trim() == "PURGE"
+                            ) { Text("Purge Everything", color = Color.White, fontWeight = FontWeight.Bold) }
                         },
-                        dismissButton = { TextButton(onClick = { showClearLedgerConfirmation = false }) { Text("Cancel", color = theme.textMuted) } }
+                        dismissButton = {
+                            TextButton(onClick = {
+                                showClearLedgerConfirmation = false
+                                verificationInput = ""
+                            }) { Text("Cancel", color = theme.textMuted) }
+                        }
                     )
                 }
 
@@ -1476,7 +1519,7 @@ private fun FlatStreamRow(
 
 @Composable
 private fun CleanVaultHeader(
-    totalLiquid: Double,
+    totalInflow: Double,
     totalSpent: Double,
     isProUser: Boolean,
     isPrivacyMode: Boolean,
@@ -1509,7 +1552,7 @@ private fun CleanVaultHeader(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = if (isPrivacyMode) "↑ ₹ •••" else "↑ ₹ ${String.format("%,.0f", totalLiquid)}",
+                    text = if (isPrivacyMode) "↑ ₹ •••" else "↑ ₹ ${String.format("%,.0f", totalInflow)}",
                     color = theme.mildGreen,
                     fontSize = 11.5.sp,
                     fontWeight = FontWeight.Bold
@@ -1527,7 +1570,6 @@ private fun CleanVaultHeader(
     }
 }
 
-// Dedicated Scrollable Settings Content (Stationary Header is handled above)
 @Composable
 private fun SettingsCardsList(
     theme: ThemeColors,
