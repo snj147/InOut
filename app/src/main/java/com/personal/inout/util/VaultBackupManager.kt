@@ -136,12 +136,16 @@ object VaultBackupManager {
                 db.stateFlowDao().deleteFlowRecordById(f.id)
             }
 
+            val importedPocketIds = mutableSetOf<Long>()
+            var primaryLiquidId: Long? = null
+
             for (i in 0 until pocketsArray.length()) {
                 val p = pocketsArray.getJSONObject(i)
+                val pType = PocketType.valueOf(p.getString("pocketType"))
                 val pocketObj = VaultPocket(
                     id = p.getLong("id"),
                     name = p.getString("name"),
-                    pocketType = PocketType.valueOf(p.getString("pocketType")),
+                    pocketType = pType,
                     subType = p.optString("subType", "LIQUID"),
                     creditLimit = p.optDouble("creditLimit", 0.0),
                     targetAmount = p.optDouble("targetAmount", 0.0),
@@ -149,18 +153,55 @@ object VaultBackupManager {
                     isArchived = p.optBoolean("isArchived", false)
                 )
                 db.stateFlowDao().insertPocket(pocketObj)
+                importedPocketIds.add(pocketObj.id)
+                if (pType == PocketType.LIQUID && primaryLiquidId == null) {
+                    primaryLiquidId = pocketObj.id
+                }
+            }
+
+            // Fallback: Ensure at least one liquid wallet exists to receive inflows
+            if (primaryLiquidId == null) {
+                primaryLiquidId = db.stateFlowDao().insertPocket(
+                    VaultPocket(name = "Cash Wallet", pocketType = PocketType.LIQUID, subType = "LIQUID")
+                )
             }
 
             var importedCount = 0
             for (i in 0 until flowsArray.length()) {
                 val f = flowsArray.getJSONObject(i)
+                val rawNatureStr = f.optString("nature", "OUTFLOW")
+                var rawNature = try { MovementNature.valueOf(rawNatureStr) } catch (_: Exception) { MovementNature.OUTFLOW }
+                var srcId: Long? = if (f.isNull("sourcePocketId")) null else f.getLong("sourcePocketId")
+                var tgtId: Long? = if (f.isNull("targetPocketId")) null else f.getLong("targetPocketId")
+                val category = f.getString("category")
+                val note = f.getString("note")
+
+                // SANITIZATION PASS: Fix historical salary/income misclassifications from legacy backups
+                val isSalaryOrIncome = category.equals("Salary", ignoreCase = true) ||
+                        note.contains("Income Deposit", ignoreCase = true) ||
+                        note.contains("Salary", ignoreCase = true)
+
+                if (isSalaryOrIncome) {
+                    rawNature = MovementNature.INFLOW
+                    // Inflow belongs to targetPocketId, not sourcePocketId
+                    tgtId = tgtId ?: srcId ?: primaryLiquidId
+                    srcId = null
+                }
+
+                // Internal Transfer Sanitization: Ensure both legs exist
+                if (rawNature == MovementNature.TRANSFER && tgtId == null && srcId != null) {
+                    val other = importedPocketIds.firstOrNull { it != srcId } ?: primaryLiquidId
+                    tgtId = other
+                }
+
                 val flowObj = FlowRecord(
                     id = f.optLong("id", 0L),
-                    sourcePocketId = if (f.isNull("sourcePocketId")) null else f.getLong("sourcePocketId"),
-                    targetPocketId = if (f.isNull("targetPocketId")) null else f.getLong("targetPocketId"),
+                    sourcePocketId = srcId,
+                    targetPocketId = tgtId,
                     amount = f.getDouble("amount"),
-                    category = f.getString("category"),
-                    note = f.getString("note"),
+                    movementNature = rawNature,
+                    category = category,
+                    note = note,
                     timestamp = f.getLong("timestamp"),
                     isRecurring = f.optBoolean("isRecurring", false),
                     frequency = f.optString("frequency", "NONE"),
