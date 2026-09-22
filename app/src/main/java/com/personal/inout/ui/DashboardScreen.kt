@@ -167,13 +167,14 @@ fun DashboardScreen(db: AppDatabase) {
     }
 
     var naturalLanguageInput by remember { mutableStateOf("") }
+    // Clean Natural Examples (No bracketed placeholders)
     val placeholderHints = listOf(
-        "Spent [Amount] on [Item]",
-        "set goal phone 40000 by nov",
-        "salary 25000 idfc monthly",
-        "collected 2000 from rahul to sbi",
-        "pay 12000 axis card bill from sbi",
-        "burn 600 (update daily target)"
+        "coffee 120 cash",
+        "transf 2000 sbi to idfc",
+        "collected 1500 rahul sbi",
+        "pay 8000 axis card from sbi",
+        "salary 45000 idfc monthly from 1 oct",
+        "burn 600 (update daily burn)"
     )
     var currentHintIndex by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
@@ -186,7 +187,6 @@ fun DashboardScreen(db: AppDatabase) {
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
 
-    // Pre-computed Date-Grouped Records outside LazyColumn DSL
     val groupedRecords = remember(flowRecords) {
         val calNow = Calendar.getInstance()
         flowRecords.take(20).groupBy { flow ->
@@ -399,6 +399,27 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
+    // Encrypted Backup File Launchers
+    val backupExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val res = VaultBackupManager.exportEncryptedBackup(context, db, uri, "INOUT_LEDGER_MASTER_KEY")
+                if (res.isSuccess) alertManager.showAlert("Encrypted backup saved successfully (.vault)", AlertType.SUCCESS)
+                else alertManager.showAlert("Backup export failed: ${res.exceptionOrNull()?.message}", AlertType.ERROR)
+            }
+        }
+    }
+
+    val backupRestoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val res = VaultBackupManager.restoreEncryptedBackup(context, db, uri, "INOUT_LEDGER_MASTER_KEY")
+                if (res.isSuccess) alertManager.showAlert("Restored ${res.getOrNull()} transactions successfully", AlertType.SUCCESS)
+                else alertManager.showAlert("Restore failed: ${res.exceptionOrNull()?.message}", AlertType.ERROR)
+            }
+        }
+    }
+
     CompositionLocalProvider(
         LocalThemeColors provides theme,
         LocalVaultAlertManager provides alertManager
@@ -455,7 +476,7 @@ fun DashboardScreen(db: AppDatabase) {
                             label = "fabRotation"
                         )
 
-                        // 3-Action Speed Dial Stack (Manual Entry, Camera OCR, Gallery OCR)
+                        // 3-Action Speed Dial Stack with High-Contrast Text Labels
                         Column(
                             horizontalAlignment = Alignment.End,
                             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -468,47 +489,95 @@ fun DashboardScreen(db: AppDatabase) {
                             ) {
                                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                     // 1. Manual Form Entry Action
-                                    SmallFloatingActionButton(
-                                        onClick = {
-                                            isFabExpanded = false
-                                            ocrPrefilledNote = ""
-                                            ocrPrefilledAmount = null
-                                            hudInDialogError = null
-                                            selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
-                                            showCommandHud = true
-                                        },
-                                        containerColor = theme.surfaceAlt,
-                                        contentColor = theme.accent
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Icon(Icons.Default.EditNote, contentDescription = "Manual Entry", modifier = Modifier.size(20.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(theme.surface)
+                                                .border(1.dp, theme.accent.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text("Manual Entry", color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                        FloatingActionButton(
+                                            onClick = {
+                                                isFabExpanded = false
+                                                ocrPrefilledNote = ""
+                                                ocrPrefilledAmount = null
+                                                hudInDialogError = null
+                                                selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
+                                                showCommandHud = true
+                                            },
+                                            modifier = Modifier.size(46.dp),
+                                            containerColor = theme.surface,
+                                            contentColor = theme.accent,
+                                            shape = CircleShape
+                                        ) {
+                                            Icon(Icons.Default.EditNote, contentDescription = "Manual Entry", modifier = Modifier.size(20.dp))
+                                        }
                                     }
 
                                     // 2. Camera Receipt Scan Action
-                                    SmallFloatingActionButton(
-                                        onClick = {
-                                            isFabExpanded = false
-                                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                                                cameraSnapLauncher.launch(null)
-                                            } else {
-                                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                                            }
-                                        },
-                                        containerColor = theme.surfaceAlt,
-                                        contentColor = theme.accent
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Icon(Icons.Default.PhotoCamera, contentDescription = "Camera OCR", modifier = Modifier.size(18.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(theme.surface)
+                                                .border(1.dp, theme.accent.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text("Scan Receipt", color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                        FloatingActionButton(
+                                            onClick = {
+                                                isFabExpanded = false
+                                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                                                    cameraSnapLauncher.launch(null)
+                                                } else {
+                                                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                                }
+                                            },
+                                            modifier = Modifier.size(46.dp),
+                                            containerColor = theme.surface,
+                                            contentColor = theme.accent,
+                                            shape = CircleShape
+                                        ) {
+                                            Icon(Icons.Default.PhotoCamera, contentDescription = "Camera OCR", modifier = Modifier.size(18.dp))
+                                        }
                                     }
 
                                     // 3. Gallery Bill Scan Action
-                                    SmallFloatingActionButton(
-                                        onClick = {
-                                            isFabExpanded = false
-                                            photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                                        },
-                                        containerColor = theme.surfaceAlt,
-                                        contentColor = theme.accent
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Icon(Icons.Default.Image, contentDescription = "Gallery OCR", modifier = Modifier.size(18.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(theme.surface)
+                                                .border(1.dp, theme.accent.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
+                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Text("From Gallery", color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                        FloatingActionButton(
+                                            onClick = {
+                                                isFabExpanded = false
+                                                photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                            },
+                                            modifier = Modifier.size(46.dp),
+                                            containerColor = theme.surface,
+                                            contentColor = theme.accent,
+                                            shape = CircleShape
+                                        ) {
+                                            Icon(Icons.Default.Image, contentDescription = "Gallery OCR", modifier = Modifier.size(18.dp))
+                                        }
                                     }
                                 }
                             }
@@ -538,11 +607,11 @@ fun DashboardScreen(db: AppDatabase) {
                 Box(modifier = Modifier.fillMaxSize().padding(padding).background(theme.bg)) {
                     when (selectedTab) {
                         0 -> {
-                            // Vault Home: Pinned Control Deck + Scrollable Flow Stream Underneath
+                            // Vault Home: Pinned Control Deck + Scrollable Flow Stream
                             Column(
                                 modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)
                             ) {
-                                // Pinned Section: 4-Card Carousel + Refined Calm Quick Bar + Flow Header
+                                // Pinned Control Deck
                                 Column(
                                     verticalArrangement = Arrangement.spacedBy(12.dp),
                                     modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
@@ -615,7 +684,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         }
                                     }
 
-                                    // 2. Refined Static Border Glow on Quick Bar (No movement animations)
+                                    // 2. Refined Static Border Glow on Quick Bar
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -666,7 +735,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         }
                                     }
 
-                                    // Pinned Sub-Header Bar: Recent Flow + View All Link
+                                    // Pinned Header Bar: Recent Flow + View All
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -685,7 +754,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
-                                // Scrollable Flow Stream: Slides underneath the pinned deck
+                                // Scrollable Flow Stream
                                 LazyColumn(
                                     modifier = Modifier.fillMaxSize(),
                                     verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -849,11 +918,27 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                     CsvExporter.exportAndShareTransactions(context, compatList)
                                 },
+                                onExportEncryptedBackup = {
+                                    backupExportLauncher.launch("inout_vault_backup_${System.currentTimeMillis()}.vault")
+                                },
+                                onRestoreEncryptedBackup = {
+                                    backupRestoreLauncher.launch(arrayOf("application/octet-stream", "*/*"))
+                                },
                                 onClearLedger = { showClearLedgerConfirmation = true },
                                 onOpenPaywall = { showMockPaywall = true }
                             )
                         }
                     }
+                }
+
+                // 35% Dimming Scrim when Speed-Dial is open
+                if (isFabExpanded) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.35f))
+                            .clickable { isFabExpanded = false }
+                    )
                 }
 
                 if (showBurnEditDialog) {
@@ -1260,6 +1345,8 @@ private fun SettingsScreenContent(
     onThemeSelected: (AppThemeMode) -> Unit,
     onExportPdf: () -> Unit,
     onExportCsv: () -> Unit,
+    onExportEncryptedBackup: () -> Unit,
+    onRestoreEncryptedBackup: () -> Unit,
     onClearLedger: () -> Unit,
     onOpenPaywall: () -> Unit
 ) {
@@ -1332,11 +1419,31 @@ private fun SettingsScreenContent(
             }
         }
 
-        // 3. Data Sovereignty & Export
+        // 3. Data Sovereignty & Encrypted Backup
         item {
             Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("DATA SOVEREIGNTY", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Text("DATA SOVEREIGNTY & BACKUP", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+
+                    Button(
+                        onClick = onExportEncryptedBackup,
+                        colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Create Encrypted Backup (.vault)", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    OutlinedButton(
+                        onClick = onRestoreEncryptedBackup,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Restore Ledger from Backup", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    HorizontalDivider(color = theme.surfaceAlt, thickness = 0.5.dp)
 
                     Button(
                         onClick = onExportPdf,
