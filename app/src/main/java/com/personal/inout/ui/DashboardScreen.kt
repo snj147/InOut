@@ -187,7 +187,6 @@ fun DashboardScreen(db: AppDatabase) {
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
 
-    // Live suggestion evaluation as user types
     val liveSuggestedIntent by remember(naturalLanguageInput, rawPockets) {
         derivedStateOf {
             val text = naturalLanguageInput.trim()
@@ -224,7 +223,6 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    // Encrypted Backup File Launchers
     val backupExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
         if (uri != null) {
             scope.launch {
@@ -245,7 +243,6 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    // Auto-Provision liquid account if database has zero accounts
     suspend fun ensureLiquidAccountExists(): Long {
         val liquid = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }
         if (liquid != null) return liquid.id
@@ -265,7 +262,6 @@ fun DashboardScreen(db: AppDatabase) {
         val trimmed = text.trim()
         if (trimmed.isBlank()) return
 
-        // 1. Direct System Commands via Quick Bar
         val lower = trimmed.lowercase()
         when {
             lower in listOf("autosplit on", "enable autosplit", "autosplit 1") -> {
@@ -366,7 +362,6 @@ fun DashboardScreen(db: AppDatabase) {
             }
         }
 
-        // 2. Financial Ledger Parsing
         val parsed = NaturalLanguageParser.parse(trimmed, rawPockets, context)
         if (parsed == null) {
             alertManager.showAlert("Syntax not recognized. Type / for suggestions.", AlertType.WARNING)
@@ -456,13 +451,11 @@ fun DashboardScreen(db: AppDatabase) {
                     var sourceId: Long? = parsed.matchedPocketId
                     var targetId: Long? = parsed.targetPocketId
 
-                    // Prevent Orphaned Inflow: Guarantee target bank account exists
                     if (parsed.nature == MovementNature.INFLOW) {
                         sourceId = null
                         targetId = parsed.matchedPocketId ?: ensureLiquidAccountExists()
                     }
 
-                    // Prevent Orphaned Outflow: Guarantee source bank account exists
                     if (parsed.nature == MovementNature.OUTFLOW && sourceId == null) {
                         sourceId = ensureLiquidAccountExists()
                     }
@@ -500,12 +493,12 @@ fun DashboardScreen(db: AppDatabase) {
                         }
                     }
 
-                    // Future recurring schedule check
+                    // Future recurring rule template creation without premature ledger movement
                     val isFutureScheduled = parsed.isRecurring && parsed.timestamp > (System.currentTimeMillis() + 60000L)
                     if (isFutureScheduled) {
                         db.stateFlowDao().insertFlowRecord(
                             FlowRecord(
-                                nature = parsed.nature,
+                                id = 0L,
                                 sourcePocketId = sourceId,
                                 targetPocketId = targetId,
                                 amount = parsed.amount,
@@ -514,7 +507,8 @@ fun DashboardScreen(db: AppDatabase) {
                                 timestamp = parsed.timestamp,
                                 isRecurring = true,
                                 frequency = parsed.frequency,
-                                recurringCadence = parsed.frequency
+                                recurringCadence = parsed.frequency,
+                                isPaused = false
                             )
                         )
                         alertManager.showAlert("Scheduled rule for ${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(parsed.timestamp))}", AlertType.SUCCESS)
@@ -650,7 +644,6 @@ fun DashboardScreen(db: AppDatabase) {
                             label = "fabRotation"
                         )
 
-                        // 3-Action Speed Dial Stack: Pure elevated amber surfaces, no text labels
                         Column(
                             horizontalAlignment = Alignment.End,
                             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -662,7 +655,6 @@ fun DashboardScreen(db: AppDatabase) {
                                 exit = fadeOut() + slideOutVertically { it / 2 }
                             ) {
                                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    // 1. Manual Form Entry
                                     FloatingActionButton(
                                         onClick = {
                                             isFabExpanded = false
@@ -680,7 +672,6 @@ fun DashboardScreen(db: AppDatabase) {
                                         Icon(Icons.Default.EditNote, contentDescription = "Manual Entry", modifier = Modifier.size(22.dp))
                                     }
 
-                                    // 2. Camera Receipt OCR
                                     FloatingActionButton(
                                         onClick = {
                                             isFabExpanded = false
@@ -698,7 +689,6 @@ fun DashboardScreen(db: AppDatabase) {
                                         Icon(Icons.Default.PhotoCamera, contentDescription = "Camera OCR", modifier = Modifier.size(20.dp))
                                     }
 
-                                    // 3. Gallery Receipt OCR
                                     FloatingActionButton(
                                         onClick = {
                                             isFabExpanded = false
@@ -742,12 +732,10 @@ fun DashboardScreen(db: AppDatabase) {
                             Column(
                                 modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)
                             ) {
-                                // Pinned Top Deck: 4-Card Carousel + Glowing Quick Bar + Live HUD + Flow Header
                                 Column(
                                     verticalArrangement = Arrangement.spacedBy(10.dp),
                                     modifier = Modifier.padding(top = 8.dp, bottom = 6.dp)
                                 ) {
-                                    // 1. Swipable 4-Card Hero Carousel
                                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         HorizontalPager(
                                             state = pagerState,
@@ -815,7 +803,6 @@ fun DashboardScreen(db: AppDatabase) {
                                         }
                                     }
 
-                                    // 2. Refined Static Border Glow on Quick Bar
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -866,7 +853,6 @@ fun DashboardScreen(db: AppDatabase) {
                                                 }
                                             }
 
-                                            // 3. Live As-You-Type Preview HUD Chip
                                             liveSuggestedIntent?.let { intent ->
                                                 val (previewIcon, previewText, previewColor) = when (intent) {
                                                     is ParsedIntent.Transaction -> when (intent.nature) {
@@ -900,7 +886,6 @@ fun DashboardScreen(db: AppDatabase) {
                                                 }
                                             }
 
-                                            // 4. Interactive Slash (/) Command Palette
                                             if (naturalLanguageInput.startsWith("/")) {
                                                 HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.6f), thickness = 0.8.dp)
                                                 LazyRow(
@@ -923,7 +908,6 @@ fun DashboardScreen(db: AppDatabase) {
                                         }
                                     }
 
-                                    // Pinned Sub-Header Bar: Recent Flow + View All
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -942,7 +926,6 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
-                                // Scrollable Flow Stream
                                 LazyColumn(
                                     modifier = Modifier.fillMaxSize(),
                                     verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -1119,7 +1102,6 @@ fun DashboardScreen(db: AppDatabase) {
                     }
                 }
 
-                // 35% Dimming Scrim when Speed-Dial is open
                 if (isFabExpanded) {
                     Box(
                         modifier = Modifier
@@ -1550,7 +1532,6 @@ private fun SettingsScreenContent(
             Text("Settings & Vault Controls", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         }
 
-        // 1. Runway & Ledger Guards
         item {
             Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1585,7 +1566,6 @@ private fun SettingsScreenContent(
             }
         }
 
-        // 2. Workspace & Appearance
         item {
             Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1610,7 +1590,6 @@ private fun SettingsScreenContent(
             }
         }
 
-        // 3. Data Sovereignty & Encrypted Backup
         item {
             Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1666,7 +1645,6 @@ private fun SettingsScreenContent(
             }
         }
 
-        // 4. Developer & Sandbox Tools
         item {
             Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
