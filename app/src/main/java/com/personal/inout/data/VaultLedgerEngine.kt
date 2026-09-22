@@ -44,6 +44,33 @@ class VaultLedgerEngine(
             val balances = flowRecordDao.getPocketBalancesSync(timestamp)
             val pockets = flowRecordDao.getActivePocketsSync()
 
+            // 1. INFLOW ACCOUNTING: Explicitly enforces targetPocketId and prevents debit checks
+            if (nature == MovementNature.INFLOW) {
+                val effectiveTarget = targetPocketId ?: sourcePocketId
+                if (effectiveTarget == null || effectiveTarget == 0L) {
+                    return VaultExecutionResult.OverdraftError("Please specify a target account to deposit inflow")
+                }
+
+                val entity = FlowRecord(
+                    sourcePocketId = null,
+                    targetPocketId = effectiveTarget,
+                    amount = amount,
+                    movementNature = MovementNature.INFLOW,
+                    category = category.ifBlank { "Salary" },
+                    note = note.ifBlank { "Income Deposit" },
+                    timestamp = timestamp,
+                    isRecurring = isRecurring,
+                    recurringCadence = frequency,
+                    frequency = frequency
+                )
+                val id = flowRecordDao.insertFlowRecord(entity)
+                return VaultExecutionResult.Success(
+                    recordId = id,
+                    summary = "Deposited ₹${amount.toInt()} into ${pockets.firstOrNull { it.id == effectiveTarget }?.name ?: "Account"}"
+                )
+            }
+
+            // 2. OUTFLOW ACCOUNTING (Expenses & Outgoing Peer Lending)
             if (nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
                 if (sourcePocketId == null || sourcePocketId == 0L) {
                     return VaultExecutionResult.OverdraftError("Please specify a source account")
@@ -121,6 +148,7 @@ class VaultLedgerEngine(
                 }
             }
 
+            // 3. INTERNAL TRANSFERS: Zero-Sum Shift Between Two Owned Accounts
             if (nature == MovementNature.TRANSFER) {
                 if (sourcePocketId == null || targetPocketId == null || sourcePocketId == targetPocketId) {
                     return VaultExecutionResult.OverdraftError("Invalid transfer source or destination")
@@ -129,6 +157,13 @@ class VaultLedgerEngine(
                 val srcPocket = pockets.firstOrNull { it.id == sourcePocketId }
                 if (srcPocket?.pocketType == PocketType.LIQUID && srcBal < amount) {
                     return VaultExecutionResult.OverdraftError("Cannot transfer ₹${amount.toInt()} from ${srcPocket.name}. Available: ₹${srcBal.toInt()}")
+                }
+            }
+
+            // 4. CREDIT CARD BILL PAYMENT: Direct Balance Transfer to Repay Debt
+            if (nature == MovementNature.CARD_PAYMENT) {
+                if (sourcePocketId == null || targetPocketId == null) {
+                    return VaultExecutionResult.OverdraftError("Source bank account and card target required for card payment")
                 }
             }
 
