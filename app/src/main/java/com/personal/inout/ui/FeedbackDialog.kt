@@ -21,14 +21,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.personal.inout.util.AlertType
 import com.personal.inout.util.TelegramFeedbackSender
 import kotlinx.coroutines.launch
 
 @Composable
 fun FeedbackDialog(
     theme: ThemeColors,
-    onShowAlert: (String, AlertType) -> Unit,
+    onShowAlert: (message: String, isError: Boolean) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -124,7 +123,7 @@ fun FeedbackDialog(
             Button(
                 onClick = {
                     if (message.isBlank()) {
-                        onShowAlert("Please add a brief description", AlertType.WARNING)
+                        onShowAlert("Please add a brief description", true)
                         return@Button
                     }
                     scope.launch {
@@ -136,10 +135,10 @@ fun FeedbackDialog(
                         )
                         isSending = false
                         if (res.isSuccess) {
-                            onShowAlert("Feedback delivered to developer! Thank you.", AlertType.SUCCESS)
+                            onShowAlert("Feedback delivered to developer! Thank you.", false)
                             onDismiss()
                         } else {
-                            onShowAlert("Failed to send: ${res.exceptionOrNull()?.message}", AlertType.ERROR)
+                            onShowAlert("Failed to send: ${res.exceptionOrNull()?.message}", true)
                         }
                     }
                 },
