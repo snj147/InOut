@@ -112,35 +112,39 @@ fun AccountPocketsView(
             contentPadding = PaddingValues(bottom = 100.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // 1. Bank Accounts
+            // 1. Bank Accounts (Permanent Section Header)
             if (selectedFilter == AccountFilter.ALL || selectedFilter == AccountFilter.BANKS) {
                 item { SectionHeader("Cash & Bank Accounts", bankBalances.size) }
-                items(bankBalances, key = { it.pocketId }) { summary ->
-                    val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId }
-                        ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = PocketType.LIQUID)
-                    val bal = summary.computedBalance ?: 0.0
+                if (bankBalances.isEmpty()) {
+                    item { EmptySectionPlaceholder("No liquid bank or cash accounts provisioned") }
+                } else {
+                    items(bankBalances, key = { it.pocketId }) { summary ->
+                        val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId }
+                            ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = PocketType.LIQUID)
+                        val bal = summary.computedBalance ?: 0.0
 
-                    StructuralDeckRow(
-                        indicatorColor = Color(0xFF6E6963),
-                        onLongClick = { onEditPocket(pocket) }
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                        StructuralDeckRow(
+                            indicatorColor = Color(0xFF6E6963),
+                            onLongClick = { onEditPocket(pocket) }
                         ) {
-                            Column {
-                                Text(summary.name, color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
-                                Text("Liquid Account", color = Color(0xFF888888), fontSize = 10.5.sp)
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", bal)}", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                                ActionPill(label = "Transact", bg = Color(0xFF282420), text = Color(0xFFE59C5C)) { onTransactPocket(pocket) }
-                                IconButton(
-                                    onClick = { pocketToDelete = pocket to bal },
-                                    modifier = Modifier.size(24.dp)
-                                ) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Delete Account", tint = Color(0xFFE57373), modifier = Modifier.size(15.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(summary.name, color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
+                                    Text("Liquid Account", color = Color(0xFF888888), fontSize = 10.5.sp)
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", bal)}", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                    ActionPill(label = "Transact", bg = Color(0xFF282420), text = Color(0xFFE59C5C)) { onTransactPocket(pocket) }
+                                    IconButton(
+                                        onClick = { pocketToDelete = pocket to bal },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Delete Account", tint = Color(0xFFE57373), modifier = Modifier.size(15.dp))
+                                    }
                                 }
                             }
                         }
@@ -148,10 +152,12 @@ fun AccountPocketsView(
                 }
             }
 
-            // 2. Goal Pots
+            // 2. Goal Pots (Permanent Section Header)
             if (selectedFilter == AccountFilter.ALL || selectedFilter == AccountFilter.GOALS) {
-                if (goalBalances.isNotEmpty()) {
-                    item { SectionHeader("Goal Pots (Target Savings)", goalBalances.size) }
+                item { SectionHeader("Goal Pots (Target Savings)", goalBalances.size) }
+                if (goalBalances.isEmpty()) {
+                    item { EmptySectionPlaceholder("No target savings goals active") }
+                } else {
                     items(goalBalances, key = { it.pocketId }) { pot ->
                         val rawPocket = rawPockets.firstOrNull { it.id.toString() == pot.pocketId }
                             ?: VaultPocket(id = pot.pocketId.toLongOrNull() ?: 0L, name = pot.name, pocketType = PocketType.SAVING_GOAL)
@@ -207,10 +213,12 @@ fun AccountPocketsView(
                 }
             }
 
-            // 3. Cards & Loans
+            // 3. Cards & Loans (Permanent Section Header)
             if (selectedFilter == AccountFilter.ALL || selectedFilter == AccountFilter.CARDS) {
-                if (cardBalances.isNotEmpty()) {
-                    item { SectionHeader("Cards & Credit Lines", cardBalances.size) }
+                item { SectionHeader("Cards & Credit Lines", cardBalances.size) }
+                if (cardBalances.isEmpty()) {
+                    item { EmptySectionPlaceholder("No credit cards or debt lines linked") }
+                } else {
                     items(cardBalances, key = { it.pocketId }) { summary ->
                         val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId }
                             ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = summary.pocketType)
@@ -264,10 +272,12 @@ fun AccountPocketsView(
                 }
             }
 
-            // 4. People
+            // 4. People (Permanent Section Header)
             if (selectedFilter == AccountFilter.ALL || selectedFilter == AccountFilter.PEOPLE) {
-                if (peerBalances.isNotEmpty()) {
-                    item { SectionHeader("People (Owed & Lent)", peerBalances.size) }
+                item { SectionHeader("People (Owed & Lent)", peerBalances.size) }
+                if (peerBalances.isEmpty()) {
+                    item { EmptySectionPlaceholder("No peer counterparty debts recorded") }
+                } else {
                     items(peerBalances, key = { it.pocketId }) { summary ->
                         val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId }
                             ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = summary.pocketType)
@@ -358,10 +368,12 @@ fun AccountPocketsView(
                 }
             }
 
-            // 5. Recurring Rules Pipeline
+            // 5. Recurring Rules Pipeline (Permanent Section Header)
             if (selectedFilter == AccountFilter.ALL || selectedFilter == AccountFilter.RULES) {
-                if (recurringSchedules.isNotEmpty()) {
-                    item { SectionHeader("Recurring Automation Pipeline", recurringSchedules.size) }
+                item { SectionHeader("Recurring Automation Pipeline", recurringSchedules.size) }
+                if (recurringSchedules.isEmpty()) {
+                    item { EmptySectionPlaceholder("No automated recurring rules scheduled") }
+                } else {
                     items(recurringSchedules, key = { it.id }) { record ->
                         val amt = (record.amount ?: 0.0).toInt()
                         StructuralDeckRow(
@@ -411,7 +423,7 @@ fun AccountPocketsView(
         }
     }
 
-    // Contextual Modal: Pay Credit Card Bill with Partial Amount Support
+    // Modal: Pay Credit Card Bill with Partial Amount Support
     cardPaymentTarget?.let { (card, totalDue) ->
         AlertDialog(
             onDismissRequest = { cardPaymentTarget = null },
@@ -483,7 +495,7 @@ fun AccountPocketsView(
         )
     }
 
-    // Contextual Peer Dual-Option Modal
+    // Modal: Peer Actions
     peerActionTarget?.let { (peer, bal, _) ->
         val options = when {
             bal > 0 -> listOf(MovementNature.PEER_COLLECT to "Collect", MovementNature.PEER_LEND to "Lend More")
@@ -573,12 +585,25 @@ fun AccountPocketsView(
 @Composable
 private fun SectionHeader(title: String, count: Int) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(title, color = Color(0xFFCCCCCC), fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
         Text("$count", color = Color(0xFF666666), fontSize = 11.5.sp)
+    }
+}
+
+@Composable
+private fun EmptySectionPlaceholder(msg: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF171513))
+            .padding(horizontal = 14.dp, vertical = 10.dp)
+    ) {
+        Text(msg, color = Color(0xFF555555), fontSize = 11.sp)
     }
 }
 
