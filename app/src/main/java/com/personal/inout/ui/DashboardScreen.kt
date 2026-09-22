@@ -180,11 +180,10 @@ fun DashboardScreen(db: AppDatabase) {
 
     var naturalLanguageInput by remember { mutableStateOf("") }
     val placeholderHints = listOf(
+        "new bank SBI",
+        "new card Axis limit 50000",
         "coffee 120 cash",
         "transf 2000 sbi to idfc",
-        "collected 1500 rahul sbi",
-        "pay 8000 axis card from sbi",
-        "salary 45000 idfc monthly from 1 oct",
         "type / for commands"
     )
     var currentHintIndex by remember { mutableIntStateOf(0) }
@@ -198,26 +197,11 @@ fun DashboardScreen(db: AppDatabase) {
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
 
-    val liveSuggestedIntent by remember(naturalLanguageInput, rawPockets) {
+    // Extreme Live Predictive Suggester: active directly as user types
+    val liveSuggestions by remember(naturalLanguageInput, rawPockets) {
         derivedStateOf {
-            val text = naturalLanguageInput.trim()
-            if (text.length >= 2 && !text.startsWith("/")) {
-                NaturalLanguageParser.parse(text, rawPockets, context)
-            } else null
+            QuickBarSuggester.evaluate(naturalLanguageInput, rawPockets)
         }
-    }
-
-    val slashCommands = remember {
-        listOf(
-            Triple("/transfer", "transf 2000 sbi to idfc", "Internal Account Transfer"),
-            Triple("/autosplit", "autosplit toggle", "Toggle Overdraft Auto-Cover"),
-            Triple("/phantom", "phantom lock toggle", "Toggle Card Phantom Lock"),
-            Triple("/theme", "theme amber", "Switch Color Palette"),
-            Triple("/export", "export pdf", "Generate Dossier / CSV"),
-            Triple("/backup", "backup now", "Trigger Encrypted Backup"),
-            Triple("/goal", "new goal Car 300k by Dec", "Provision Target Goal Pot"),
-            Triple("/burn", "burn 500", "Update Daily Spend Target")
-        )
     }
 
     val groupedRecords = remember(flowRecords) {
@@ -382,12 +366,26 @@ fun DashboardScreen(db: AppDatabase) {
 
         val parsed = NaturalLanguageParser.parse(trimmed, rawPockets, context)
         if (parsed == null) {
-            alertManager.showAlert("Syntax not recognized. Type / for suggestions.", AlertType.WARNING)
+            alertManager.showAlert("Syntax not recognized. Type / for commands.", AlertType.WARNING)
             return
         }
 
         scope.launch {
             when (parsed) {
+                is ParsedIntent.CreateAccount -> {
+                    db.stateFlowDao().insertPocket(
+                        VaultPocket(
+                            name = parsed.name,
+                            pocketType = parsed.type,
+                            subType = parsed.type.name,
+                            creditLimit = parsed.limit,
+                            targetAmount = parsed.targetAmount,
+                            targetDateEpoch = parsed.targetDateEpoch
+                        )
+                    )
+                    alertManager.showAlert("Created account '${parsed.name}'", AlertType.SUCCESS)
+                    naturalLanguageInput = ""
+                }
                 is ParsedIntent.SetDailyBurn -> {
                     dailyBurnCeiling = parsed.newRate
                     prefs.edit().putFloat("daily_burn_ceiling", parsed.newRate.toFloat()).apply()
@@ -432,20 +430,6 @@ fun DashboardScreen(db: AppDatabase) {
                         alertManager.showAlert("Pot '${goal.name}' broken. Returned ₹${bal.toInt()}", AlertType.SUCCESS)
                         naturalLanguageInput = ""
                     }
-                }
-                is ParsedIntent.CreateAccount -> {
-                    db.stateFlowDao().insertPocket(
-                        VaultPocket(
-                            name = parsed.name,
-                            pocketType = parsed.type,
-                            subType = parsed.type.name,
-                            creditLimit = parsed.limit,
-                            targetAmount = parsed.targetAmount,
-                            targetDateEpoch = parsed.targetDateEpoch
-                        )
-                    )
-                    alertManager.showAlert("Created account '${parsed.name}'", AlertType.SUCCESS)
-                    naturalLanguageInput = ""
                 }
                 is ParsedIntent.CompoundTransactions -> {
                     var successCount = 0
@@ -829,6 +813,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         }
                                     }
 
+                                    // Elevated Static Glowing Quick Bar
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -879,57 +864,25 @@ fun DashboardScreen(db: AppDatabase) {
                                                 }
                                             }
 
-                                            liveSuggestedIntent?.let { intent ->
-                                                val (previewIcon, previewText, previewColor) = when (intent) {
-                                                    is ParsedIntent.Transaction -> {
-                                                        val amt = (intent.amount ?: 0.0).toInt()
-                                                        when (intent.nature) {
-                                                            MovementNature.TRANSFER -> Triple(Icons.Default.SyncAlt, "Transfer ₹$amt", theme.accent)
-                                                            MovementNature.INFLOW -> Triple(Icons.Default.ArrowDownward, "Inflow +₹$amt (${intent.category})", theme.mildGreen)
-                                                            MovementNature.CARD_PAYMENT -> Triple(Icons.Default.CreditCard, "Card Payment ₹$amt", theme.mildGreen)
-                                                            MovementNature.PEER_LEND, MovementNature.PEER_REPAY -> Triple(Icons.Default.Person, "Peer Flow ₹$amt", theme.mildRed)
-                                                            MovementNature.PEER_COLLECT, MovementNature.PEER_BORROW -> Triple(Icons.Default.Person, "Peer Inflow +₹$amt", theme.mildGreen)
-                                                            else -> Triple(Icons.Default.ArrowUpward, "Outflow -₹$amt • ${intent.merchant}", theme.mildRed)
-                                                        }
-                                                    }
-                                                    is ParsedIntent.CreateAccount -> Triple(Icons.Default.AddCard, "Create Account '${intent.name}'", theme.accent)
-                                                    is ParsedIntent.SetDailyBurn -> Triple(Icons.Default.Speed, "Set Daily Burn to ₹${intent.newRate.toInt()}", theme.accent)
-                                                    is ParsedIntent.TriangularSettle -> Triple(Icons.Default.CompareArrows, "Settle ${intent.debtor} ➔ ${intent.creditor} (₹${(intent.amount ?: 0.0).toInt()})", theme.mildGreen)
-                                                    else -> Triple(Icons.Default.Bolt, "Recognized Command [Press Enter]", theme.accent)
-                                                }
-
-                                                HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.6f), thickness = 0.8.dp)
-                                                Row(
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .background(theme.surfaceAlt.copy(alpha = 0.35f))
-                                                        .clickable { executeQuickBarCommand(naturalLanguageInput) }
-                                                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                                ) {
-                                                    Icon(previewIcon, contentDescription = null, tint = previewColor, modifier = Modifier.size(14.dp))
-                                                    Text(previewText, color = previewColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                                                    Spacer(Modifier.weight(1f))
-                                                    Text("TAP TO COMMIT ↵", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                                                }
-                                            }
-
-                                            if (naturalLanguageInput.startsWith("/")) {
+                                            // Extreme Live Predictive As-You-Type Suggestions
+                                            if (liveSuggestions.isNotEmpty()) {
                                                 HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.6f), thickness = 0.8.dp)
                                                 LazyRow(
                                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
                                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                                 ) {
-                                                    items(slashCommands) { (cmd, example, _) ->
-                                                        Box(
+                                                    items(liveSuggestions) { suggestion ->
+                                                        Row(
                                                             modifier = Modifier
                                                                 .clip(RoundedCornerShape(6.dp))
                                                                 .background(theme.surfaceAlt)
-                                                                .clickable { naturalLanguageInput = example }
-                                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                                                .clickable { naturalLanguageInput = suggestion.template }
+                                                                .padding(horizontal = 8.dp, vertical = 5.dp),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
                                                         ) {
-                                                            Text(cmd, color = theme.accent, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                                                            Icon(suggestion.icon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(13.dp))
+                                                            Text(suggestion.title, color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                                         }
                                                     }
                                                 }
