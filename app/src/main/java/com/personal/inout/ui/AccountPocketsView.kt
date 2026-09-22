@@ -53,6 +53,12 @@ fun AccountPocketsView(
 ) {
     var selectedFilter by remember { mutableStateOf(AccountFilter.ALL) }
 
+    // Card settlement modal state
+    var cardPaymentTarget by remember { mutableStateOf<Pair<VaultPocket, Double>?>(null) }
+    var cardPaymentAmountText by remember { mutableStateOf("") }
+    var selectedCardSourcePocketId by remember { mutableStateOf<Long?>(null) }
+
+    // Peer action modal state
     var peerActionTarget by remember { mutableStateOf<Triple<VaultPocket, Double, MovementNature>?>(null) }
     var peerActionAmount by remember { mutableStateOf("") }
     var activePeerNature by remember { mutableStateOf(MovementNature.PEER_LEND) }
@@ -69,7 +75,6 @@ fun AccountPocketsView(
     val peerBalances = remember(pocketBalances) { pocketBalances.filter { it.pocketType == PocketType.PEER || it.pocketType == PocketType.COUNTERPARTY || it.subType == "PEER" } }
 
     Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-        // Sticky Top Quick-Filter Chip Row
         LazyRow(
             modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -107,11 +112,9 @@ fun AccountPocketsView(
             contentPadding = PaddingValues(bottom = 100.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // 1. Banks & Liquid Accounts (Slate Edge Indicator)
+            // 1. Bank Accounts
             if (selectedFilter == AccountFilter.ALL || selectedFilter == AccountFilter.BANKS) {
-                item {
-                    SectionHeader("Cash & Bank Accounts", bankBalances.size)
-                }
+                item { SectionHeader("Cash & Bank Accounts", bankBalances.size) }
                 items(bankBalances, key = { it.pocketId }) { summary ->
                     val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId }
                         ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = PocketType.LIQUID)
@@ -130,7 +133,7 @@ fun AccountPocketsView(
                                 Text("Liquid Account", color = Color(0xFF888888), fontSize = 10.5.sp)
                             }
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text(if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", summary.computedBalance)}", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                Text(if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", summary.computedBalance ?: 0.0)}", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                                 ActionPill(label = "Transact", bg = Color(0xFF282420), text = Color(0xFFE59C5C)) { onTransactPocket(pocket) }
                             }
                         }
@@ -138,17 +141,17 @@ fun AccountPocketsView(
                 }
             }
 
-            // 2. Goal Pots (Warm Amber Indicator, Inert Click, Long-Press Edit, Overdue Badges)
+            // 2. Goal Pots
             if (selectedFilter == AccountFilter.ALL || selectedFilter == AccountFilter.GOALS) {
                 if (goalBalances.isNotEmpty()) {
-                    item {
-                        SectionHeader("Goal Pots (Target Savings)", goalBalances.size)
-                    }
+                    item { SectionHeader("Goal Pots (Target Savings)", goalBalances.size) }
                     items(goalBalances, key = { it.pocketId }) { pot ->
                         val rawPocket = rawPockets.firstOrNull { it.id.toString() == pot.pocketId }
                             ?: VaultPocket(id = pot.pocketId.toLongOrNull() ?: 0L, name = pot.name, pocketType = PocketType.SAVING_GOAL)
-                        val progress = if (pot.targetAmount > 0) (pot.computedBalance / pot.targetAmount).toFloat().coerceIn(0f, 1f) else 0f
-                        val shortfall = (pot.targetAmount - pot.computedBalance).coerceAtLeast(0.0)
+                        val target = pot.targetAmount ?: 0.0
+                        val current = pot.computedBalance ?: 0.0
+                        val progress = if (target > 0) (current / target).toFloat().coerceIn(0f, 1f) else 0f
+                        val shortfall = (target - current).coerceAtLeast(0.0)
 
                         val targetDateStr = if (pot.targetDateEpoch > 0) {
                             SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(pot.targetDateEpoch))
@@ -175,12 +178,12 @@ fun AccountPocketsView(
                                     }
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                         Text(
-                                            if (isPrivacyMode) "••••" else "₹${String.format("%,.0f", pot.computedBalance)} / ₹${String.format("%,.0f", pot.targetAmount)}",
+                                            if (isPrivacyMode) "••••" else "₹${String.format("%,.0f", current)} / ₹${String.format("%,.0f", target)}",
                                             color = Color(0xFFE59C5C),
                                             fontSize = 12.5.sp,
                                             fontWeight = FontWeight.Bold
                                         )
-                                        IconButton(onClick = { pocketToDelete = rawPocket to pot.computedBalance }, modifier = Modifier.size(24.dp)) {
+                                        IconButton(onClick = { pocketToDelete = rawPocket to current }, modifier = Modifier.size(24.dp)) {
                                             Icon(Icons.Default.Delete, contentDescription = "Break Pot", tint = Color(0xFFE57373), modifier = Modifier.size(15.dp))
                                         }
                                     }
@@ -197,16 +200,16 @@ fun AccountPocketsView(
                 }
             }
 
-            // 3. Cards & Loans (Terracotta Warning Indicator, Dual Buttons)
+            // 3. Cards & Loans (With Contextual Payment Dialog)
             if (selectedFilter == AccountFilter.ALL || selectedFilter == AccountFilter.CARDS) {
                 if (cardBalances.isNotEmpty()) {
-                    item {
-                        SectionHeader("Cards & Credit Lines", cardBalances.size)
-                    }
+                    item { SectionHeader("Cards & Credit Lines", cardBalances.size) }
                     items(cardBalances, key = { it.pocketId }) { summary ->
                         val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId }
                             ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = summary.pocketType)
-                        val hasOutstanding = summary.computedBalance < 0.0
+                        val limit = summary.creditLimit ?: 0.0
+                        val current = summary.computedBalance ?: 0.0
+                        val hasOutstanding = current < 0.0
 
                         StructuralDeckRow(
                             indicatorColor = Color(0xFFE57373),
@@ -220,7 +223,7 @@ fun AccountPocketsView(
                                 Column {
                                     Text(summary.name, color = Color.White, fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
                                     Text(
-                                        if (isPrivacyMode) "••••" else "Avail: ₹${String.format("%,.0f", summary.creditLimit + summary.computedBalance)} / Limit: ₹${String.format("%,.0f", summary.creditLimit)}",
+                                        if (isPrivacyMode) "••••" else "Avail: ₹${String.format("%,.0f", (limit + current).coerceAtLeast(0.0))} / Limit: ₹${String.format("%,.0f", limit)}",
                                         color = Color(0xFF888888),
                                         fontSize = 10.5.sp
                                     )
@@ -228,7 +231,7 @@ fun AccountPocketsView(
 
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Text(
-                                        if (isPrivacyMode) "••••" else "₹${String.format("%,.0f", Math.abs(summary.computedBalance))}",
+                                        if (isPrivacyMode) "••••" else "₹${String.format("%,.0f", Math.abs(current))}",
                                         color = if (hasOutstanding) Color(0xFFE57373) else Color.White,
                                         fontSize = 13.5.sp,
                                         fontWeight = FontWeight.Bold
@@ -236,7 +239,9 @@ fun AccountPocketsView(
                                     ActionPill(label = "Transact", bg = Color(0xFF282420), text = Color(0xFFE59C5C)) { onTransactPocket(pocket) }
                                     if (hasOutstanding) {
                                         ActionPill(label = "Pay Bill", bg = Color(0xFF332020), text = Color(0xFFE57373)) {
-                                            if (defaultLiquidId != 0L) onRecordCardSettlement(pocket.id, defaultLiquidId, Math.abs(summary.computedBalance))
+                                            cardPaymentTarget = pocket to Math.abs(current)
+                                            cardPaymentAmountText = Math.abs(current).toInt().toString()
+                                            selectedCardSourcePocketId = defaultLiquidId
                                         }
                                     }
                                 }
@@ -246,16 +251,14 @@ fun AccountPocketsView(
                 }
             }
 
-            // 4. People (Avatar Initial Badges, Contextual Dynamic Pill)
+            // 4. People
             if (selectedFilter == AccountFilter.ALL || selectedFilter == AccountFilter.PEOPLE) {
                 if (peerBalances.isNotEmpty()) {
-                    item {
-                        SectionHeader("People (Owed & Lent)", peerBalances.size)
-                    }
+                    item { SectionHeader("People (Owed & Lent)", peerBalances.size) }
                     items(peerBalances, key = { it.pocketId }) { summary ->
                         val pocket = rawPockets.firstOrNull { it.id.toString() == summary.pocketId }
                             ?: VaultPocket(id = summary.pocketId.toLongOrNull() ?: 0L, name = summary.name, pocketType = summary.pocketType)
-                        val bal = summary.computedBalance
+                        val bal = summary.computedBalance ?: 0.0
 
                         val pillLabel = when {
                             bal > 0 -> "Collect"
@@ -335,13 +338,12 @@ fun AccountPocketsView(
                 }
             }
 
-            // 5. Recurring Rules Lifecycle (Slim Dashed-Border Ticket Stubs)
+            // 5. Recurring Rules Pipeline
             if (selectedFilter == AccountFilter.ALL || selectedFilter == AccountFilter.RULES) {
                 if (recurringSchedules.isNotEmpty()) {
-                    item {
-                        SectionHeader("Recurring Automation Pipeline", recurringSchedules.size)
-                    }
+                    item { SectionHeader("Recurring Automation Pipeline", recurringSchedules.size) }
                     items(recurringSchedules, key = { it.id }) { record ->
+                        val amt = (record.amount ?: 0.0).toInt()
                         StructuralDeckRow(
                             indicatorColor = Color(0xFFA88950),
                             onLongClick = { onEditRecurring(record) }
@@ -367,7 +369,7 @@ fun AccountPocketsView(
                                     }
                                     val freq = if (record.frequency != "NONE") record.frequency else record.recurringCadence
                                     val dateStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(record.timestamp))
-                                    Text("Repeats $freq (due $dateStr) • ₹${record.amount.toInt()}", color = Color(0xFF888888), fontSize = 10.5.sp)
+                                    Text("Repeats $freq (due $dateStr) • ₹$amt", color = Color(0xFF888888), fontSize = 10.5.sp)
                                 }
 
                                 Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -389,7 +391,79 @@ fun AccountPocketsView(
         }
     }
 
-    // Compact Contextual Peer Dual-Option Modal
+    // Contextual Modal: Pay Credit Card Bill with Partial Amount Support
+    cardPaymentTarget?.let { (card, totalDue) ->
+        AlertDialog(
+            onDismissRequest = { cardPaymentTarget = null },
+            containerColor = Color(0xFF1E1C1A),
+            title = { Text("Repay Card: ${card.name}", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Total Outstanding: ₹${totalDue.toInt()}", color = Color(0xFFE57373), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .background(Color(0xFF282420), RoundedCornerShape(6.dp))
+                                .clickable { cardPaymentAmountText = totalDue.toInt().toString() }
+                                .padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Full Due", color = Color(0xFFE59C5C), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .background(Color(0xFF282420), RoundedCornerShape(6.dp))
+                                .clickable { cardPaymentAmountText = ((totalDue * 0.2).toInt().coerceAtLeast(500)).toString() }
+                                .padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Min Due (~20%)", color = Color(0xFFCCCCCC), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    CompactInputField(value = cardPaymentAmountText, onValueChange = { cardPaymentAmountText = it }, placeholder = "Amount to Pay in ₹")
+
+                    if (liquidPockets.size > 1) {
+                        Text("Pay From Account:", color = Color(0xFF888888), fontSize = 10.5.sp)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            liquidPockets.forEach { bank ->
+                                val isSel = selectedCardSourcePocketId == bank.id
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .background(if (isSel) Color(0xFFE59C5C) else Color(0xFF282420), RoundedCornerShape(6.dp))
+                                        .clickable { selectedCardSourcePocketId = bank.id }
+                                        .padding(vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(bank.name, color = if (isSel) Color(0xFF141211) else Color(0xFFCCCCCC), fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val amt = cardPaymentAmountText.toDoubleOrNull() ?: 0.0
+                        val srcId = selectedCardSourcePocketId ?: defaultLiquidId
+                        if (amt > 0 && srcId != 0L) {
+                            onRecordCardSettlement(card.id, srcId, amt)
+                        }
+                        cardPaymentTarget = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE59C5C))
+                ) { Text("Confirm Payment", color = Color(0xFF141211), fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { cardPaymentTarget = null }) { Text("Cancel", color = Color(0xFF888888)) } }
+        )
+    }
+
+    // Contextual Peer Dual-Option Modal
     peerActionTarget?.let { (peer, bal, _) ->
         val options = when {
             bal > 0 -> listOf(MovementNature.PEER_COLLECT to "Collect", MovementNature.PEER_LEND to "Lend More")
@@ -400,7 +474,7 @@ fun AccountPocketsView(
         AlertDialog(
             onDismissRequest = { peerActionTarget = null },
             containerColor = Color(0xFF1E1C1A),
-            title = { Text("Peer Transaction: ${peer.name}", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
+            title = { Text("Peer: ${peer.name}", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -505,7 +579,7 @@ private fun StructuralDeckRow(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(IntrinsicSize.Min) // Ensures the indicator strip matches full card height
+                .height(IntrinsicSize.Min)
         ) {
             Box(
                 modifier = Modifier
