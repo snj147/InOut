@@ -109,6 +109,11 @@ fun DashboardScreen(db: AppDatabase) {
     val flowRecords by db.stateFlowDao().observeAllFlowRecords().collectAsState(initial = emptyList())
     val stagedDesires by db.stateFlowDao().observeActiveStagedDesires().collectAsState(initial = emptyList())
 
+    // Segregate actual completed transactions from future recurring automation templates
+    val completedTransactions = remember(flowRecords) {
+        flowRecords.filter { !it.isRecurring }
+    }
+
     val recurringTemplates = remember(flowRecords) {
         flowRecords.filter { it.isRecurring && it.frequency != "NONE" }
             .distinctBy { "${it.note}_${it.amount}_${it.frequency}" }
@@ -138,8 +143,8 @@ fun DashboardScreen(db: AppDatabase) {
         }.timeInMillis
     }
 
-    val spentToday = remember(flowRecords) {
-        flowRecords.filter {
+    val spentToday = remember(completedTransactions) {
+        completedTransactions.filter {
             it.timestamp >= todayStartEpoch && it.nature in listOf(
                 MovementNature.OUTFLOW,
                 MovementNature.PEER_LEND,
@@ -148,8 +153,9 @@ fun DashboardScreen(db: AppDatabase) {
         }.sumOf { it.amount ?: 0.0 }
     }
 
-    val totalInflowLifetime = remember(flowRecords) {
-        flowRecords.filter {
+    // Top Bar Metrics: Strictly evaluate completed transactions
+    val totalInflowLifetime = remember(completedTransactions) {
+        completedTransactions.filter {
             it.nature in listOf(
                 MovementNature.INFLOW,
                 MovementNature.PEER_COLLECT
@@ -157,8 +163,8 @@ fun DashboardScreen(db: AppDatabase) {
         }.sumOf { it.amount ?: 0.0 }
     }
 
-    val totalOutflowLifetime = remember(flowRecords) {
-        flowRecords.filter {
+    val totalOutflowLifetime = remember(completedTransactions) {
+        completedTransactions.filter {
             it.nature in listOf(
                 MovementNature.OUTFLOW,
                 MovementNature.PEER_LEND
@@ -221,9 +227,10 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    val groupedRecords = remember(flowRecords) {
+    // Recent Flow: Renders only completed past/present transactions
+    val groupedRecords = remember(completedTransactions) {
         val calNow = Calendar.getInstance()
-        flowRecords.take(20).groupBy { flow ->
+        completedTransactions.take(20).groupBy { flow ->
             val calRecord = Calendar.getInstance().apply { timeInMillis = flow.timestamp }
             when {
                 calNow.get(Calendar.YEAR) == calRecord.get(Calendar.YEAR) &&
@@ -514,12 +521,14 @@ fun DashboardScreen(db: AppDatabase) {
 
                     val isFutureScheduled = parsed.isRecurring && parsed.timestamp > (System.currentTimeMillis() + 60000L)
                     if (isFutureScheduled) {
+                        // EXPLICIT MOVEMENT NATURE: Prevents default fallback to OUTFLOW
                         db.stateFlowDao().insertFlowRecord(
                             FlowRecord(
                                 id = 0L,
                                 sourcePocketId = sourceId,
                                 targetPocketId = targetId,
                                 amount = parsed.amount,
+                                movementNature = parsed.nature,
                                 category = parsed.category,
                                 note = parsed.merchant,
                                 timestamp = parsed.timestamp,
@@ -530,7 +539,7 @@ fun DashboardScreen(db: AppDatabase) {
                             )
                         )
                         alertManager.showAlert(
-                            "Scheduled rule for ${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(parsed.timestamp))}",
+                            "Scheduled ${parsed.nature.name.lowercase()} rule for ${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(parsed.timestamp))}",
                             AlertType.SUCCESS
                         )
                         naturalLanguageInput = ""
@@ -560,7 +569,6 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    // NON-DESTRUCTIVE OCR PREFILL: Does not create accounts in the database during image scanning
     fun processReceiptResult(bitmap: Bitmap) {
         scope.launch {
             try {
@@ -571,7 +579,6 @@ fun DashboardScreen(db: AppDatabase) {
                 ocrPrefilledNote = parsed.merchant
                 ocrPrefilledAmount = parsed.total
                 hudInDialogError = null
-                // Non-destructive: Pick existing liquid account if one exists, otherwise leave null for HUD selection
                 selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
                 showCommandHud = true
                 alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
@@ -909,9 +916,9 @@ fun DashboardScreen(db: AppDatabase) {
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text("Recent Flow", color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        if (flowRecords.isNotEmpty()) {
+                                        if (completedTransactions.isNotEmpty()) {
                                             Text(
-                                                "View All (${flowRecords.size}) →",
+                                                "View All (${completedTransactions.size}) →",
                                                 color = theme.accent,
                                                 fontSize = 11.5.sp,
                                                 fontWeight = FontWeight.Bold,
@@ -926,7 +933,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     verticalArrangement = Arrangement.spacedBy(4.dp),
                                     contentPadding = PaddingValues(bottom = 96.dp)
                                 ) {
-                                    if (flowRecords.isEmpty()) {
+                                    if (completedTransactions.isEmpty()) {
                                         item {
                                             Box(
                                                 modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
@@ -1087,7 +1094,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords) }
                                     },
                                     onExportCsv = {
-                                        val compatList = flowRecords.map { flowRecord ->
+                                        val compatList = completedTransactions.map { flowRecord ->
                                             val sourceId = flowRecord.sourcePocketId ?: flowRecord.targetPocketId ?: 0L
                                             val isExpense = flowRecord.nature in listOf(
                                                 MovementNature.OUTFLOW,
@@ -1324,13 +1331,13 @@ fun DashboardScreen(db: AppDatabase) {
 
                 if (showAllRecordsSheet) {
                     AllTransactionsSearchSheet(
-                        flowRecords = flowRecords,
+                        flowRecords = completedTransactions,
                         isPrivacyMode = isPrivacyMode,
                         isProUser = isProUnlocked,
                         onDismiss = { showAllRecordsSheet = false },
                         onEditRecord = { flow -> editingFlowRecord = flow },
                         onExportCsv = {
-                            val compatList = flowRecords.map { flowRecord ->
+                            val compatList = completedTransactions.map { flowRecord ->
                                 val sourceId = flowRecord.sourcePocketId ?: flowRecord.targetPocketId ?: 0L
                                 val isExpense = flowRecord.nature in listOf(
                                     MovementNature.OUTFLOW,
