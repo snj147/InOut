@@ -71,7 +71,6 @@ fun DashboardScreen(db: AppDatabase) {
     val ledgerEngine = remember { VaultLedgerEngine(db.stateFlowDao(), prefs) }
 
     LaunchedEffect(Unit) {
-        activity?.let { InAppUpdateHelper.checkForUpdate(it) }
         val generated = ledgerEngine.catchUpRecurringRules()
         if (generated > 0) {
             alertManager.showAlert("Auto-recorded $generated recurring schedule(s)", AlertType.SUCCESS)
@@ -109,7 +108,6 @@ fun DashboardScreen(db: AppDatabase) {
     val flowRecords by db.stateFlowDao().observeAllFlowRecords().collectAsState(initial = emptyList())
     val stagedDesires by db.stateFlowDao().observeActiveStagedDesires().collectAsState(initial = emptyList())
 
-    // Segregate actual completed transactions from future recurring automation templates
     val completedTransactions = remember(flowRecords) {
         flowRecords.filter { !it.isRecurring }
     }
@@ -153,7 +151,6 @@ fun DashboardScreen(db: AppDatabase) {
         }.sumOf { it.amount ?: 0.0 }
     }
 
-    // Top Bar Metrics: Strictly evaluate completed transactions
     val totalInflowLifetime = remember(completedTransactions) {
         completedTransactions.filter {
             it.nature in listOf(
@@ -194,6 +191,13 @@ fun DashboardScreen(db: AppDatabase) {
     var showBurnEditDialog by remember { mutableStateOf(false) }
     var showClearLedgerConfirmation by remember { mutableStateOf(false) }
 
+    // Direct in-memory pending execution closure when user must create an account first
+    var pendingActionAfterAccountCreation by remember { mutableStateOf<((Long) -> Unit)?>(null) }
+
+    // In-App Direct OTA Update State
+    var availableUpdateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+    var isCheckingForUpdate by remember { mutableStateOf(false) }
+
     var isFabExpanded by remember { mutableStateOf(false) }
 
     val initialPage = remember { prefs.getInt("saved_carousel_page", 0).coerceIn(0, 3) }
@@ -227,7 +231,6 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    // Recent Flow: Renders only completed past/present transactions
     val groupedRecords = remember(completedTransactions) {
         val calNow = Calendar.getInstance()
         completedTransactions.take(20).groupBy { flow ->
@@ -262,19 +265,16 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    suspend fun ensureLiquidAccountExists(): Long {
-        val liquid = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }
-        if (liquid != null) return liquid.id
-
-        val newId = db.stateFlowDao().insertPocket(
-            VaultPocket(
-                name = "Cash Wallet",
-                pocketType = PocketType.LIQUID,
-                subType = "LIQUID"
-            )
-        )
-        alertManager.showAlert("Provisioned default 'Cash Wallet' account", AlertType.INFO)
-        return newId
+    // STRICT GATEKEEPER: Zero silent writes to DB. Prompts user if an account is missing.
+    fun verifyLiquidAccountOrPrompt(onAccountReady: (Long) -> Unit) {
+        val existingLiquid = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }
+        if (existingLiquid != null) {
+            onAccountReady(existingLiquid.id)
+        } else {
+            pendingActionAfterAccountCreation = onAccountReady
+            showCreatePocketDialog = true
+            alertManager.showAlert("Please create your primary bank/cash account first", AlertType.INFO)
+        }
     }
 
     fun executeQuickBarCommand(text: String) {
@@ -356,7 +356,7 @@ fun DashboardScreen(db: AppDatabase) {
                 return
             }
             lower in listOf("export csv", "/export csv") -> {
-                val compatList = flowRecords.map { flowRecord ->
+                val compatList = completedTransactions.map { flowRecord ->
                     val sourceId = flowRecord.sourcePocketId ?: flowRecord.targetPocketId ?: 0L
                     val isExpense = flowRecord.nature in listOf(
                         MovementNature.OUTFLOW,
@@ -456,112 +456,119 @@ fun DashboardScreen(db: AppDatabase) {
                     }
                 }
                 is ParsedIntent.CompoundTransactions -> {
-                    var successCount = 0
-                    for (sub in parsed.transactions) {
-                        val effectiveSrc = sub.matchedPocketId ?: ensureLiquidAccountExists()
-                        val res = ledgerEngine.recordMovement(
-                            nature = sub.nature,
-                            sourcePocketId = effectiveSrc,
-                            targetPocketId = sub.targetPocketId,
-                            amount = sub.amount,
-                            category = sub.category,
-                            note = sub.merchant,
-                            autoSplitEnabled = autoSplitEnabled
-                        )
-                        if (res is VaultExecutionResult.Success) successCount++
+                    verifyLiquidAccountOrPrompt { validLiquidId ->
+                        scope.launch {
+                            var successCount = 0
+                            for (sub in parsed.transactions) {
+                                val effectiveSrc = sub.matchedPocketId ?: validLiquidId
+                                val res = ledgerEngine.recordMovement(
+                                    nature = sub.nature,
+                                    sourcePocketId = effectiveSrc,
+                                    targetPocketId = sub.targetPocketId,
+                                    amount = sub.amount,
+                                    category = sub.category,
+                                    note = sub.merchant,
+                                    autoSplitEnabled = autoSplitEnabled
+                                )
+                                if (res is VaultExecutionResult.Success) successCount++
+                            }
+                            alertManager.showAlert("Recorded $successCount compound transactions", AlertType.SUCCESS)
+                            naturalLanguageInput = ""
+                        }
                     }
-                    alertManager.showAlert("Recorded $successCount compound transactions", AlertType.SUCCESS)
-                    naturalLanguageInput = ""
                 }
                 is ParsedIntent.Transaction -> {
-                    var sourceId: Long? = parsed.matchedPocketId
-                    var targetId: Long? = parsed.targetPocketId
+                    verifyLiquidAccountOrPrompt { validLiquidId ->
+                        scope.launch {
+                            var sourceId: Long? = parsed.matchedPocketId
+                            var targetId: Long? = parsed.targetPocketId
 
-                    if (parsed.nature == MovementNature.INFLOW) {
-                        sourceId = null
-                        targetId = parsed.targetPocketId ?: parsed.matchedPocketId ?: ensureLiquidAccountExists()
-                    }
-
-                    if (parsed.nature == MovementNature.OUTFLOW && sourceId == null) {
-                        sourceId = ensureLiquidAccountExists()
-                    }
-
-                    if (parsed.targetPersonName != null) {
-                        var personPocket = rawPockets.firstOrNull {
-                            it.pocketType == PocketType.COUNTERPARTY && it.name.equals(parsed.targetPersonName, ignoreCase = true)
-                        }
-                        if (personPocket == null) {
-                            val newId = db.stateFlowDao().insertPocket(
-                                VaultPocket(name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY, subType = "PEER")
-                            )
-                            personPocket = VaultPocket(id = newId, name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY, subType = "PEER")
-                        }
-
-                        val liquidId = sourceId ?: ensureLiquidAccountExists()
-                        when (parsed.nature) {
-                            MovementNature.PEER_LEND -> {
-                                sourceId = liquidId
-                                targetId = personPocket.id
+                            if (parsed.nature == MovementNature.INFLOW) {
+                                sourceId = null
+                                targetId = parsed.targetPocketId ?: parsed.matchedPocketId ?: validLiquidId
                             }
-                            MovementNature.PEER_COLLECT -> {
-                                sourceId = personPocket.id
-                                targetId = liquidId
-                            }
-                            MovementNature.PEER_BORROW -> {
-                                sourceId = personPocket.id
-                                targetId = liquidId
-                            }
-                            MovementNature.PEER_REPAY -> {
-                                sourceId = liquidId
-                                targetId = personPocket.id
-                            }
-                            else -> {}
-                        }
-                    }
 
-                    val isFutureScheduled = parsed.isRecurring && parsed.timestamp > (System.currentTimeMillis() + 60000L)
-                    if (isFutureScheduled) {
-                        // EXPLICIT MOVEMENT NATURE: Prevents default fallback to OUTFLOW
-                        db.stateFlowDao().insertFlowRecord(
-                            FlowRecord(
-                                id = 0L,
+                            if (parsed.nature == MovementNature.OUTFLOW && sourceId == null) {
+                                sourceId = validLiquidId
+                            }
+
+                            if (parsed.targetPersonName != null) {
+                                var personPocket = rawPockets.firstOrNull {
+                                    it.pocketType == PocketType.COUNTERPARTY && it.name.equals(parsed.targetPersonName, ignoreCase = true)
+                                }
+                                if (personPocket == null) {
+                                    val newId = db.stateFlowDao().insertPocket(
+                                        VaultPocket(name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY, subType = "PEER")
+                                    )
+                                    personPocket = VaultPocket(id = newId, name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY, subType = "PEER")
+                                }
+
+                                val liquidId = sourceId ?: validLiquidId
+                                when (parsed.nature) {
+                                    MovementNature.PEER_LEND -> {
+                                        sourceId = liquidId
+                                        targetId = personPocket.id
+                                    }
+                                    MovementNature.PEER_COLLECT -> {
+                                        sourceId = personPocket.id
+                                        targetId = liquidId
+                                    }
+                                    MovementNature.PEER_BORROW -> {
+                                        sourceId = personPocket.id
+                                        targetId = liquidId
+                                    }
+                                    MovementNature.PEER_REPAY -> {
+                                        sourceId = liquidId
+                                        targetId = personPocket.id
+                                    }
+                                    else -> {}
+                                }
+                            }
+
+                            val isFutureScheduled = parsed.isRecurring && parsed.timestamp > (System.currentTimeMillis() + 60000L)
+                            if (isFutureScheduled) {
+                                db.stateFlowDao().insertFlowRecord(
+                                    FlowRecord(
+                                        id = 0L,
+                                        sourcePocketId = sourceId,
+                                        targetPocketId = targetId,
+                                        amount = parsed.amount,
+                                        movementNature = parsed.nature,
+                                        category = parsed.category,
+                                        note = parsed.merchant,
+                                        timestamp = parsed.timestamp,
+                                        isRecurring = true,
+                                        frequency = parsed.frequency,
+                                        recurringCadence = parsed.frequency,
+                                        isPaused = false
+                                    )
+                                )
+                                alertManager.showAlert(
+                                    "Scheduled ${parsed.nature.name.lowercase()} rule for ${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(parsed.timestamp))}",
+                                    AlertType.SUCCESS
+                                )
+                                naturalLanguageInput = ""
+                                return@launch
+                            }
+
+                            when (val res = ledgerEngine.recordMovement(
+                                nature = parsed.nature,
                                 sourcePocketId = sourceId,
                                 targetPocketId = targetId,
                                 amount = parsed.amount,
-                                movementNature = parsed.nature,
                                 category = parsed.category,
                                 note = parsed.merchant,
                                 timestamp = parsed.timestamp,
-                                isRecurring = true,
-                                frequency = parsed.frequency,
-                                recurringCadence = parsed.frequency,
-                                isPaused = false
-                            )
-                        )
-                        alertManager.showAlert(
-                            "Scheduled ${parsed.nature.name.lowercase()} rule for ${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(parsed.timestamp))}",
-                            AlertType.SUCCESS
-                        )
-                        naturalLanguageInput = ""
-                        return@launch
-                    }
-
-                    when (val res = ledgerEngine.recordMovement(
-                        nature = parsed.nature,
-                        sourcePocketId = sourceId,
-                        targetPocketId = targetId,
-                        amount = parsed.amount,
-                        category = parsed.category,
-                        note = parsed.merchant,
-                        timestamp = parsed.timestamp,
-                        autoSplitEnabled = autoSplitEnabled,
-                        isRecurring = parsed.isRecurring,
-                        frequency = parsed.frequency
-                    )) {
-                        is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
-                        is VaultExecutionResult.Success -> {
-                            alertManager.showAlert(res.summary, AlertType.SUCCESS)
-                            naturalLanguageInput = ""
+                                autoSplitEnabled = autoSplitEnabled,
+                                isRecurring = parsed.isRecurring,
+                                frequency = parsed.frequency
+                            )) {
+                                is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
+                                is VaultExecutionResult.Success -> {
+                                    alertManager.showAlert(res.summary, AlertType.SUCCESS)
+                                    naturalLanguageInput = ""
+                                }
+                            }
                         }
                     }
                 }
@@ -1078,6 +1085,30 @@ fun DashboardScreen(db: AppDatabase) {
                                     phantomLockEnabled = phantomLockEnabled,
                                     activeThemeMode = activeThemeMode,
                                     isProUnlocked = isProUnlocked,
+                                    availableUpdate = availableUpdateInfo,
+                                    isCheckingUpdate = isCheckingForUpdate,
+                                    onCheckUpdate = {
+                                        scope.launch {
+                                            isCheckingForUpdate = true
+                                            val res = AppUpdateEngine.checkForUpdate(context)
+                                            isCheckingForUpdate = false
+                                            if (res.isSuccess) {
+                                                val info = res.getOrNull()
+                                                if (info != null && info.hasUpdate) {
+                                                    availableUpdateInfo = info
+                                                    alertManager.showAlert("New update available: v${info.latestVersion}", AlertType.INFO)
+                                                } else {
+                                                    alertManager.showAlert("You are on the latest build", AlertType.SUCCESS)
+                                                }
+                                            } else {
+                                                alertManager.showAlert("Update check: ${res.exceptionOrNull()?.message}", AlertType.WARNING)
+                                            }
+                                        }
+                                    },
+                                    onInstallUpdate = { info ->
+                                        AppUpdateEngine.startDownloadAndInstall(context, info.downloadUrl, info.latestVersion)
+                                        alertManager.showAlert("Downloading update v${info.latestVersion}...", AlertType.INFO)
+                                    },
                                     onAutoSplitToggled = {
                                         autoSplitEnabled = it
                                         prefs.edit().putBoolean("auto_split_debit", it).apply()
@@ -1232,30 +1263,32 @@ fun DashboardScreen(db: AppDatabase) {
                             hudInDialogError = null
                         },
                         onSubmit = { nature, srcId, tgtId, amt, cat, note, date, isRec, freq ->
-                            scope.launch {
-                                val effectiveSrc = if (nature == MovementNature.OUTFLOW && srcId == null) ensureLiquidAccountExists() else srcId
-                                val effectiveTgt = if (nature == MovementNature.INFLOW && tgtId == null) ensureLiquidAccountExists() else tgtId
+                            verifyLiquidAccountOrPrompt { validLiquidId ->
+                                scope.launch {
+                                    val effectiveSrc = if (nature == MovementNature.OUTFLOW && srcId == null) validLiquidId else srcId
+                                    val effectiveTgt = if (nature == MovementNature.INFLOW && tgtId == null) validLiquidId else tgtId
 
-                                when (val res = ledgerEngine.recordMovement(
-                                    nature = nature,
-                                    sourcePocketId = effectiveSrc,
-                                    targetPocketId = effectiveTgt,
-                                    amount = amt,
-                                    category = cat,
-                                    note = note,
-                                    timestamp = date,
-                                    autoSplitEnabled = autoSplitEnabled,
-                                    isRecurring = isRec,
-                                    frequency = freq
-                                )) {
-                                    is VaultExecutionResult.OverdraftError -> {
-                                        hudInDialogError = res.message
-                                        alertManager.showAlert(res.message, AlertType.ERROR)
-                                    }
-                                    is VaultExecutionResult.Success -> {
-                                        hudInDialogError = null
-                                        showCommandHud = false
-                                        alertManager.showAlert(res.summary, AlertType.SUCCESS)
+                                    when (val res = ledgerEngine.recordMovement(
+                                        nature = nature,
+                                        sourcePocketId = effectiveSrc,
+                                        targetPocketId = effectiveTgt,
+                                        amount = amt,
+                                        category = cat,
+                                        note = note,
+                                        timestamp = date,
+                                        autoSplitEnabled = autoSplitEnabled,
+                                        isRecurring = isRec,
+                                        frequency = freq
+                                    )) {
+                                        is VaultExecutionResult.OverdraftError -> {
+                                            hudInDialogError = res.message
+                                            alertManager.showAlert(res.message, AlertType.ERROR)
+                                        }
+                                        is VaultExecutionResult.Success -> {
+                                            hudInDialogError = null
+                                            showCommandHud = false
+                                            alertManager.showAlert(res.summary, AlertType.SUCCESS)
+                                        }
                                     }
                                 }
                             }
@@ -1370,10 +1403,13 @@ fun DashboardScreen(db: AppDatabase) {
                     CreateAccountDialog(
                         theme = theme,
                         context = context,
-                        onDismiss = { showCreatePocketDialog = false },
+                        onDismiss = {
+                            showCreatePocketDialog = false
+                            pendingActionAfterAccountCreation = null
+                        },
                         onSave = { name, type, limit, targetAmt, targetDateEpoch ->
                             scope.launch {
-                                db.stateFlowDao().insertPocket(
+                                val newId = db.stateFlowDao().insertPocket(
                                     VaultPocket(
                                         name = name,
                                         pocketType = type,
@@ -1385,6 +1421,10 @@ fun DashboardScreen(db: AppDatabase) {
                                 )
                                 showCreatePocketDialog = false
                                 alertManager.showAlert("Created account '$name'", AlertType.SUCCESS)
+
+                                // Resume queued action using the newly confirmed account ID
+                                pendingActionAfterAccountCreation?.invoke(newId)
+                                pendingActionAfterAccountCreation = null
                             }
                         }
                     )
@@ -1500,7 +1540,7 @@ private fun FlatStreamRow(
         val id = flow.targetPocketId?.takeIf { flow.nature == MovementNature.INFLOW }
             ?: flow.sourcePocketId
             ?: flow.targetPocketId
-        rawPockets.firstOrNull { it.id == id }?.name ?: "Cash Wallet"
+        rawPockets.firstOrNull { it.id == id }?.name ?: "Account"
     }
 
     Row(
@@ -1582,6 +1622,10 @@ private fun SettingsCardsList(
     phantomLockEnabled: Boolean,
     activeThemeMode: AppThemeMode,
     isProUnlocked: Boolean,
+    availableUpdate: UpdateInfo?,
+    isCheckingUpdate: Boolean,
+    onCheckUpdate: () -> Unit,
+    onInstallUpdate: (UpdateInfo) -> Unit,
     onAutoSplitToggled: (Boolean) -> Unit,
     onPhantomLockToggled: (Boolean) -> Unit,
     onThemeSelected: (AppThemeMode) -> Unit,
@@ -1597,6 +1641,57 @@ private fun SettingsCardsList(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(bottom = 96.dp)
     ) {
+        // Direct In-App OTA Updater Card
+        item {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = theme.surface),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("APPLICATION UPDATES", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+
+                    if (availableUpdate != null && availableUpdate.hasUpdate) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(theme.mildGreen.copy(alpha = 0.15f))
+                                .padding(10.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("New Version Available: v${availableUpdate.latestVersion}", color = theme.mildGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text(availableUpdate.releaseNotes, color = theme.textBright, fontSize = 10.5.sp, maxLines = 2)
+                            }
+                        }
+
+                        Button(
+                            onClick = { onInstallUpdate(availableUpdate) },
+                            colors = ButtonDefaults.buttonColors(containerColor = theme.mildGreen),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null, tint = theme.bg, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Download & Install v${availableUpdate.latestVersion}", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        Button(
+                            onClick = onCheckUpdate,
+                            enabled = !isCheckingUpdate,
+                            colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, tint = theme.textBright, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (isCheckingUpdate) "Checking GitHub Releases..." else "Check for App Update", color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        }
+
         item {
             Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
