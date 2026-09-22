@@ -8,35 +8,6 @@ import java.util.Calendar
 import java.util.Locale
 import kotlin.math.min
 
-sealed class ParsedIntent {
-    data class Transaction(
-        val nature: MovementNature,
-        val matchedPocketId: Long?,
-        val targetPocketId: Long? = null,
-        val targetPersonName: String? = null,
-        val amount: Double,
-        val category: String,
-        val merchant: String,
-        val timestamp: Long = System.currentTimeMillis(),
-        val isRecurring: Boolean = false,
-        val frequency: String = "NONE"
-    ) : ParsedIntent()
-
-    data class CompoundTransactions(val transactions: List<Transaction>) : ParsedIntent()
-    data class SetDailyBurn(val newRate: Double) : ParsedIntent()
-    data class SaveMacroAlias(val alias: String, val fullCommand: String) : ParsedIntent()
-    data class StageDesire(val name: String, val amount: Double) : ParsedIntent()
-    data class TriangularSettle(val debtor: String, val creditor: String, val amount: Double) : ParsedIntent()
-    data class BreakGoalPot(val potName: String, val destinationPocketId: Long?) : ParsedIntent()
-    data class CreateAccount(
-        val name: String,
-        val type: PocketType,
-        val limit: Double = 0.0,
-        val targetAmount: Double = 0.0,
-        val targetDateEpoch: Long = 0L
-    ) : ParsedIntent()
-}
-
 object NaturalLanguageParser {
 
     private fun levenshtein(a: String, b: String): Int {
@@ -62,11 +33,9 @@ object NaturalLanguageParser {
         val text = rawInput.trim()
         if (text.isBlank()) return null
 
-        // 1. Shorthand Alias Macros check
         val macroPrefs = context.getSharedPreferences("vault_macros", Context.MODE_PRIVATE)
         val expanded = macroPrefs.getString(text.lowercase(Locale.getDefault()), null) ?: text
 
-        // 2. Define Alias Command
         if (expanded.startsWith("alias ", ignoreCase = true)) {
             val parts = expanded.substring(6).split("=", limit = 2)
             if (parts.size == 2) {
@@ -74,14 +43,12 @@ object NaturalLanguageParser {
             }
         }
 
-        // 3. Daily Burn
         val burnRegex = Regex("""^(?:burn|budget|daily)\s+(\d+(?:\.\d+)?)$""", RegexOption.IGNORE_CASE)
         burnRegex.find(expanded)?.let {
             val amt = it.groupValues[1].toDoubleOrNull() ?: return null
             return ParsedIntent.SetDailyBurn(amt)
         }
 
-        // 4. Temptation Delay Quarantine
         val stageRegex = Regex("""^(?:desire|want|stage)\s+(.+?)\s+(\d+(?:\.\d+)?)$""", RegexOption.IGNORE_CASE)
         stageRegex.find(expanded)?.let {
             val name = it.groupValues[1].trim()
@@ -89,7 +56,6 @@ object NaturalLanguageParser {
             return ParsedIntent.StageDesire(name, amt)
         }
 
-        // 5. Triangular Debt Settlement (Explicit preposition grammar)
         val settleRegex = Regex("""^settle\s+(\w+)\s+(?:with|to)\s+(\w+)\s+(\d+(?:\.\d+)?)$""", RegexOption.IGNORE_CASE)
         settleRegex.find(expanded)?.let {
             val debtor = it.groupValues[1].trim()
@@ -98,7 +64,6 @@ object NaturalLanguageParser {
             return ParsedIntent.TriangularSettle(debtor, creditor, amt)
         }
 
-        // 6. Break Goal Pot
         val breakRegex = Regex("""^break\s+(?:pot|goal)\s+(.+?)(?:\s+(?:to|into)\s+(.+))?$""", RegexOption.IGNORE_CASE)
         breakRegex.find(expanded)?.let {
             val potName = it.groupValues[1].trim()
@@ -108,7 +73,6 @@ object NaturalLanguageParser {
             return ParsedIntent.BreakGoalPot(potName, destPocket?.id)
         }
 
-        // 7. Compound Split Commands ("and")
         if (expanded.contains(" and ", ignoreCase = true)) {
             val parts = expanded.split(Regex("""\s+and\s+""", RegexOption.IGNORE_CASE))
             val list = mutableListOf<ParsedIntent.Transaction>()
@@ -119,27 +83,20 @@ object NaturalLanguageParser {
             if (list.size >= 2) return ParsedIntent.CompoundTransactions(list)
         }
 
-        // 8. Entity-First Extraction (Amount, Accounts, Dates)
         val amountRegex = Regex("""(?:₹|rs\.?|inr)?\s*(\d+(?:\.\d+)?)(k)?""", RegexOption.IGNORE_CASE)
         val amountMatch = amountRegex.find(expanded) ?: return null
         val rawNum = amountMatch.groupValues[1].toDoubleOrNull() ?: return null
         val isK = amountMatch.groupValues[2].equals("k", ignoreCase = true)
         val amount = if (isK) rawNum * 1000.0 else rawNum
 
-        // Matched active pockets inside text
         val matchedPockets = activePockets.filter { p ->
             expanded.contains(Regex("""\b${Regex.escape(p.name)}\b""", RegexOption.IGNORE_CASE))
         }.sortedByDescending { it.name.length }
 
         val defaultLiquid = activePockets.firstOrNull { it.pocketType == PocketType.LIQUID }
-
-        // Date extraction (e.g. from 1 oct, starts 28 nov, on 5th)
         val futureTimestamp = parseExplicitDate(expanded)
-
-        // Recurring frequency extraction
         val (isRecurring, frequency) = parseFrequency(expanded)
 
-        // Case A: TWO LIQUID ACCOUNTS DETECTED -> GUARANTEED ZERO-SUM TRANSFER
         val liquidMatches = matchedPockets.filter { it.pocketType == PocketType.LIQUID }
         if (liquidMatches.size >= 2) {
             val src = liquidMatches[0]
@@ -155,7 +112,6 @@ object NaturalLanguageParser {
             )
         }
 
-        // Case B: Explicit Transfer Keywords with single or no matched account
         val tokens = expanded.split(Regex("""\s+"""))
         val transferStems = listOf("transfer", "transf", "trans", "trf", "xfer", "move", "shift", "send")
         val isTransferIntent = tokens.any { word -> transferStems.any { stem -> isFuzzyMatch(word, stem) } }
@@ -174,7 +130,6 @@ object NaturalLanguageParser {
             }
         }
 
-        // Case C: Explicit "Loan to" / "Loan from" & Peer Actions
         val lower = expanded.lowercase()
         when {
             lower.contains("loan to") || lower.contains("loaned to") || lower.contains("lent to") -> {
@@ -235,7 +190,6 @@ object NaturalLanguageParser {
             }
         }
 
-        // Case D: Credit Card Payment
         val cardMatch = matchedPockets.firstOrNull { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }
         if (cardMatch != null && (lower.contains("pay") || lower.contains("bill") || lower.contains("clear"))) {
             return ParsedIntent.Transaction(
@@ -249,7 +203,6 @@ object NaturalLanguageParser {
             )
         }
 
-        // Case E: Inflow / Income (Salary, refund, credited)
         val incomeStems = listOf("salary", "salry", "credited", "bonus", "refund", "inflow", "earned")
         val isIncome = tokens.any { word -> incomeStems.any { stem -> isFuzzyMatch(word, stem) } }
         if (isIncome) {
@@ -265,7 +218,6 @@ object NaturalLanguageParser {
             )
         }
 
-        // Case F: Standard Discretionary Outflow (Expense)
         val note = cleanMerchantNote(expanded, amountMatch.value, matchedPockets)
         val category = deduceCategory(note)
 
@@ -303,7 +255,6 @@ object NaturalLanguageParser {
         cal.set(Calendar.MINUTE, 0)
         cal.set(Calendar.SECOND, 0)
 
-        // If the date is before today, move to next year
         if (cal.timeInMillis < System.currentTimeMillis() - (24 * 3600 * 1000L)) {
             cal.set(Calendar.YEAR, currentYear + 1)
         }
