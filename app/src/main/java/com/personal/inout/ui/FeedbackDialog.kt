@@ -5,7 +5,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -18,12 +17,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.personal.inout.util.AlertManager
 import com.personal.inout.util.AlertType
 import com.personal.inout.util.TelegramFeedbackSender
 import kotlinx.coroutines.launch
@@ -31,7 +28,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun FeedbackDialog(
     theme: ThemeColors,
-    alertManager: AlertManager,
+    onShowAlert: (String, AlertType) -> Unit,
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -60,7 +57,7 @@ fun FeedbackDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Describe the issue or feedback. Attaching a screenshot is optional but helps tremendously.",
+                    text = "Describe what went wrong or suggest an improvement. Attaching a screenshot helps debug immediately.",
                     color = theme.textMuted,
                     fontSize = 11.5.sp
                 )
@@ -127,7 +124,7 @@ fun FeedbackDialog(
             Button(
                 onClick = {
                     if (message.isBlank()) {
-                        alertManager.showAlert("Please add a brief description", AlertType.WARNING)
+                        onShowAlert("Please add a brief description", AlertType.WARNING)
                         return@Button
                     }
                     scope.launch {
@@ -139,10 +136,10 @@ fun FeedbackDialog(
                         )
                         isSending = false
                         if (res.isSuccess) {
-                            alertManager.showAlert("Feedback delivered to developer! Thank you.", AlertType.SUCCESS)
+                            onShowAlert("Feedback delivered to developer! Thank you.", AlertType.SUCCESS)
                             onDismiss()
                         } else {
-                            alertManager.showAlert("Failed to send: ${res.exceptionOrNull()?.message}", AlertType.ERROR)
+                            onShowAlert("Failed to send: ${res.exceptionOrNull()?.message}", AlertType.ERROR)
                         }
                     }
                 },
