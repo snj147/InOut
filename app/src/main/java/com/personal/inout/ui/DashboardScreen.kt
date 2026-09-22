@@ -115,13 +115,17 @@ fun DashboardScreen(db: AppDatabase) {
     }
 
     val totalLiquid = remember(pocketBalances) {
-        pocketBalances.filter { it.pocketType == PocketType.LIQUID }.sumOf { it.currentBalance }.coerceAtLeast(0.0)
+        pocketBalances.filter { it.pocketType == PocketType.LIQUID }
+            .sumOf { it.currentBalance ?: 0.0 }
+            .coerceAtLeast(0.0)
     }
+
     val unpaidCardDues = remember(pocketBalances) {
         pocketBalances.filter { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }
-            .filter { it.computedBalance < 0.0 }
-            .sumOf { Math.abs(it.computedBalance) }
+            .filter { (it.computedBalance ?: 0.0) < 0.0 }
+            .sumOf { Math.abs(it.computedBalance ?: 0.0) }
     }
+
     val trueSafeLiquid = if (phantomLockEnabled) (totalLiquid - unpaidCardDues).coerceAtLeast(0.0) else totalLiquid
     val runwayDays = if (dailyBurnCeiling > 0) (trueSafeLiquid / dailyBurnCeiling).toInt() else 0
 
@@ -133,13 +137,20 @@ fun DashboardScreen(db: AppDatabase) {
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
     }
+
     val spentToday = remember(flowRecords) {
-        flowRecords.filter { it.timestamp >= todayStartEpoch && it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY) }
-            .sumOf { it.amount }
+        flowRecords.filter {
+            it.timestamp >= todayStartEpoch && it.nature in listOf(
+                MovementNature.OUTFLOW,
+                MovementNature.PEER_LEND,
+                MovementNature.PEER_REPAY
+            )
+        }.sumOf { it.amount ?: 0.0 }
     }
+
     val peerNet = remember(pocketBalances) {
         pocketBalances.filter { it.pocketType == PocketType.COUNTERPARTY || it.pocketType == PocketType.PEER || it.subType == "PEER" }
-            .sumOf { it.computedBalance }
+            .sumOf { it.computedBalance ?: 0.0 }
     }
 
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -337,18 +348,25 @@ fun DashboardScreen(db: AppDatabase) {
                 return
             }
             lower in listOf("export csv", "/export csv") -> {
-                val compatList = flowRecords.map {
+                val compatList = flowRecords.map { flowRecord ->
+                    val sourceId = flowRecord.sourcePocketId ?: flowRecord.targetPocketId ?: 0L
+                    val isExpense = flowRecord.nature in listOf(
+                        MovementNature.OUTFLOW,
+                        MovementNature.PEER_LEND,
+                        MovementNature.PEER_REPAY,
+                        MovementNature.CARD_PAYMENT
+                    )
                     Transaction(
-                        id = it.id,
-                        accountId = it.sourcePocketId ?: it.targetPocketId ?: 0L,
-                        flowType = if (it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.CARD_PAYMENT)) "OUT" else "IN",
-                        type = it.nature.name,
-                        category = it.category,
-                        amount = it.amount,
-                        timestamp = it.timestamp,
-                        note = it.note,
-                        isRecurring = it.isRecurring,
-                        frequency = it.frequency
+                        id = flowRecord.id,
+                        accountId = sourceId,
+                        flowType = if (isExpense) "OUT" else "IN",
+                        type = flowRecord.nature.name,
+                        category = flowRecord.category,
+                        amount = flowRecord.amount ?: 0.0,
+                        timestamp = flowRecord.timestamp,
+                        note = flowRecord.note,
+                        isRecurring = flowRecord.isRecurring,
+                        frequency = flowRecord.frequency
                     )
                 }
                 CsvExporter.exportAndShareTransactions(context, compatList)
@@ -510,7 +528,10 @@ fun DashboardScreen(db: AppDatabase) {
                                 isPaused = false
                             )
                         )
-                        alertManager.showAlert("Scheduled rule for ${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(parsed.timestamp))}", AlertType.SUCCESS)
+                        alertManager.showAlert(
+                            "Scheduled rule for ${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(parsed.timestamp))}",
+                            AlertType.SUCCESS
+                        )
                         naturalLanguageInput = ""
                         return@launch
                     }
@@ -597,7 +618,13 @@ fun DashboardScreen(db: AppDatabase) {
                 topBar = {
                     CleanVaultHeader(
                         totalLiquid = trueSafeLiquid,
-                        totalSpent = flowRecords.filter { it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY) }.sumOf { it.amount },
+                        totalSpent = flowRecords.filter {
+                            it.nature in listOf(
+                                MovementNature.OUTFLOW,
+                                MovementNature.PEER_LEND,
+                                MovementNature.PEER_REPAY
+                            )
+                        }.sumOf { it.amount ?: 0.0 },
                         isProUser = isProUnlocked,
                         isPrivacyMode = isPrivacyMode,
                         theme = theme,
@@ -773,10 +800,10 @@ fun DashboardScreen(db: AppDatabase) {
                                                 )
                                                 3 -> MetricCarouselCard(
                                                     tag = "PEER NET POSITION",
-                                                    status = if (peerNet >= 0) "Receivable" else "Payable",
-                                                    isPositive = peerNet >= 0,
-                                                    heroText = if (isPrivacyMode) "₹ •••" else "${if (peerNet >= 0) "+" else "-"}₹${String.format("%,.0f", Math.abs(peerNet))}",
-                                                    leftSub = if (peerNet >= 0) "You are net lender" else "You are net borrower",
+                                                    status = if (peerNet >= 0.0) "Receivable" else "Payable",
+                                                    isPositive = peerNet >= 0.0,
+                                                    heroText = if (isPrivacyMode) "₹ •••" else "${if (peerNet >= 0.0) "+" else "-"}₹${String.format("%,.0f", Math.abs(peerNet))}",
+                                                    leftSub = if (peerNet >= 0.0) "You are net lender" else "You are net borrower",
                                                     rightSub = "Across all contacts",
                                                     theme = theme,
                                                     onCardClick = {}
@@ -854,17 +881,20 @@ fun DashboardScreen(db: AppDatabase) {
 
                                             liveSuggestedIntent?.let { intent ->
                                                 val (previewIcon, previewText, previewColor) = when (intent) {
-                                                    is ParsedIntent.Transaction -> when (intent.nature) {
-                                                        MovementNature.TRANSFER -> Triple(Icons.Default.SyncAlt, "Transfer ₹${intent.amount.toInt()}", theme.accent)
-                                                        MovementNature.INFLOW -> Triple(Icons.Default.ArrowDownward, "Inflow +₹${intent.amount.toInt()} (${intent.category})", theme.mildGreen)
-                                                        MovementNature.CARD_PAYMENT -> Triple(Icons.Default.CreditCard, "Card Payment ₹${intent.amount.toInt()}", theme.mildGreen)
-                                                        MovementNature.PEER_LEND, MovementNature.PEER_REPAY -> Triple(Icons.Default.Person, "Peer Flow ₹${intent.amount.toInt()}", theme.mildRed)
-                                                        MovementNature.PEER_COLLECT, MovementNature.PEER_BORROW -> Triple(Icons.Default.Person, "Peer Inflow +₹${intent.amount.toInt()}", theme.mildGreen)
-                                                        else -> Triple(Icons.Default.ArrowUpward, "Outflow -₹${intent.amount.toInt()} • ${intent.merchant}", theme.mildRed)
+                                                    is ParsedIntent.Transaction -> {
+                                                        val amt = (intent.amount ?: 0.0).toInt()
+                                                        when (intent.nature) {
+                                                            MovementNature.TRANSFER -> Triple(Icons.Default.SyncAlt, "Transfer ₹$amt", theme.accent)
+                                                            MovementNature.INFLOW -> Triple(Icons.Default.ArrowDownward, "Inflow +₹$amt (${intent.category})", theme.mildGreen)
+                                                            MovementNature.CARD_PAYMENT -> Triple(Icons.Default.CreditCard, "Card Payment ₹$amt", theme.mildGreen)
+                                                            MovementNature.PEER_LEND, MovementNature.PEER_REPAY -> Triple(Icons.Default.Person, "Peer Flow ₹$amt", theme.mildRed)
+                                                            MovementNature.PEER_COLLECT, MovementNature.PEER_BORROW -> Triple(Icons.Default.Person, "Peer Inflow +₹$amt", theme.mildGreen)
+                                                            else -> Triple(Icons.Default.ArrowUpward, "Outflow -₹$amt • ${intent.merchant}", theme.mildRed)
+                                                        }
                                                     }
                                                     is ParsedIntent.CreateAccount -> Triple(Icons.Default.AddCard, "Create Account '${intent.name}'", theme.accent)
                                                     is ParsedIntent.SetDailyBurn -> Triple(Icons.Default.Speed, "Set Daily Burn to ₹${intent.newRate.toInt()}", theme.accent)
-                                                    is ParsedIntent.TriangularSettle -> Triple(Icons.Default.CompareArrows, "Settle ${intent.debtor} ➔ ${intent.creditor} (₹${intent.amount.toInt()})", theme.mildGreen)
+                                                    is ParsedIntent.TriangularSettle -> Triple(Icons.Default.CompareArrows, "Settle ${intent.debtor} ➔ ${intent.creditor} (₹${(intent.amount ?: 0.0).toInt()})", theme.mildGreen)
                                                     else -> Triple(Icons.Default.Bolt, "Recognized Command [Press Enter]", theme.accent)
                                                 }
 
@@ -981,8 +1011,9 @@ fun DashboardScreen(db: AppDatabase) {
                             },
                             onEditPocket = { editingPocket = it },
                             onDeletePocketSafe = { pocket, balance ->
-                                if (balance != 0.0) {
-                                    alertManager.showAlert("Cannot delete account with active balance of ₹${balance.toInt()}", AlertType.WARNING)
+                                val bal = balance ?: 0.0
+                                if (bal != 0.0) {
+                                    alertManager.showAlert("Cannot delete account with active balance of ₹${bal.toInt()}", AlertType.WARNING)
                                 } else {
                                     scope.launch {
                                         db.stateFlowDao().updatePocket(pocket.copy(isArchived = true))
@@ -1009,7 +1040,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         nature = MovementNature.CARD_PAYMENT,
                                         sourcePocketId = liquidId,
                                         targetPocketId = cardId,
-                                        amount = amt,
+                                        amount = amt ?: 0.0,
                                         category = "Bill Payment",
                                         note = "Card Dues Clearance",
                                         autoSplitEnabled = autoSplitEnabled
@@ -1026,7 +1057,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         nature = nature,
                                         sourcePocketId = src,
                                         targetPocketId = tgt,
-                                        amount = amt,
+                                        amount = amt ?: 0.0,
                                         category = "Peer Transfer",
                                         note = nature.name,
                                         autoSplitEnabled = autoSplitEnabled
@@ -1086,7 +1117,7 @@ fun DashboardScreen(db: AppDatabase) {
                                             flowType = if (isExpense) "OUT" else "IN",
                                             type = flowRecord.nature.name,
                                             category = flowRecord.category,
-                                            amount = flowRecord.amount,
+                                            amount = flowRecord.amount ?: 0.0,
                                             timestamp = flowRecord.timestamp,
                                             note = flowRecord.note,
                                             isRecurring = flowRecord.isRecurring,
@@ -1255,11 +1286,12 @@ fun DashboardScreen(db: AppDatabase) {
                 }
 
                 recordPendingDeletion?.let { flow ->
+                    val delAmt = (flow.amount ?: 0.0).toInt()
                     AlertDialog(
                         onDismissRequest = { recordPendingDeletion = null },
                         containerColor = theme.surface,
                         title = { Text("Confirm Deletion", color = Color.White) },
-                        text = { Text("Delete entry of ₹${flow.amount.toInt()} for '${flow.note.ifBlank { flow.category }}'? Balances will adjust.", color = Color(0xFFCCCCCC)) },
+                        text = { Text("Delete entry of ₹$delAmt for '${flow.note.ifBlank { flow.category }}'? Balances will adjust.", color = Color(0xFFCCCCCC)) },
                         confirmButton = {
                             Button(
                                 onClick = {
@@ -1298,7 +1330,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     flowType = if (isExpense) "OUT" else "IN",
                                     type = flowRecord.nature.name,
                                     category = flowRecord.category,
-                                    amount = flowRecord.amount,
+                                    amount = flowRecord.amount ?: 0.0,
                                     timestamp = flowRecord.timestamp,
                                     note = flowRecord.note,
                                     isRecurring = flowRecord.isRecurring,
@@ -1461,7 +1493,8 @@ private fun FlatStreamRow(
             Text("${flow.category} • $accountName", color = theme.textMuted, fontSize = 10.5.sp)
         }
 
-        val amtStr = if (isPrivacyMode) "₹ •••" else "${if (isOut) "-" else "+"}₹${String.format("%,.0f", flow.amount)}"
+        val amtVal = flow.amount ?: 0.0
+        val amtStr = if (isPrivacyMode) "₹ •••" else "${if (isOut) "-" else "+"}₹${String.format("%,.0f", amtVal)}"
         Text(amtStr, color = flowColor, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
     }
 }
@@ -1692,7 +1725,7 @@ private fun EditRecurringRuleDialog(
     onSave: (amount: Double, note: String, freq: String, timestamp: Long) -> Unit
 ) {
     var note by remember { mutableStateOf(rule.note) }
-    var amountText by remember { mutableStateOf(rule.amount.toInt().toString()) }
+    var amountText by remember { mutableStateOf((rule.amount ?: 0.0).toInt().toString()) }
     var frequency by remember { mutableStateOf(if (rule.frequency != "NONE") rule.frequency else "MONTHLY") }
     var selectedDateEpoch by remember { mutableStateOf(rule.timestamp) }
 
@@ -1763,7 +1796,7 @@ private fun EditRecurringRuleDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val amt = amountText.toDoubleOrNull() ?: rule.amount
+                    val amt = amountText.toDoubleOrNull() ?: (rule.amount ?: 0.0)
                     onSave(amt, note, frequency, selectedDateEpoch)
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
@@ -1796,7 +1829,8 @@ private fun EditTransactionDialog(
         title = { Text("Edit Entry", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Amount: ₹${record.amount.toInt()}", color = theme.textMuted, fontSize = 12.sp)
+                val amtDisplay = (record.amount ?: 0.0).toInt()
+                Text("Amount: ₹$amtDisplay", color = theme.textMuted, fontSize = 12.sp)
                 CompactInputField(value = note, onValueChange = { note = it }, placeholder = "Merchant / Note")
 
                 Text("Category", color = theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -1944,9 +1978,12 @@ private fun EditAccountDialog(
     onDismiss: () -> Unit,
     onSave: (String, Double, Double, Long) -> Unit
 ) {
+    val accLimit = account.creditLimit ?: 0.0
+    val accTarget = account.targetAmount ?: 0.0
+
     var name by remember { mutableStateOf(account.name) }
-    var limit by remember { mutableStateOf(if (account.creditLimit > 0) String.format("%.0f", account.creditLimit) else "") }
-    var targetAmt by remember { mutableStateOf(if (account.targetAmount > 0) String.format("%.0f", account.targetAmount) else "") }
+    var limit by remember { mutableStateOf(if (accLimit > 0.0) String.format("%.0f", accLimit) else "") }
+    var targetAmt by remember { mutableStateOf(if (accTarget > 0.0) String.format("%.0f", accTarget) else "") }
     var targetDateEpoch by remember { mutableStateOf(if (account.targetDateEpoch > 0) account.targetDateEpoch else System.currentTimeMillis() + (90L * 24 * 3600 * 1000L)) }
 
     val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(targetDateEpoch))
@@ -2001,8 +2038,8 @@ private fun EditAccountDialog(
                 onClick = {
                     if (name.isNotBlank()) onSave(
                         name,
-                        limit.toDoubleOrNull() ?: account.creditLimit,
-                        targetAmt.toDoubleOrNull() ?: account.targetAmount,
+                        limit.toDoubleOrNull() ?: accLimit,
+                        targetAmt.toDoubleOrNull() ?: accTarget,
                         targetDateEpoch
                     )
                 },
