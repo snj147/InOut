@@ -7,16 +7,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
-import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.UUID
 
 object TelegramFeedbackSender {
 
-    // === CONFIGURE YOUR BOT DETAILS HERE ===
-    private const val BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-    private const val CHAT_ID = "YOUR_CHAT_ID_HERE"
+    private const val BOT_TOKEN = "8717362977:AAGqxY84CsUuMnxLPC6lHu2LLtb0DivQN7M"
+    private const val CHAT_ID = "7679651355"
 
     suspend fun sendFeedback(
         context: Context,
@@ -25,10 +23,6 @@ object TelegramFeedbackSender {
         extraContext: String = ""
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            if (BOT_TOKEN.startsWith("YOUR_") || CHAT_ID.startsWith("YOUR_")) {
-                error("Telegram Bot Token or Chat ID not configured.")
-            }
-
             val appVersion = runCatching {
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName
             }.getOrDefault("1.0")
