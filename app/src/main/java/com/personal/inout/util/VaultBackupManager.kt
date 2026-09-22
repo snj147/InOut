@@ -80,7 +80,6 @@ object VaultBackupManager {
             }
 
             val plaintext = rootJson.toString().toByteArray(Charsets.UTF_8)
-
             val salt = ByteArray(SALT_LENGTH_BYTE).apply { SecureRandom().nextBytes(this) }
             val iv = ByteArray(IV_LENGTH_BYTE).apply { SecureRandom().nextBytes(this) }
 
@@ -157,7 +156,6 @@ object VaultBackupManager {
                 val f = flowsArray.getJSONObject(i)
                 val flowObj = FlowRecord(
                     id = f.optLong("id", 0L),
-                    nature = MovementNature.valueOf(f.getString("nature")),
                     sourcePocketId = if (f.isNull("sourcePocketId")) null else f.getLong("sourcePocketId"),
                     targetPocketId = if (f.isNull("targetPocketId")) null else f.getLong("targetPocketId"),
                     amount = f.getDouble("amount"),
