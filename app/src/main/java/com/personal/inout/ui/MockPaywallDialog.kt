@@ -26,9 +26,12 @@ fun MockPaywallBottomSheet(
     onSimulateRevokePro: () -> Unit
 ) {
     val theme = LocalThemeColors.current
+    // Direct full pull-up without stopping halfway
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = theme.surface,
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
         dragHandle = { BottomSheetDefaults.DragHandle(color = theme.textMuted.copy(alpha = 0.4f)) }
@@ -51,26 +54,26 @@ fun MockPaywallBottomSheet(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(38.dp)
                             .clip(CircleShape)
                             .background(theme.accent.copy(alpha = 0.2f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.WorkspacePremium, contentDescription = null, tint = theme.accent, modifier = Modifier.size(20.dp))
+                        Icon(Icons.Default.WorkspacePremium, contentDescription = null, tint = theme.accent, modifier = Modifier.size(22.dp))
                     }
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("InOut Pro", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Black)
+                            Text("InOut Pro", color = theme.textBright, fontSize = 17.sp, fontWeight = FontWeight.Black)
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(4.dp))
                                     .background(theme.accent)
-                                    .padding(horizontal = 5.dp, vertical = 1.dp)
+                                    .padding(horizontal = 6.dp, vertical = 1.dp)
                             ) {
-                                Text("LIFETIME", color = theme.bg, fontSize = 8.5.sp, fontWeight = FontWeight.ExtraBold)
+                                Text("LIFETIME", color = theme.bg, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold)
                             }
                         }
-                        Text("The High-Velocity Financial Operating System", color = theme.textMuted, fontSize = 11.sp)
+                        Text("Sovereign, High-Velocity Financial Architecture", color = theme.textMuted, fontSize = 11.sp)
                     }
                 }
 
@@ -87,32 +90,32 @@ fun MockPaywallBottomSheet(
 
             HorizontalDivider(color = theme.surfaceAlt, thickness = 0.8.dp)
 
-            // Current Core Features Checklist
-            Column(verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                ProFeatureRow(
-                    icon = Icons.Outlined.Bolt,
-                    title = "Unlimited Shorthand Macros",
-                    desc = "Bind frequent commands to custom 1-word aliases (e.g. alias chai = spent 20 chai)"
-                )
-                ProFeatureRow(
-                    icon = Icons.Outlined.Savings,
-                    title = "Overdue Goal Allocation Guards",
-                    desc = "Dynamic date-bound pacing with missed installment debt tracking"
-                )
+            // High-Value Pro Feature Showcase
+            Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
                 ProFeatureRow(
                     icon = Icons.Outlined.DocumentScanner,
-                    title = "On-Device Vision OCR & PDF Dossier",
-                    desc = "Instant camera receipt parsing + complete branded balance sheets for tax filing"
+                    title = "Spatial Geometric Receipt Vision",
+                    desc = "On-device Y-axis clustering auto-extracts merchant and totals instantly with zero cloud leakage."
                 )
                 ProFeatureRow(
-                    icon = Icons.Outlined.SyncAlt,
-                    title = "Triangular Peer Debt Matrix",
-                    desc = "Execute zero-cash triangular settlements (settle friend A with friend B directly)"
+                    icon = Icons.Outlined.Bolt,
+                    title = "Zero-Command Predictive Terminal",
+                    desc = "Natural language execution for transfers, multi-account splits, and recurring debts with real-time autocompletion."
+                )
+                ProFeatureRow(
+                    icon = Icons.Outlined.Lock,
+                    title = "Credit Card Phantom Lock",
+                    desc = "Real-time liability ringfencing that stops unbilled credit dues from masking your actual liquid runway."
+                )
+                ProFeatureRow(
+                    icon = Icons.Outlined.CallSplit,
+                    title = "Autonomous Multi-Account Liquidity Routing",
+                    desc = "Cross-account auto-split engine prevents accidental overdrafts by seamlessly cascading charges across backup accounts."
                 )
                 ProFeatureRow(
                     icon = Icons.Outlined.Shield,
-                    title = "Temptation Delay Quarantine & Auditor",
-                    desc = "Cool-off impulse capital tracking + automated subscription price creep alerts"
+                    title = "Military-Grade AES-256 Cold Backups",
+                    desc = "Export and restore encrypted .vault ledger archives directly on-device with zero cloud or third-party dependence."
                 )
             }
 
@@ -178,11 +181,12 @@ private fun ProFeatureRow(icon: androidx.compose.ui.graphics.vector.ImageVector,
     val theme = LocalThemeColors.current
     Row(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Top,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Box(
             modifier = Modifier
+                .padding(top = 2.dp)
                 .size(30.dp)
                 .clip(CircleShape)
                 .background(theme.surfaceAlt),
@@ -190,14 +194,14 @@ private fun ProFeatureRow(icon: androidx.compose.ui.graphics.vector.ImageVector,
         ) {
             Icon(icon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
         }
-        Column {
+        Column(modifier = Modifier.weight(1f)) {
             Text(title, color = theme.textBright, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
-            Text(desc, color = theme.textMuted, fontSize = 10.5.sp)
+            Text(desc, color = theme.textMuted, fontSize = 10.5.sp, lineHeight = 14.sp)
         }
     }
 }
 
-// ---------------- DEVELOPER SANDBOX BAR (Preserved for compatibility) ----------------
+// ---------------- DEVELOPER SANDBOX BAR ----------------
 
 @Composable
 fun DevSandboxTogglePill(
