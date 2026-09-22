@@ -13,7 +13,7 @@ object NaturalLanguageParser {
     private fun levenshtein(a: String, b: String): Int {
         val dp = Array(a.length + 1) { IntArray(b.length + 1) }
         for (i in 0..a.length) dp[i][0] = i
-        for (j in 0..b.length) dp[0][j] = j
+        for (j in 0..j) dp[0][j] = j
         for (i in 1..a.length) {
             for (j in 1..b.length) {
                 dp[i][j] = if (a[i - 1] == b[j - 1]) dp[i - 1][j - 1]
@@ -133,7 +133,7 @@ object NaturalLanguageParser {
         val tokens = expanded.split(Regex("""\s+"""))
         val lower = expanded.lowercase()
 
-        // STRICT INFLOW GUARD: Must intercept before any expense fall-through
+        // STRICT INFLOW GUARD
         val incomeKeywords = listOf("salary", "salry", "income", "credited", "bonus", "refund", "inflow", "earned", "dividend")
         val isExplicitIncome = tokens.any { word -> incomeKeywords.any { kw -> isFuzzyMatch(word, kw) } } ||
                 lower.startsWith("salary") || lower.startsWith("credited") || lower.startsWith("inflow")
@@ -142,7 +142,7 @@ object NaturalLanguageParser {
             val targetLiquid = matchedPockets.firstOrNull { it.pocketType == PocketType.LIQUID } ?: defaultLiquid
             return ParsedIntent.Transaction(
                 nature = MovementNature.INFLOW,
-                matchedPocketId = targetLiquid?.id, // Will be mapped to targetPocketId in DashboardScreen
+                matchedPocketId = targetLiquid?.id,
                 targetPocketId = targetLiquid?.id,
                 amount = amount,
                 category = "Salary",
@@ -295,6 +295,7 @@ object NaturalLanguageParser {
         val currentMonth = cal.get(Calendar.MONTH)
         val currentYear = cal.get(Calendar.YEAR)
 
+        val hasExplicitMonth = !monthStr.isNullOrBlank()
         val monthIndex = when (monthStr?.take(3)) {
             "jan" -> 0; "feb" -> 1; "mar" -> 2; "apr" -> 3; "may" -> 4; "jun" -> 5
             "jul" -> 6; "aug" -> 7; "sep" -> 8; "oct" -> 9; "nov" -> 10; "dec" -> 11
@@ -307,8 +308,13 @@ object NaturalLanguageParser {
         cal.set(Calendar.MINUTE, 0)
         cal.set(Calendar.SECOND, 0)
 
+        // Advance to next cycle without skipping a whole year
         if (cal.timeInMillis < System.currentTimeMillis() - (24 * 3600 * 1000L)) {
-            cal.set(Calendar.YEAR, currentYear + 1)
+            if (hasExplicitMonth) {
+                cal.set(Calendar.YEAR, currentYear + 1)
+            } else {
+                cal.add(Calendar.MONTH, 1)
+            }
         }
 
         return cal.timeInMillis
