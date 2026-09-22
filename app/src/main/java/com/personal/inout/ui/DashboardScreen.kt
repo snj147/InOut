@@ -148,7 +148,6 @@ fun DashboardScreen(db: AppDatabase) {
         }.sumOf { it.amount ?: 0.0 }
     }
 
-    // STRICT METRIC FILTERING: Excludes internal transfers and card bill payments from external outflow
     val totalInflowLifetime = remember(flowRecords) {
         flowRecords.filter {
             it.nature in listOf(
@@ -471,7 +470,6 @@ fun DashboardScreen(db: AppDatabase) {
                     var sourceId: Long? = parsed.matchedPocketId
                     var targetId: Long? = parsed.targetPocketId
 
-                    // STRICT DIRECTIONAL MAPPING
                     if (parsed.nature == MovementNature.INFLOW) {
                         sourceId = null
                         targetId = parsed.targetPocketId ?: parsed.matchedPocketId ?: ensureLiquidAccountExists()
@@ -562,6 +560,7 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
+    // NON-DESTRUCTIVE OCR PREFILL: Does not create accounts in the database during image scanning
     fun processReceiptResult(bitmap: Bitmap) {
         scope.launch {
             try {
@@ -572,7 +571,8 @@ fun DashboardScreen(db: AppDatabase) {
                 ocrPrefilledNote = parsed.merchant
                 ocrPrefilledAmount = parsed.total
                 hudInDialogError = null
-                selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id ?: ensureLiquidAccountExists()
+                // Non-destructive: Pick existing liquid account if one exists, otherwise leave null for HUD selection
+                selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
                 showCommandHud = true
                 alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
             } catch (e: Exception) {
@@ -601,7 +601,7 @@ fun DashboardScreen(db: AppDatabase) {
                     ocrPrefilledNote = parsed.merchant
                     ocrPrefilledAmount = parsed.total
                     hudInDialogError = null
-                    selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id ?: ensureLiquidAccountExists()
+                    selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
                     showCommandHud = true
                     alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
                 } catch (e: Exception) {
@@ -826,7 +826,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         }
                                     }
 
-                                    // Elevated Static Glowing Quick Bar
+                                    // Static Glow Command Bar
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
