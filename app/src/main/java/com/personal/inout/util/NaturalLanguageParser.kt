@@ -120,7 +120,7 @@ object NaturalLanguageParser {
         val isK = amountMatch.groupValues[2].equals("k", ignoreCase = true)
         val amount = if (isK) rawNum * 1000.0 else rawNum
 
-        // Match accounts ordered by occurrence in string (index-ordered, NOT length-ordered)
+        // Match accounts ordered by occurrence in string (index-ordered)
         val matchedPockets = activePockets.filter { p ->
             expanded.contains(Regex("""\b${Regex.escape(p.name)}\b""", RegexOption.IGNORE_CASE))
         }.sortedBy { p ->
@@ -130,6 +130,28 @@ object NaturalLanguageParser {
         val defaultLiquid = activePockets.firstOrNull { it.pocketType == PocketType.LIQUID }
         val futureTimestamp = parseExplicitDate(expanded)
         val (isRecurring, frequency) = parseFrequency(expanded)
+        val tokens = expanded.split(Regex("""\s+"""))
+        val lower = expanded.lowercase()
+
+        // STRICT INFLOW GUARD: Must intercept before any expense fall-through
+        val incomeKeywords = listOf("salary", "salry", "income", "credited", "bonus", "refund", "inflow", "earned", "dividend")
+        val isExplicitIncome = tokens.any { word -> incomeKeywords.any { kw -> isFuzzyMatch(word, kw) } } ||
+                lower.startsWith("salary") || lower.startsWith("credited") || lower.startsWith("inflow")
+
+        if (isExplicitIncome) {
+            val targetLiquid = matchedPockets.firstOrNull { it.pocketType == PocketType.LIQUID } ?: defaultLiquid
+            return ParsedIntent.Transaction(
+                nature = MovementNature.INFLOW,
+                matchedPocketId = targetLiquid?.id, // Will be mapped to targetPocketId in DashboardScreen
+                targetPocketId = targetLiquid?.id,
+                amount = amount,
+                category = "Salary",
+                merchant = "Income Deposit",
+                timestamp = futureTimestamp ?: System.currentTimeMillis(),
+                isRecurring = isRecurring,
+                frequency = frequency
+            )
+        }
 
         // Case A: TWO LIQUID ACCOUNTS -> POSITIONAL DIRECTIONAL TRANSFER
         val liquidMatches = matchedPockets.filter { it.pocketType == PocketType.LIQUID }
@@ -137,7 +159,6 @@ object NaturalLanguageParser {
             var src = liquidMatches[0]
             var tgt = liquidMatches[1]
 
-            // Preposition verification: if user writes "to B from A"
             val fromIndex = expanded.indexOf("from", ignoreCase = true)
             val toIndex = expanded.indexOf("to", ignoreCase = true)
             if (fromIndex != -1 && toIndex != -1 && toIndex < fromIndex) {
@@ -156,8 +177,7 @@ object NaturalLanguageParser {
             )
         }
 
-        // Case B: Explicit Transfer Keywords with Single Account
-        val tokens = expanded.split(Regex("""\s+"""))
+        // Case B: Explicit Transfer Keywords
         val transferStems = listOf("transfer", "transf", "trans", "trf", "xfer", "move", "shift", "send")
         val isTransferIntent = tokens.any { word -> transferStems.any { stem -> isFuzzyMatch(word, stem) } }
         if (isTransferIntent && liquidMatches.isNotEmpty()) {
@@ -176,7 +196,6 @@ object NaturalLanguageParser {
         }
 
         // Case C: Loan to / Loan from & Peer Actions
-        val lower = expanded.lowercase()
         when {
             lower.contains("loan to") || lower.contains("loaned to") || lower.contains("lent to") -> {
                 val peer = activePockets.firstOrNull { it.pocketType == PocketType.COUNTERPARTY && lower.contains(it.name.lowercase()) }
@@ -250,23 +269,7 @@ object NaturalLanguageParser {
             )
         }
 
-        // Case E: Inflows & Recurring Salary
-        val incomeStems = listOf("salary", "salry", "credited", "bonus", "refund", "inflow", "earned", "sip")
-        val isIncome = tokens.any { word -> incomeStems.any { stem -> isFuzzyMatch(word, stem) } }
-        if (isIncome) {
-            return ParsedIntent.Transaction(
-                nature = MovementNature.INFLOW,
-                matchedPocketId = liquidMatches.firstOrNull()?.id ?: defaultLiquid?.id,
-                amount = amount,
-                category = if (lower.contains("sip")) "Investment" else "Salary",
-                merchant = if (lower.contains("sip")) "SIP Deposit" else "Income Deposit",
-                timestamp = futureTimestamp ?: System.currentTimeMillis(),
-                isRecurring = isRecurring,
-                frequency = frequency
-            )
-        }
-
-        // Case F: Standard Discretionary Outflow
+        // Case E: Discretionary Outflow
         val note = cleanMerchantNote(expanded, amountMatch.value, matchedPockets)
         val category = deduceCategory(note)
 
