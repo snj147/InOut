@@ -17,11 +17,17 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.abs
 
+data class ReceiptItem(
+    val name: String,
+    val price: Double
+)
+
 data class ParsedReceipt(
     val merchant: String,
     val total: Double?,
     val dateEpoch: Long? = null,
-    val rawText: String
+    val lineItems: List<ReceiptItem> = emptyList(),
+    val rawText: String = ""
 )
 
 private data class SpatialElement(
@@ -85,21 +91,25 @@ object ReceiptScanner {
         }
 
         if (allElements.isEmpty()) {
-            return ParsedReceipt("General Expense", null, null, visionText.text)
+            return ParsedReceipt("General Expense", null, null, emptyList(), visionText.text)
         }
 
-        // 1. Group spatial elements into horizontal rows based on vertical proximity
+        // 1. Group spatial elements into horizontal rows based on vertical baseline
         val spatialLines = assembleSpatialLines(allElements)
 
-        // 2. Extract Grand Total using Anchor-Based Heuristics
+        // 2. Extract Grand Total
         val total = extractGrandTotal(spatialLines)
 
-        // 3. Extract Merchant from top candidate rows
+        // 3. Extract Merchant Name
         val merchant = extractMerchant(spatialLines)
+
+        // 4. Extract Line Items
+        val lineItems = extractLineItems(spatialLines)
 
         return ParsedReceipt(
             merchant = merchant,
             total = total,
+            lineItems = lineItems,
             rawText = visionText.text
         )
     }
@@ -142,8 +152,7 @@ object ReceiptScanner {
             "balance due", "total amount", "bill total", "net amount", "invoice total"
         )
         val standardAnchors = listOf("total", "due", "paid", "amount", "final")
-
-        val negativeFilter = Regex("""\b(?:\d{10,12}|[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})\b""") // Phone & GSTIN
+        val negativeFilter = Regex("""\b(?:\d{10,12}|[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1})\b""")
 
         // Pass 1: High Priority Anchors
         for (line in lines.reversed()) {
@@ -161,7 +170,7 @@ object ReceiptScanner {
             }
         }
 
-        // Pass 3: Fallback to largest currency-formatted number in lower half of receipt
+        // Pass 3: Fallback to highest valid currency number in lower half
         val lowerHalfLines = lines.takeLast((lines.size * 0.6).toInt().coerceAtLeast(1))
         val candidateAmounts = mutableListOf<Double>()
         for (line in lowerHalfLines) {
@@ -197,7 +206,7 @@ object ReceiptScanner {
 
             if (raw.length < 3) continue
             if (ignoredHeaders.any { lower.contains(it) }) continue
-            if (raw.matches(Regex("""^[\d\s\-_:./]+$"""))) continue // Skip date/time lines
+            if (raw.matches(Regex("""^[\d\s\-_:./]+$"""))) continue
 
             val cleaned = raw.replace(Regex("""[^a-zA-Z0-9\s&'-]"""), "").trim()
             if (cleaned.length >= 3) {
@@ -208,5 +217,28 @@ object ReceiptScanner {
         }
 
         return "General Expense"
+    }
+
+    private fun extractLineItems(lines: List<SpatialLine>): List<ReceiptItem> {
+        val items = mutableListOf<ReceiptItem>()
+        val skipKeywords = listOf("total", "tax", "subtotal", "gst", "cgst", "sgst", "discount", "change", "cash", "card")
+        val priceRegex = Regex("""(?:₹|rs\.?|inr)?\s*(\d{1,5}(?:[.,]\d{2})?)\s*$""", RegexOption.IGNORE_CASE)
+
+        for (line in lines) {
+            val text = line.text.trim()
+            val lower = text.lowercase()
+
+            if (skipKeywords.any { lower.contains(it) }) continue
+
+            val match = priceRegex.find(text) ?: continue
+            val price = match.groupValues[1].replace(",", ".").toDoubleOrNull() ?: continue
+            val name = text.substring(0, match.range.first).trim().replace(Regex("""[^a-zA-Z0-9\s]"""), "")
+
+            if (name.length >= 2 && price > 0.0) {
+                items.add(ReceiptItem(name = name, price = price))
+            }
+        }
+
+        return items
     }
 }
