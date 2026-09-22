@@ -183,7 +183,7 @@ fun DashboardScreen(db: AppDatabase) {
         "new bank SBI",
         "new card Axis limit 50000",
         "coffee 120 cash",
-        "transf 2000 sbi to idfc",
+        "transf 2000 from sbi to idfc",
         "type / for commands"
     )
     var currentHintIndex by remember { mutableIntStateOf(0) }
@@ -197,7 +197,7 @@ fun DashboardScreen(db: AppDatabase) {
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
 
-    // Extreme Live Predictive Suggester: active directly as user types
+    // Live Predictive As-You-Type Suggestions: Evaluates with or without slash
     val liveSuggestions by remember(naturalLanguageInput, rawPockets) {
         derivedStateOf {
             QuickBarSuggester.evaluate(naturalLanguageInput, rawPockets)
@@ -813,7 +813,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         }
                                     }
 
-                                    // Elevated Static Glowing Quick Bar
+                                    // Static Glow Command Bar with As-You-Type Suggester
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -864,7 +864,7 @@ fun DashboardScreen(db: AppDatabase) {
                                                 }
                                             }
 
-                                            // Extreme Live Predictive As-You-Type Suggestions
+                                            // Real-Time Action Suggester: Appears actively as you type
                                             if (liveSuggestions.isNotEmpty()) {
                                                 HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.6f), thickness = 0.8.dp)
                                                 LazyRow(
@@ -1034,60 +1034,82 @@ fun DashboardScreen(db: AppDatabase) {
                         )
 
                         3 -> {
-                            SettingsScreenContent(
-                                theme = theme,
-                                autoSplitEnabled = autoSplitEnabled,
-                                phantomLockEnabled = phantomLockEnabled,
-                                activeThemeMode = activeThemeMode,
-                                isProUnlocked = isProUnlocked,
-                                onAutoSplitToggled = {
-                                    autoSplitEnabled = it
-                                    prefs.edit().putBoolean("auto_split_debit", it).apply()
-                                },
-                                onPhantomLockToggled = {
-                                    phantomLockEnabled = it
-                                    prefs.edit().putBoolean("phantom_lock_enabled", it).apply()
-                                },
-                                onThemeSelected = { mode ->
-                                    activeThemeMode = mode
-                                    prefs.edit().putString("selected_theme", mode.name).apply()
-                                },
-                                onExportPdf = {
-                                    scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords) }
-                                },
-                                onExportCsv = {
-                                    val compatList = flowRecords.map { flowRecord ->
-                                        val sourceId = flowRecord.sourcePocketId ?: flowRecord.targetPocketId ?: 0L
-                                        val isExpense = flowRecord.nature in listOf(
-                                            MovementNature.OUTFLOW,
-                                            MovementNature.PEER_LEND,
-                                            MovementNature.PEER_REPAY,
-                                            MovementNature.CARD_PAYMENT
-                                        )
-                                        Transaction(
-                                            id = flowRecord.id,
-                                            accountId = sourceId,
-                                            flowType = if (isExpense) "OUT" else "IN",
-                                            type = flowRecord.nature.name,
-                                            category = flowRecord.category,
-                                            amount = flowRecord.amount ?: 0.0,
-                                            timestamp = flowRecord.timestamp,
-                                            note = flowRecord.note,
-                                            isRecurring = flowRecord.isRecurring,
-                                            frequency = flowRecord.frequency
-                                        )
-                                    }
-                                    CsvExporter.exportAndShareTransactions(context, compatList)
-                                },
-                                onExportEncryptedBackup = {
-                                    backupExportLauncher.launch("inout_vault_backup_${System.currentTimeMillis()}.vault")
-                                },
-                                onRestoreEncryptedBackup = {
-                                    backupRestoreLauncher.launch(arrayOf("application/octet-stream", "*/*"))
-                                },
-                                onClearLedger = { showClearLedgerConfirmation = true },
-                                onOpenPaywall = { showMockPaywall = true }
-                            )
+                            // Pinned Stationary Settings Layout
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 16.dp)
+                            ) {
+                                // Pinned Header
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 16.dp, bottom = 12.dp)
+                                ) {
+                                    Text(
+                                        text = "Settings & Vault Controls",
+                                        color = theme.textBright,
+                                        fontSize = 17.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                // Scrollable Content Underneath
+                                SettingsCardsList(
+                                    theme = theme,
+                                    autoSplitEnabled = autoSplitEnabled,
+                                    phantomLockEnabled = phantomLockEnabled,
+                                    activeThemeMode = activeThemeMode,
+                                    isProUnlocked = isProUnlocked,
+                                    onAutoSplitToggled = {
+                                        autoSplitEnabled = it
+                                        prefs.edit().putBoolean("auto_split_debit", it).apply()
+                                    },
+                                    onPhantomLockToggled = {
+                                        phantomLockEnabled = it
+                                        prefs.edit().putBoolean("phantom_lock_enabled", it).apply()
+                                    },
+                                    onThemeSelected = { mode ->
+                                        activeThemeMode = mode
+                                        prefs.edit().putString("selected_theme", mode.name).apply()
+                                    },
+                                    onExportPdf = {
+                                        scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords) }
+                                    },
+                                    onExportCsv = {
+                                        val compatList = flowRecords.map { flowRecord ->
+                                            val sourceId = flowRecord.sourcePocketId ?: flowRecord.targetPocketId ?: 0L
+                                            val isExpense = flowRecord.nature in listOf(
+                                                MovementNature.OUTFLOW,
+                                                MovementNature.PEER_LEND,
+                                                MovementNature.PEER_REPAY,
+                                                MovementNature.CARD_PAYMENT
+                                            )
+                                            Transaction(
+                                                id = flowRecord.id,
+                                                accountId = sourceId,
+                                                flowType = if (isExpense) "OUT" else "IN",
+                                                type = flowRecord.nature.name,
+                                                category = flowRecord.category,
+                                                amount = flowRecord.amount ?: 0.0,
+                                                timestamp = flowRecord.timestamp,
+                                                note = flowRecord.note,
+                                                isRecurring = flowRecord.isRecurring,
+                                                frequency = flowRecord.frequency
+                                            )
+                                        }
+                                        CsvExporter.exportAndShareTransactions(context, compatList)
+                                    },
+                                    onExportEncryptedBackup = {
+                                        backupExportLauncher.launch("inout_vault_backup_${System.currentTimeMillis()}.vault")
+                                    },
+                                    onRestoreEncryptedBackup = {
+                                        backupRestoreLauncher.launch(arrayOf("application/octet-stream", "*/*"))
+                                    },
+                                    onClearLedger = { showClearLedgerConfirmation = true },
+                                    onOpenPaywall = { showMockPaywall = true }
+                                )
+                            }
                         }
                     }
                 }
@@ -1505,8 +1527,9 @@ private fun CleanVaultHeader(
     }
 }
 
+// Dedicated Scrollable Settings Content (Stationary Header is handled above)
 @Composable
-private fun SettingsScreenContent(
+private fun SettingsCardsList(
     theme: ThemeColors,
     autoSplitEnabled: Boolean,
     phantomLockEnabled: Boolean,
@@ -1523,14 +1546,10 @@ private fun SettingsScreenContent(
     onOpenPaywall: () -> Unit
 ) {
     LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(14.dp),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 96.dp)
+        contentPadding = PaddingValues(bottom = 96.dp)
     ) {
-        item {
-            Text("Settings & Vault Controls", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        }
-
         item {
             Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
