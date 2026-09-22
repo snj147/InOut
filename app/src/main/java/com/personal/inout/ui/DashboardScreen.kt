@@ -23,6 +23,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -167,14 +168,13 @@ fun DashboardScreen(db: AppDatabase) {
     }
 
     var naturalLanguageInput by remember { mutableStateOf("") }
-    // Clean Natural Examples (No bracketed placeholders)
     val placeholderHints = listOf(
         "coffee 120 cash",
         "transf 2000 sbi to idfc",
         "collected 1500 rahul sbi",
         "pay 8000 axis card from sbi",
         "salary 45000 idfc monthly from 1 oct",
-        "burn 600 (update daily burn)"
+        "type / for commands"
     )
     var currentHintIndex by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
@@ -186,6 +186,29 @@ fun DashboardScreen(db: AppDatabase) {
 
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
+
+    // Live suggestion evaluation as user types
+    val liveSuggestedIntent by remember(naturalLanguageInput, rawPockets) {
+        derivedStateOf {
+            val text = naturalLanguageInput.trim()
+            if (text.length >= 2 && !text.startsWith("/")) {
+                NaturalLanguageParser.parse(text, rawPockets, context)
+            } else null
+        }
+    }
+
+    val slashCommands = remember {
+        listOf(
+            Triple("/transfer", "transf 2000 sbi to idfc", "Internal Account Transfer"),
+            Triple("/autosplit", "autosplit toggle", "Toggle Overdraft Auto-Cover"),
+            Triple("/phantom", "phantom lock toggle", "Toggle Card Phantom Lock"),
+            Triple("/theme", "theme amber", "Switch Color Palette"),
+            Triple("/export", "export pdf", "Generate Dossier / CSV"),
+            Triple("/backup", "backup now", "Trigger Encrypted Backup"),
+            Triple("/goal", "new goal Car 300k by Dec", "Provision Target Goal Pot"),
+            Triple("/burn", "burn 500", "Update Daily Spend Target")
+        )
+    }
 
     val groupedRecords = remember(flowRecords) {
         val calNow = Calendar.getInstance()
@@ -201,59 +224,152 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    fun processReceiptResult(bitmap: Bitmap) {
-        scope.launch {
-            try {
-                val useCloud = prefs.getBoolean("use_cloud_vision", false)
-                val cloudKey = prefs.getString("cloud_vision_api_key", "") ?: ""
-                val parsed = ReceiptScanner.processReceiptBitmap(bitmap, useCloud, cloudKey)
-
-                ocrPrefilledNote = parsed.merchant
-                ocrPrefilledAmount = parsed.total
-                hudInDialogError = null
-                selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
-                showCommandHud = true
-                alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
-            } catch (e: Exception) {
-                alertManager.showAlert("Receipt OCR Error: ${e.localizedMessage}", AlertType.ERROR)
-            }
-        }
-    }
-
-    val cameraSnapLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap: Bitmap? ->
-        if (bitmap != null) processReceiptResult(bitmap)
-    }
-
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) cameraSnapLauncher.launch(null)
-        else alertManager.showAlert("Camera permission needed for receipt scanning", AlertType.WARNING)
-    }
-
-    val photoPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
+    // Encrypted Backup File Launchers
+    val backupExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
         if (uri != null) {
             scope.launch {
-                try {
-                    val useCloud = prefs.getBoolean("use_cloud_vision", false)
-                    val cloudKey = prefs.getString("cloud_vision_api_key", "") ?: ""
-                    val parsed = ReceiptScanner.processReceipt(context, uri, useCloud, cloudKey)
-
-                    ocrPrefilledNote = parsed.merchant
-                    ocrPrefilledAmount = parsed.total
-                    hudInDialogError = null
-                    selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
-                    showCommandHud = true
-                    alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
-                } catch (e: Exception) {
-                    alertManager.showAlert("Receipt Parse Error: ${e.localizedMessage}", AlertType.ERROR)
-                }
+                val res = VaultBackupManager.exportEncryptedBackup(context, db, uri, "INOUT_LEDGER_MASTER_KEY")
+                if (res.isSuccess) alertManager.showAlert("Encrypted backup saved (.vault)", AlertType.SUCCESS)
+                else alertManager.showAlert("Export failed: ${res.exceptionOrNull()?.message}", AlertType.ERROR)
             }
         }
+    }
+
+    val backupRestoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val res = VaultBackupManager.restoreEncryptedBackup(context, db, uri, "INOUT_LEDGER_MASTER_KEY")
+                if (res.isSuccess) alertManager.showAlert("Restored ${res.getOrNull()} records successfully", AlertType.SUCCESS)
+                else alertManager.showAlert("Restore failed: ${res.exceptionOrNull()?.message}", AlertType.ERROR)
+            }
+        }
+    }
+
+    // Auto-Provision liquid account if database has zero accounts
+    suspend fun ensureLiquidAccountExists(): Long {
+        val liquid = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }
+        if (liquid != null) return liquid.id
+
+        val newId = db.stateFlowDao().insertPocket(
+            VaultPocket(
+                name = "Cash Wallet",
+                pocketType = PocketType.LIQUID,
+                subType = "LIQUID"
+            )
+        )
+        alertManager.showAlert("Provisioned default 'Cash Wallet' account", AlertType.INFO)
+        return newId
     }
 
     fun executeQuickBarCommand(text: String) {
-        val parsed = NaturalLanguageParser.parse(text, rawPockets, context)
+        val trimmed = text.trim()
+        if (trimmed.isBlank()) return
+
+        // 1. Direct System Commands via Quick Bar
+        val lower = trimmed.lowercase()
+        when {
+            lower in listOf("autosplit on", "enable autosplit", "autosplit 1") -> {
+                autoSplitEnabled = true
+                prefs.edit().putBoolean("auto_split_debit", true).apply()
+                alertManager.showAlert("Cross-Account Auto-Split: ENABLED", AlertType.SUCCESS)
+                naturalLanguageInput = ""
+                return
+            }
+            lower in listOf("autosplit off", "disable autosplit", "autosplit 0") -> {
+                autoSplitEnabled = false
+                prefs.edit().putBoolean("auto_split_debit", false).apply()
+                alertManager.showAlert("Cross-Account Auto-Split: DISABLED", AlertType.INFO)
+                naturalLanguageInput = ""
+                return
+            }
+            lower in listOf("autosplit toggle", "/autosplit") -> {
+                autoSplitEnabled = !autoSplitEnabled
+                prefs.edit().putBoolean("auto_split_debit", autoSplitEnabled).apply()
+                alertManager.showAlert("Auto-Split: ${if (autoSplitEnabled) "ENABLED" else "DISABLED"}", AlertType.SUCCESS)
+                naturalLanguageInput = ""
+                return
+            }
+            lower in listOf("phantom lock on", "phantom on", "lock cc on") -> {
+                phantomLockEnabled = true
+                prefs.edit().putBoolean("phantom_lock_enabled", true).apply()
+                alertManager.showAlert("Credit Card Phantom Lock: ACTIVE", AlertType.SUCCESS)
+                naturalLanguageInput = ""
+                return
+            }
+            lower in listOf("phantom lock off", "phantom off") -> {
+                phantomLockEnabled = false
+                prefs.edit().putBoolean("phantom_lock_enabled", false).apply()
+                alertManager.showAlert("Credit Card Phantom Lock: OFF", AlertType.INFO)
+                naturalLanguageInput = ""
+                return
+            }
+            lower in listOf("phantom lock toggle", "/phantom") -> {
+                phantomLockEnabled = !phantomLockEnabled
+                prefs.edit().putBoolean("phantom_lock_enabled", phantomLockEnabled).apply()
+                alertManager.showAlert("Phantom Lock: ${if (phantomLockEnabled) "ACTIVE" else "OFF"}", AlertType.SUCCESS)
+                naturalLanguageInput = ""
+                return
+            }
+            lower in listOf("privacy on", "hide balances", "mask") -> {
+                isPrivacyMode = true
+                alertManager.showAlert("Privacy Mode: Masked", AlertType.INFO)
+                naturalLanguageInput = ""
+                return
+            }
+            lower in listOf("privacy off", "show balances", "unmask") -> {
+                isPrivacyMode = false
+                alertManager.showAlert("Privacy Mode: Visible", AlertType.INFO)
+                naturalLanguageInput = ""
+                return
+            }
+            lower.startsWith("theme ") -> {
+                val themeName = lower.removePrefix("theme ").trim()
+                val targetMode = when {
+                    themeName.contains("olive") || themeName.contains("matcha") -> AppThemeMode.OLIVE_MATCHA
+                    themeName.contains("nordic") || themeName.contains("slate") -> AppThemeMode.NORDIC_SLATE
+                    else -> AppThemeMode.AMBER_OCHRE
+                }
+                activeThemeMode = targetMode
+                prefs.edit().putString("selected_theme", targetMode.name).apply()
+                alertManager.showAlert("Applied theme: ${targetMode.name.replace("_", " ")}", AlertType.SUCCESS)
+                naturalLanguageInput = ""
+                return
+            }
+            lower in listOf("export pdf", "/export pdf") -> {
+                scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords) }
+                naturalLanguageInput = ""
+                return
+            }
+            lower in listOf("export csv", "/export csv") -> {
+                val compatList = flowRecords.map {
+                    Transaction(
+                        id = it.id,
+                        accountId = it.sourcePocketId ?: it.targetPocketId ?: 0L,
+                        flowType = if (it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.CARD_PAYMENT)) "OUT" else "IN",
+                        type = it.nature.name,
+                        category = it.category,
+                        amount = it.amount,
+                        timestamp = it.timestamp,
+                        note = it.note,
+                        isRecurring = it.isRecurring,
+                        frequency = it.frequency
+                    )
+                }
+                CsvExporter.exportAndShareTransactions(context, compatList)
+                naturalLanguageInput = ""
+                return
+            }
+            lower in listOf("backup now", "/backup") -> {
+                backupExportLauncher.launch("inout_vault_backup_${System.currentTimeMillis()}.vault")
+                naturalLanguageInput = ""
+                return
+            }
+        }
+
+        // 2. Financial Ledger Parsing
+        val parsed = NaturalLanguageParser.parse(trimmed, rawPockets, context)
         if (parsed == null) {
-            alertManager.showAlert("Syntax not recognized.", AlertType.WARNING)
+            alertManager.showAlert("Syntax not recognized. Type / for suggestions.", AlertType.WARNING)
             return
         }
 
@@ -300,7 +416,7 @@ fun DashboardScreen(db: AppDatabase) {
                             )
                         }
                         db.stateFlowDao().updatePocket(goal.copy(isArchived = true))
-                        alertManager.showAlert("Pot '${goal.name}' broken. ₹${bal.toInt()} returned.", AlertType.SUCCESS)
+                        alertManager.showAlert("Pot '${goal.name}' broken. Returned ₹${bal.toInt()}", AlertType.SUCCESS)
                         naturalLanguageInput = ""
                     }
                 }
@@ -315,15 +431,16 @@ fun DashboardScreen(db: AppDatabase) {
                             targetDateEpoch = parsed.targetDateEpoch
                         )
                     )
-                    alertManager.showAlert("Created '${parsed.name}'", AlertType.SUCCESS)
+                    alertManager.showAlert("Created account '${parsed.name}'", AlertType.SUCCESS)
                     naturalLanguageInput = ""
                 }
                 is ParsedIntent.CompoundTransactions -> {
                     var successCount = 0
                     for (sub in parsed.transactions) {
+                        val effectiveSrc = sub.matchedPocketId ?: ensureLiquidAccountExists()
                         val res = ledgerEngine.recordMovement(
                             nature = sub.nature,
-                            sourcePocketId = sub.matchedPocketId,
+                            sourcePocketId = effectiveSrc,
                             targetPocketId = sub.targetPocketId,
                             amount = sub.amount,
                             category = sub.category,
@@ -339,9 +456,15 @@ fun DashboardScreen(db: AppDatabase) {
                     var sourceId: Long? = parsed.matchedPocketId
                     var targetId: Long? = parsed.targetPocketId
 
+                    // Prevent Orphaned Inflow: Guarantee target bank account exists
                     if (parsed.nature == MovementNature.INFLOW) {
                         sourceId = null
-                        targetId = parsed.matchedPocketId
+                        targetId = parsed.matchedPocketId ?: ensureLiquidAccountExists()
+                    }
+
+                    // Prevent Orphaned Outflow: Guarantee source bank account exists
+                    if (parsed.nature == MovementNature.OUTFLOW && sourceId == null) {
+                        sourceId = ensureLiquidAccountExists()
                     }
 
                     if (parsed.targetPersonName != null) {
@@ -355,25 +478,48 @@ fun DashboardScreen(db: AppDatabase) {
                             personPocket = VaultPocket(id = newId, name = parsed.targetPersonName, pocketType = PocketType.COUNTERPARTY, subType = "PEER")
                         }
 
+                        val liquidId = sourceId ?: ensureLiquidAccountExists()
                         when (parsed.nature) {
                             MovementNature.PEER_LEND -> {
-                                sourceId = parsed.matchedPocketId
+                                sourceId = liquidId
                                 targetId = personPocket.id
                             }
                             MovementNature.PEER_COLLECT -> {
                                 sourceId = personPocket.id
-                                targetId = parsed.matchedPocketId
+                                targetId = liquidId
                             }
                             MovementNature.PEER_BORROW -> {
                                 sourceId = personPocket.id
-                                targetId = parsed.matchedPocketId
+                                targetId = liquidId
                             }
                             MovementNature.PEER_REPAY -> {
-                                sourceId = parsed.matchedPocketId
+                                sourceId = liquidId
                                 targetId = personPocket.id
                             }
                             else -> {}
                         }
+                    }
+
+                    // Future recurring schedule check
+                    val isFutureScheduled = parsed.isRecurring && parsed.timestamp > (System.currentTimeMillis() + 60000L)
+                    if (isFutureScheduled) {
+                        db.stateFlowDao().insertFlowRecord(
+                            FlowRecord(
+                                nature = parsed.nature,
+                                sourcePocketId = sourceId,
+                                targetPocketId = targetId,
+                                amount = parsed.amount,
+                                category = parsed.category,
+                                note = parsed.merchant,
+                                timestamp = parsed.timestamp,
+                                isRecurring = true,
+                                frequency = parsed.frequency,
+                                recurringCadence = parsed.frequency
+                            )
+                        )
+                        alertManager.showAlert("Scheduled rule for ${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(parsed.timestamp))}", AlertType.SUCCESS)
+                        naturalLanguageInput = ""
+                        return@launch
                     }
 
                     when (val res = ledgerEngine.recordMovement(
@@ -399,23 +545,51 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    // Encrypted Backup File Launchers
-    val backupExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
-        if (uri != null) {
-            scope.launch {
-                val res = VaultBackupManager.exportEncryptedBackup(context, db, uri, "INOUT_LEDGER_MASTER_KEY")
-                if (res.isSuccess) alertManager.showAlert("Encrypted backup saved successfully (.vault)", AlertType.SUCCESS)
-                else alertManager.showAlert("Backup export failed: ${res.exceptionOrNull()?.message}", AlertType.ERROR)
+    fun processReceiptResult(bitmap: Bitmap) {
+        scope.launch {
+            try {
+                val useCloud = prefs.getBoolean("use_cloud_vision", false)
+                val cloudKey = prefs.getString("cloud_vision_api_key", "") ?: ""
+                val parsed = ReceiptScanner.processReceiptBitmap(bitmap, useCloud, cloudKey)
+
+                ocrPrefilledNote = parsed.merchant
+                ocrPrefilledAmount = parsed.total
+                hudInDialogError = null
+                selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id ?: ensureLiquidAccountExists()
+                showCommandHud = true
+                alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
+            } catch (e: Exception) {
+                alertManager.showAlert("Receipt OCR Error: ${e.localizedMessage}", AlertType.ERROR)
             }
         }
     }
 
-    val backupRestoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+    val cameraSnapLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap: Bitmap? ->
+        if (bitmap != null) processReceiptResult(bitmap)
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) cameraSnapLauncher.launch(null)
+        else alertManager.showAlert("Camera permission needed for receipt scanning", AlertType.WARNING)
+    }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
         if (uri != null) {
             scope.launch {
-                val res = VaultBackupManager.restoreEncryptedBackup(context, db, uri, "INOUT_LEDGER_MASTER_KEY")
-                if (res.isSuccess) alertManager.showAlert("Restored ${res.getOrNull()} transactions successfully", AlertType.SUCCESS)
-                else alertManager.showAlert("Restore failed: ${res.exceptionOrNull()?.message}", AlertType.ERROR)
+                try {
+                    val useCloud = prefs.getBoolean("use_cloud_vision", false)
+                    val cloudKey = prefs.getString("cloud_vision_api_key", "") ?: ""
+                    val parsed = ReceiptScanner.processReceipt(context, uri, useCloud, cloudKey)
+
+                    ocrPrefilledNote = parsed.merchant
+                    ocrPrefilledAmount = parsed.total
+                    hudInDialogError = null
+                    selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id ?: ensureLiquidAccountExists()
+                    showCommandHud = true
+                    alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
+                } catch (e: Exception) {
+                    alertManager.showAlert("Receipt Parse Error: ${e.localizedMessage}", AlertType.ERROR)
+                }
             }
         }
     }
@@ -476,7 +650,7 @@ fun DashboardScreen(db: AppDatabase) {
                             label = "fabRotation"
                         )
 
-                        // 3-Action Speed Dial Stack with High-Contrast Text Labels
+                        // 3-Action Speed Dial Stack: Pure elevated amber surfaces, no text labels
                         Column(
                             horizontalAlignment = Alignment.End,
                             verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -488,96 +662,54 @@ fun DashboardScreen(db: AppDatabase) {
                                 exit = fadeOut() + slideOutVertically { it / 2 }
                             ) {
                                 Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                    // 1. Manual Form Entry Action
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    // 1. Manual Form Entry
+                                    FloatingActionButton(
+                                        onClick = {
+                                            isFabExpanded = false
+                                            ocrPrefilledNote = ""
+                                            ocrPrefilledAmount = null
+                                            hudInDialogError = null
+                                            selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
+                                            showCommandHud = true
+                                        },
+                                        modifier = Modifier.size(46.dp),
+                                        containerColor = theme.accent,
+                                        contentColor = theme.bg,
+                                        shape = CircleShape
                                     ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(6.dp))
-                                                .background(theme.surface)
-                                                .border(1.dp, theme.accent.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
-                                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                                        ) {
-                                            Text("Manual Entry", color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                        FloatingActionButton(
-                                            onClick = {
-                                                isFabExpanded = false
-                                                ocrPrefilledNote = ""
-                                                ocrPrefilledAmount = null
-                                                hudInDialogError = null
-                                                selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
-                                                showCommandHud = true
-                                            },
-                                            modifier = Modifier.size(46.dp),
-                                            containerColor = theme.surface,
-                                            contentColor = theme.accent,
-                                            shape = CircleShape
-                                        ) {
-                                            Icon(Icons.Default.EditNote, contentDescription = "Manual Entry", modifier = Modifier.size(20.dp))
-                                        }
+                                        Icon(Icons.Default.EditNote, contentDescription = "Manual Entry", modifier = Modifier.size(22.dp))
                                     }
 
-                                    // 2. Camera Receipt Scan Action
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    // 2. Camera Receipt OCR
+                                    FloatingActionButton(
+                                        onClick = {
+                                            isFabExpanded = false
+                                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                                                cameraSnapLauncher.launch(null)
+                                            } else {
+                                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                            }
+                                        },
+                                        modifier = Modifier.size(46.dp),
+                                        containerColor = theme.accent,
+                                        contentColor = theme.bg,
+                                        shape = CircleShape
                                     ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(6.dp))
-                                                .background(theme.surface)
-                                                .border(1.dp, theme.accent.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
-                                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                                        ) {
-                                            Text("Scan Receipt", color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                        FloatingActionButton(
-                                            onClick = {
-                                                isFabExpanded = false
-                                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                                                    cameraSnapLauncher.launch(null)
-                                                } else {
-                                                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                                                }
-                                            },
-                                            modifier = Modifier.size(46.dp),
-                                            containerColor = theme.surface,
-                                            contentColor = theme.accent,
-                                            shape = CircleShape
-                                        ) {
-                                            Icon(Icons.Default.PhotoCamera, contentDescription = "Camera OCR", modifier = Modifier.size(18.dp))
-                                        }
+                                        Icon(Icons.Default.PhotoCamera, contentDescription = "Camera OCR", modifier = Modifier.size(20.dp))
                                     }
 
-                                    // 3. Gallery Bill Scan Action
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    // 3. Gallery Receipt OCR
+                                    FloatingActionButton(
+                                        onClick = {
+                                            isFabExpanded = false
+                                            photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                        },
+                                        modifier = Modifier.size(46.dp),
+                                        containerColor = theme.accent,
+                                        contentColor = theme.bg,
+                                        shape = CircleShape
                                     ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(6.dp))
-                                                .background(theme.surface)
-                                                .border(1.dp, theme.accent.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
-                                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                                        ) {
-                                            Text("From Gallery", color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                        }
-                                        FloatingActionButton(
-                                            onClick = {
-                                                isFabExpanded = false
-                                                photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                                            },
-                                            modifier = Modifier.size(46.dp),
-                                            containerColor = theme.surface,
-                                            contentColor = theme.accent,
-                                            shape = CircleShape
-                                        ) {
-                                            Icon(Icons.Default.Image, contentDescription = "Gallery OCR", modifier = Modifier.size(18.dp))
-                                        }
+                                        Icon(Icons.Default.Image, contentDescription = "Gallery OCR", modifier = Modifier.size(20.dp))
                                     }
                                 }
                             }
@@ -607,14 +739,13 @@ fun DashboardScreen(db: AppDatabase) {
                 Box(modifier = Modifier.fillMaxSize().padding(padding).background(theme.bg)) {
                     when (selectedTab) {
                         0 -> {
-                            // Vault Home: Pinned Control Deck + Scrollable Flow Stream
                             Column(
                                 modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)
                             ) {
-                                // Pinned Control Deck
+                                // Pinned Top Deck: 4-Card Carousel + Glowing Quick Bar + Live HUD + Flow Header
                                 Column(
-                                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                                    modifier = Modifier.padding(top = 8.dp, bottom = 8.dp)
+                                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                                    modifier = Modifier.padding(top = 8.dp, bottom = 6.dp)
                                 ) {
                                     // 1. Swipable 4-Card Hero Carousel
                                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -693,49 +824,106 @@ fun DashboardScreen(db: AppDatabase) {
                                             .background(theme.surface)
                                             .border(1.5.dp, theme.accent.copy(alpha = 0.85f), RoundedCornerShape(14.dp))
                                     ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Box(
-                                                modifier = Modifier.clip(CircleShape).background(theme.accent.copy(alpha = 0.2f)).padding(6.dp),
-                                                contentAlignment = Alignment.Center
+                                        Column {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+                                                verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Icon(Icons.Default.Bolt, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
-                                            }
+                                                Box(
+                                                    modifier = Modifier.clip(CircleShape).background(theme.accent.copy(alpha = 0.2f)).padding(6.dp),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(Icons.Default.Bolt, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
+                                                }
 
-                                            Spacer(Modifier.width(10.dp))
+                                                Spacer(Modifier.width(10.dp))
 
-                                            Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                                                if (naturalLanguageInput.isEmpty()) {
-                                                    Text(
-                                                        text = placeholderHints[currentHintIndex],
-                                                        color = theme.textMuted.copy(alpha = 0.7f),
-                                                        fontSize = 12.5.sp,
-                                                        maxLines = 1
+                                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                                    if (naturalLanguageInput.isEmpty()) {
+                                                        Text(
+                                                            text = placeholderHints[currentHintIndex],
+                                                            color = theme.textMuted.copy(alpha = 0.7f),
+                                                            fontSize = 12.5.sp,
+                                                            maxLines = 1
+                                                        )
+                                                    }
+                                                    BasicTextField(
+                                                        value = naturalLanguageInput,
+                                                        onValueChange = { naturalLanguageInput = it },
+                                                        singleLine = true,
+                                                        textStyle = TextStyle(color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+                                                        cursorBrush = SolidColor(theme.accent),
+                                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                                        keyboardActions = KeyboardActions(onDone = { executeQuickBarCommand(naturalLanguageInput) }),
+                                                        modifier = Modifier.fillMaxWidth()
                                                     )
                                                 }
-                                                BasicTextField(
-                                                    value = naturalLanguageInput,
-                                                    onValueChange = { naturalLanguageInput = it },
-                                                    singleLine = true,
-                                                    textStyle = TextStyle(color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Medium),
-                                                    cursorBrush = SolidColor(theme.accent),
-                                                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                                    keyboardActions = KeyboardActions(onDone = { executeQuickBarCommand(naturalLanguageInput) }),
-                                                    modifier = Modifier.fillMaxWidth()
-                                                )
+
+                                                if (naturalLanguageInput.isNotBlank()) {
+                                                    IconButton(onClick = { executeQuickBarCommand(naturalLanguageInput) }) {
+                                                        Icon(Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
+                                                    }
+                                                }
                                             }
 
-                                            if (naturalLanguageInput.isNotBlank()) {
-                                                IconButton(onClick = { executeQuickBarCommand(naturalLanguageInput) }) {
-                                                    Icon(Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
+                                            // 3. Live As-You-Type Preview HUD Chip
+                                            liveSuggestedIntent?.let { intent ->
+                                                val (previewIcon, previewText, previewColor) = when (intent) {
+                                                    is ParsedIntent.Transaction -> when (intent.nature) {
+                                                        MovementNature.TRANSFER -> Triple(Icons.Default.SyncAlt, "Transfer ₹${intent.amount.toInt()}", theme.accent)
+                                                        MovementNature.INFLOW -> Triple(Icons.Default.ArrowDownward, "Inflow +₹${intent.amount.toInt()} (${intent.category})", theme.mildGreen)
+                                                        MovementNature.CARD_PAYMENT -> Triple(Icons.Default.CreditCard, "Card Payment ₹${intent.amount.toInt()}", theme.mildGreen)
+                                                        MovementNature.PEER_LEND, MovementNature.PEER_REPAY -> Triple(Icons.Default.Person, "Peer Flow ₹${intent.amount.toInt()}", theme.mildRed)
+                                                        MovementNature.PEER_COLLECT, MovementNature.PEER_BORROW -> Triple(Icons.Default.Person, "Peer Inflow +₹${intent.amount.toInt()}", theme.mildGreen)
+                                                        else -> Triple(Icons.Default.ArrowUpward, "Outflow -₹${intent.amount.toInt()} • ${intent.merchant}", theme.mildRed)
+                                                    }
+                                                    is ParsedIntent.CreateAccount -> Triple(Icons.Default.AddCard, "Create Account '${intent.name}'", theme.accent)
+                                                    is ParsedIntent.SetDailyBurn -> Triple(Icons.Default.Speed, "Set Daily Burn to ₹${intent.newRate.toInt()}", theme.accent)
+                                                    is ParsedIntent.TriangularSettle -> Triple(Icons.Default.CompareArrows, "Settle ${intent.debtor} ➔ ${intent.creditor} (₹${intent.amount.toInt()})", theme.mildGreen)
+                                                    else -> Triple(Icons.Default.Bolt, "Recognized Command [Press Enter]", theme.accent)
+                                                }
+
+                                                HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.6f), thickness = 0.8.dp)
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .background(theme.surfaceAlt.copy(alpha = 0.35f))
+                                                        .clickable { executeQuickBarCommand(naturalLanguageInput) }
+                                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                                ) {
+                                                    Icon(previewIcon, contentDescription = null, tint = previewColor, modifier = Modifier.size(14.dp))
+                                                    Text(previewText, color = previewColor, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                                    Spacer(Modifier.weight(1f))
+                                                    Text("TAP TO COMMIT ↵", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+
+                                            // 4. Interactive Slash (/) Command Palette
+                                            if (naturalLanguageInput.startsWith("/")) {
+                                                HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.6f), thickness = 0.8.dp)
+                                                LazyRow(
+                                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    items(slashCommands) { (cmd, example, _) ->
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .clip(RoundedCornerShape(6.dp))
+                                                                .background(theme.surfaceAlt)
+                                                                .clickable { naturalLanguageInput = example }
+                                                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                                        ) {
+                                                            Text(cmd, color = theme.accent, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
                                     }
 
-                                    // Pinned Header Bar: Recent Flow + View All
+                                    // Pinned Sub-Header Bar: Recent Flow + View All
                                     Row(
                                         modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -1005,10 +1193,13 @@ fun DashboardScreen(db: AppDatabase) {
                         },
                         onSubmit = { nature, srcId, tgtId, amt, cat, note, date, isRec, freq ->
                             scope.launch {
+                                val effectiveSrc = if (nature == MovementNature.OUTFLOW && srcId == null) ensureLiquidAccountExists() else srcId
+                                val effectiveTgt = if (nature == MovementNature.INFLOW && tgtId == null) ensureLiquidAccountExists() else tgtId
+
                                 when (val res = ledgerEngine.recordMovement(
                                     nature = nature,
-                                    sourcePocketId = srcId,
-                                    targetPocketId = tgtId,
+                                    sourcePocketId = effectiveSrc,
+                                    targetPocketId = effectiveTgt,
                                     amount = amt,
                                     category = cat,
                                     note = note,
@@ -1259,7 +1450,7 @@ private fun FlatStreamRow(
 
     val accountName = remember(flow, rawPockets) {
         val id = flow.sourcePocketId ?: flow.targetPocketId
-        rawPockets.firstOrNull { it.id == id }?.name ?: "Vault"
+        rawPockets.firstOrNull { it.id == id }?.name ?: "Cash Wallet"
     }
 
     Row(
