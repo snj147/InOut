@@ -13,7 +13,7 @@ object NaturalLanguageParser {
     private fun levenshtein(a: String, b: String): Int {
         val dp = Array(a.length + 1) { IntArray(b.length + 1) }
         for (i in 0..a.length) dp[i][0] = i
-        for (j in 0..j) dp[0][j] = j
+        for (j in 0..b.length) dp[0][j] = j
         for (i in 1..a.length) {
             for (j in 1..b.length) {
                 dp[i][j] = if (a[i - 1] == b[j - 1]) dp[i - 1][j - 1]
@@ -308,7 +308,6 @@ object NaturalLanguageParser {
         cal.set(Calendar.MINUTE, 0)
         cal.set(Calendar.SECOND, 0)
 
-        // Advance to next cycle without skipping a whole year
         if (cal.timeInMillis < System.currentTimeMillis() - (24 * 3600 * 1000L)) {
             if (hasExplicitMonth) {
                 cal.set(Calendar.YEAR, currentYear + 1)
