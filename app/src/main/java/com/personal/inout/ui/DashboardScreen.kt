@@ -493,7 +493,6 @@ fun DashboardScreen(db: AppDatabase) {
                         }
                     }
 
-                    // Future recurring rule template creation without premature ledger movement
                     val isFutureScheduled = parsed.isRecurring && parsed.timestamp > (System.currentTimeMillis() + 60000L)
                     if (isFutureScheduled) {
                         db.stateFlowDao().insertFlowRecord(
@@ -1073,18 +1072,25 @@ fun DashboardScreen(db: AppDatabase) {
                                     scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords) }
                                 },
                                 onExportCsv = {
-                                    val compatList = flowRecords.map {
+                                    val compatList = flowRecords.map { flowRecord ->
+                                        val sourceId = flowRecord.sourcePocketId ?: flowRecord.targetPocketId ?: 0L
+                                        val isExpense = flowRecord.nature in listOf(
+                                            MovementNature.OUTFLOW,
+                                            MovementNature.PEER_LEND,
+                                            MovementNature.PEER_REPAY,
+                                            MovementNature.CARD_PAYMENT
+                                        )
                                         Transaction(
-                                            id = it.id,
-                                            accountId = it.sourcePocketId ?: it.targetPocketId ?: 0L,
-                                            flowType = if (it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.CARD_PAYMENT)) "OUT" else "IN",
-                                            type = it.nature.name,
-                                            category = it.category,
-                                            amount = it.amount,
-                                            timestamp = it.timestamp,
-                                            note = it.note,
-                                            isRecurring = it.isRecurring,
-                                            frequency = it.frequency
+                                            id = flowRecord.id,
+                                            accountId = sourceId,
+                                            flowType = if (isExpense) "OUT" else "IN",
+                                            type = flowRecord.nature.name,
+                                            category = flowRecord.category,
+                                            amount = flowRecord.amount,
+                                            timestamp = flowRecord.timestamp,
+                                            note = flowRecord.note,
+                                            isRecurring = flowRecord.isRecurring,
+                                            frequency = flowRecord.frequency
                                         )
                                     }
                                     CsvExporter.exportAndShareTransactions(context, compatList)
@@ -1278,18 +1284,25 @@ fun DashboardScreen(db: AppDatabase) {
                         onDismiss = { showAllRecordsSheet = false },
                         onEditRecord = { flow -> editingFlowRecord = flow },
                         onExportCsv = {
-                            val compatList = flowRecords.map {
+                            val compatList = flowRecords.map { flowRecord ->
+                                val sourceId = flowRecord.sourcePocketId ?: flowRecord.targetPocketId ?: 0L
+                                val isExpense = flowRecord.nature in listOf(
+                                    MovementNature.OUTFLOW,
+                                    MovementNature.PEER_LEND,
+                                    MovementNature.PEER_REPAY,
+                                    MovementNature.CARD_PAYMENT
+                                )
                                 Transaction(
-                                    id = it.id,
-                                    accountId = it.sourcePocketId ?: it.targetPocketId ?: 0L,
-                                    flowType = if (it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.CARD_PAYMENT)) "OUT" else "IN",
-                                    type = it.nature.name,
-                                    category = it.category,
-                                    amount = it.amount,
-                                    timestamp = it.timestamp,
-                                    note = it.note,
-                                    isRecurring = it.isRecurring,
-                                    frequency = it.frequency
+                                    id = flowRecord.id,
+                                    accountId = sourceId,
+                                    flowType = if (isExpense) "OUT" else "IN",
+                                    type = flowRecord.nature.name,
+                                    category = flowRecord.category,
+                                    amount = flowRecord.amount,
+                                    timestamp = flowRecord.timestamp,
+                                    note = flowRecord.note,
+                                    isRecurring = flowRecord.isRecurring,
+                                    frequency = flowRecord.frequency
                                 )
                             }
                             CsvExporter.exportAndShareTransactions(context, compatList)
