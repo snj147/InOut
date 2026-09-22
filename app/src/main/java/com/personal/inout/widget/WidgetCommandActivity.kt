@@ -32,10 +32,8 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import com.personal.inout.data.AppDatabase
-import com.personal.inout.data.MovementNature
-import com.personal.inout.data.PocketType
-import com.personal.inout.data.VaultPocket
+import com.personal.inout.data.*
+import com.personal.inout.ui.*
 import com.personal.inout.util.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -430,6 +428,12 @@ class WidgetCommandActivity : ComponentActivity() {
                         )
                         withContext(Dispatchers.Main) {
                             onComplete("Created account '${parsed.name}'", null)
+                        }
+                    }
+
+                    else -> {
+                        withContext(Dispatchers.Main) {
+                            onComplete("Command processed", null)
                         }
                     }
                 }
