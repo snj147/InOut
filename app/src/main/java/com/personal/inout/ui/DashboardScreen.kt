@@ -148,13 +148,12 @@ fun DashboardScreen(db: AppDatabase) {
         }.sumOf { it.amount ?: 0.0 }
     }
 
-    // Accurate Historical Flow Accounting
+    // STRICT METRIC FILTERING: Excludes internal transfers and card bill payments from external outflow
     val totalInflowLifetime = remember(flowRecords) {
         flowRecords.filter {
             it.nature in listOf(
                 MovementNature.INFLOW,
-                MovementNature.PEER_COLLECT,
-                MovementNature.PEER_BORROW
+                MovementNature.PEER_COLLECT
             )
         }.sumOf { it.amount ?: 0.0 }
     }
@@ -163,9 +162,7 @@ fun DashboardScreen(db: AppDatabase) {
         flowRecords.filter {
             it.nature in listOf(
                 MovementNature.OUTFLOW,
-                MovementNature.PEER_LEND,
-                MovementNature.PEER_REPAY,
-                MovementNature.CARD_PAYMENT
+                MovementNature.PEER_LEND
             )
         }.sumOf { it.amount ?: 0.0 }
     }
@@ -202,11 +199,11 @@ fun DashboardScreen(db: AppDatabase) {
 
     var naturalLanguageInput by remember { mutableStateOf("") }
     val placeholderHints = listOf(
+        "salary 50000 sbi",
         "new bank SBI",
         "new card Axis limit 50000",
-        "coffee 120 cash",
         "transf 2000 from sbi to idfc",
-        "type / for commands"
+        "coffee 120 cash"
     )
     var currentHintIndex by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
@@ -474,9 +471,10 @@ fun DashboardScreen(db: AppDatabase) {
                     var sourceId: Long? = parsed.matchedPocketId
                     var targetId: Long? = parsed.targetPocketId
 
+                    // STRICT DIRECTIONAL MAPPING
                     if (parsed.nature == MovementNature.INFLOW) {
                         sourceId = null
-                        targetId = parsed.matchedPocketId ?: ensureLiquidAccountExists()
+                        targetId = parsed.targetPocketId ?: parsed.matchedPocketId ?: ensureLiquidAccountExists()
                     }
 
                     if (parsed.nature == MovementNature.OUTFLOW && sourceId == null) {
@@ -828,7 +826,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         }
                                     }
 
-                                    // Static Glow Command Bar with As-You-Type Suggester
+                                    // Elevated Static Glowing Quick Bar
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -1049,7 +1047,6 @@ fun DashboardScreen(db: AppDatabase) {
                         )
 
                         3 -> {
-                            // Pinned Stationary Settings Layout
                             Column(
                                 modifier = Modifier
                                     .fillMaxSize()
@@ -1165,7 +1162,6 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
 
-                // Security PIN / Verification Challenge before Vault Purge
                 if (showClearLedgerConfirmation) {
                     var verificationInput by remember { mutableStateOf("") }
                     AlertDialog(
@@ -1494,7 +1490,9 @@ private fun FlatStreamRow(
     val flowColor = if (isOut) theme.mildRed else theme.mildGreen
 
     val accountName = remember(flow, rawPockets) {
-        val id = flow.sourcePocketId ?: flow.targetPocketId
+        val id = flow.targetPocketId?.takeIf { flow.nature == MovementNature.INFLOW }
+            ?: flow.sourcePocketId
+            ?: flow.targetPocketId
         rawPockets.firstOrNull { it.id == id }?.name ?: "Cash Wallet"
     }
 
