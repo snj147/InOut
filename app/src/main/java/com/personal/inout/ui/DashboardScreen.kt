@@ -191,14 +191,11 @@ fun DashboardScreen(db: AppDatabase) {
     var showBurnEditDialog by remember { mutableStateOf(false) }
     var showClearLedgerConfirmation by remember { mutableStateOf(false) }
 
-    // Direct in-memory pending execution closure when user must create an account first
     var pendingActionAfterAccountCreation by remember { mutableStateOf<((Long) -> Unit)?>(null) }
 
-    // In-App Direct OTA Update State
     var availableUpdateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var isCheckingForUpdate by remember { mutableStateOf(false) }
 
-    // In-App Feedback Bottom Sheet State
     var showFeedbackDialog by remember { mutableStateOf(false) }
 
     var isFabExpanded by remember { mutableStateOf(false) }
@@ -268,7 +265,7 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    // STRICT GATEKEEPER: Zero silent writes to DB. Prompts user if an account is missing.
+    // STRICT GATEKEEPER: Zero silent account creation.
     fun verifyLiquidAccountOrPrompt(onAccountReady: (Long) -> Unit) {
         val existingLiquid = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }
         if (existingLiquid != null) {
@@ -1178,7 +1175,7 @@ fun DashboardScreen(db: AppDatabase) {
                 if (showFeedbackDialog) {
                     FeedbackDialog(
                         theme = theme,
-                        alertManager = alertManager,
+                        onShowAlert = { msg, type -> alertManager.showAlert(msg, type) },
                         onDismiss = { showFeedbackDialog = false }
                     )
                 }
@@ -1434,7 +1431,6 @@ fun DashboardScreen(db: AppDatabase) {
                                 showCreatePocketDialog = false
                                 alertManager.showAlert("Created account '$name'", AlertType.SUCCESS)
 
-                                // Resume queued action using the newly confirmed account ID
                                 pendingActionAfterAccountCreation?.invoke(newId)
                                 pendingActionAfterAccountCreation = null
                             }
@@ -1654,7 +1650,6 @@ private fun SettingsCardsList(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(bottom = 96.dp)
     ) {
-        // Direct In-App OTA Updater & Feedback Card
         item {
             Card(
                 shape = RoundedCornerShape(14.dp),
@@ -1702,7 +1697,6 @@ private fun SettingsCardsList(
                         }
                     }
 
-                    // Direct Telegram Feedback Button
                     OutlinedButton(
                         onClick = onOpenFeedback,
                         shape = RoundedCornerShape(8.dp),
