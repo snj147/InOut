@@ -198,6 +198,9 @@ fun DashboardScreen(db: AppDatabase) {
     var availableUpdateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var isCheckingForUpdate by remember { mutableStateOf(false) }
 
+    // In-App Feedback Bottom Sheet State
+    var showFeedbackDialog by remember { mutableStateOf(false) }
+
     var isFabExpanded by remember { mutableStateOf(false) }
 
     val initialPage = remember { prefs.getInt("saved_carousel_page", 0).coerceIn(0, 3) }
@@ -1109,6 +1112,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         AppUpdateEngine.startDownloadAndInstall(context, info.downloadUrl, info.latestVersion)
                                         alertManager.showAlert("Downloading update v${info.latestVersion}...", AlertType.INFO)
                                     },
+                                    onOpenFeedback = { showFeedbackDialog = true },
                                     onAutoSplitToggled = {
                                         autoSplitEnabled = it
                                         prefs.edit().putBoolean("auto_split_debit", it).apply()
@@ -1168,6 +1172,14 @@ fun DashboardScreen(db: AppDatabase) {
                             .fillMaxSize()
                             .background(Color.Black.copy(alpha = 0.35f))
                             .clickable { isFabExpanded = false }
+                    )
+                }
+
+                if (showFeedbackDialog) {
+                    FeedbackDialog(
+                        theme = theme,
+                        alertManager = alertManager,
+                        onDismiss = { showFeedbackDialog = false }
                     )
                 }
 
@@ -1626,6 +1638,7 @@ private fun SettingsCardsList(
     isCheckingUpdate: Boolean,
     onCheckUpdate: () -> Unit,
     onInstallUpdate: (UpdateInfo) -> Unit,
+    onOpenFeedback: () -> Unit,
     onAutoSplitToggled: (Boolean) -> Unit,
     onPhantomLockToggled: (Boolean) -> Unit,
     onThemeSelected: (AppThemeMode) -> Unit,
@@ -1641,7 +1654,7 @@ private fun SettingsCardsList(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(bottom = 96.dp)
     ) {
-        // Direct In-App OTA Updater Card
+        // Direct In-App OTA Updater & Feedback Card
         item {
             Card(
                 shape = RoundedCornerShape(14.dp),
@@ -1649,7 +1662,7 @@ private fun SettingsCardsList(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("APPLICATION UPDATES", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Text("APPLICATION UPDATES & SUPPORT", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
 
                     if (availableUpdate != null && availableUpdate.hasUpdate) {
                         Box(
@@ -1687,6 +1700,18 @@ private fun SettingsCardsList(
                             Spacer(Modifier.width(6.dp))
                             Text(if (isCheckingUpdate) "Checking GitHub Releases..." else "Check for App Update", color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
+                    }
+
+                    // Direct Telegram Feedback Button
+                    OutlinedButton(
+                        onClick = onOpenFeedback,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent)
+                    ) {
+                        Icon(Icons.Default.BugReport, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Send Feedback / Report Bug", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
