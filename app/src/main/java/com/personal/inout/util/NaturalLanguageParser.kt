@@ -36,7 +36,7 @@ object NaturalLanguageParser {
         val macroPrefs = context.getSharedPreferences("vault_macros", Context.MODE_PRIVATE)
         val expanded = macroPrefs.getString(text.lowercase(Locale.getDefault()), null) ?: text
 
-        // 1. Create Accounts / Goal Pots / Peer Counterparties directly from Quick Bar
+        // 1. Account / Card / Goal / Peer Provisioning
         val createBankRegex = Regex("""^(?:new|create|add)\s+bank\s+(.+)$""", RegexOption.IGNORE_CASE)
         createBankRegex.find(expanded)?.let {
             val name = it.groupValues[1].trim()
@@ -120,19 +120,31 @@ object NaturalLanguageParser {
         val isK = amountMatch.groupValues[2].equals("k", ignoreCase = true)
         val amount = if (isK) rawNum * 1000.0 else rawNum
 
+        // Match accounts ordered by occurrence in string (index-ordered, NOT length-ordered)
         val matchedPockets = activePockets.filter { p ->
             expanded.contains(Regex("""\b${Regex.escape(p.name)}\b""", RegexOption.IGNORE_CASE))
-        }.sortedByDescending { it.name.length }
+        }.sortedBy { p ->
+            expanded.indexOf(p.name, ignoreCase = true)
+        }
 
         val defaultLiquid = activePockets.firstOrNull { it.pocketType == PocketType.LIQUID }
         val futureTimestamp = parseExplicitDate(expanded)
         val (isRecurring, frequency) = parseFrequency(expanded)
 
-        // Case A: TWO LIQUID ACCOUNTS DETECTED -> INTERNAL ZERO-SUM TRANSFER
+        // Case A: TWO LIQUID ACCOUNTS -> POSITIONAL DIRECTIONAL TRANSFER
         val liquidMatches = matchedPockets.filter { it.pocketType == PocketType.LIQUID }
         if (liquidMatches.size >= 2) {
-            val src = liquidMatches[0]
-            val tgt = liquidMatches[1]
+            var src = liquidMatches[0]
+            var tgt = liquidMatches[1]
+
+            // Preposition verification: if user writes "to B from A"
+            val fromIndex = expanded.indexOf("from", ignoreCase = true)
+            val toIndex = expanded.indexOf("to", ignoreCase = true)
+            if (fromIndex != -1 && toIndex != -1 && toIndex < fromIndex) {
+                src = liquidMatches[1]
+                tgt = liquidMatches[0]
+            }
+
             return ParsedIntent.Transaction(
                 nature = MovementNature.TRANSFER,
                 matchedPocketId = src.id,
@@ -144,7 +156,7 @@ object NaturalLanguageParser {
             )
         }
 
-        // Case B: Explicit Transfer Stems
+        // Case B: Explicit Transfer Keywords with Single Account
         val tokens = expanded.split(Regex("""\s+"""))
         val transferStems = listOf("transfer", "transf", "trans", "trf", "xfer", "move", "shift", "send")
         val isTransferIntent = tokens.any { word -> transferStems.any { stem -> isFuzzyMatch(word, stem) } }
@@ -238,23 +250,23 @@ object NaturalLanguageParser {
             )
         }
 
-        // Case E: Inflows & Salary
-        val incomeStems = listOf("salary", "salry", "credited", "bonus", "refund", "inflow", "earned")
+        // Case E: Inflows & Recurring Salary
+        val incomeStems = listOf("salary", "salry", "credited", "bonus", "refund", "inflow", "earned", "sip")
         val isIncome = tokens.any { word -> incomeStems.any { stem -> isFuzzyMatch(word, stem) } }
         if (isIncome) {
             return ParsedIntent.Transaction(
                 nature = MovementNature.INFLOW,
                 matchedPocketId = liquidMatches.firstOrNull()?.id ?: defaultLiquid?.id,
                 amount = amount,
-                category = "Salary",
-                merchant = "Income Deposit",
+                category = if (lower.contains("sip")) "Investment" else "Salary",
+                merchant = if (lower.contains("sip")) "SIP Deposit" else "Income Deposit",
                 timestamp = futureTimestamp ?: System.currentTimeMillis(),
                 isRecurring = isRecurring,
                 frequency = frequency
             )
         }
 
-        // Case F: Standard Outflow
+        // Case F: Standard Discretionary Outflow
         val note = cleanMerchantNote(expanded, amountMatch.value, matchedPockets)
         val category = deduceCategory(note)
 
@@ -271,7 +283,7 @@ object NaturalLanguageParser {
     }
 
     private fun parseExplicitDate(input: String): Long? {
-        val dateRegex = Regex("""(?:from|starts|starting|on)\s+(\d{1,2})(?:st|nd|rd|th)?\s+([a-zA-Z]+)?""", RegexOption.IGNORE_CASE)
+        val dateRegex = Regex("""(?:from|starts|starting|on|by|due)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s+([a-zA-Z]+))?""", RegexOption.IGNORE_CASE)
         val match = dateRegex.find(input) ?: return null
         val day = match.groupValues[1].toIntOrNull() ?: return null
         val monthStr = match.groupValues.getOrNull(2)?.lowercase(Locale.getDefault())
@@ -302,9 +314,9 @@ object NaturalLanguageParser {
     private fun parseFrequency(input: String): Pair<Boolean, String> {
         val lower = input.lowercase()
         return when {
-            lower.contains("daily") -> true to "DAILY"
-            lower.contains("weekly") -> true to "WEEKLY"
-            lower.contains("monthly") -> true to "MONTHLY"
+            lower.contains("daily") || lower.contains("every day") -> true to "DAILY"
+            lower.contains("weekly") || lower.contains("every week") -> true to "WEEKLY"
+            lower.contains("monthly") || lower.contains("every month") || lower.contains("per month") || lower.contains("recurring") -> true to "MONTHLY"
             else -> false to "NONE"
         }
     }
@@ -321,7 +333,7 @@ object NaturalLanguageParser {
     private fun cleanMerchantNote(input: String, amountToken: String, matchedPockets: List<VaultPocket>): String {
         var note = input.replace(amountToken, "", ignoreCase = true)
         matchedPockets.forEach { note = note.replace(it.name, "", ignoreCase = true) }
-        val noiseWords = listOf("spent", "via", "from", "to", "on", "paid", "using", "for", "monthly", "daily", "weekly")
+        val noiseWords = listOf("spent", "via", "from", "to", "on", "paid", "using", "for", "monthly", "daily", "weekly", "recurring", "every")
         noiseWords.forEach { w -> note = note.replace(Regex("""\b$w\b""", RegexOption.IGNORE_CASE), "") }
         return note.trim().replace(Regex("""\s+"""), " ")
     }
