@@ -583,6 +583,7 @@ fun DashboardScreen(db: AppDatabase) {
                         }
                     }
                 }
+                else -> {}
             }
         }
     }
