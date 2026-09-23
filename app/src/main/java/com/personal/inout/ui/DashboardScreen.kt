@@ -519,7 +519,9 @@ fun DashboardScreen(db: AppDatabase) {
                                 }
                             }
 
-                            // If recurring: save template AND if date <= now, record initial realized ledger leg immediately
+                            // STRICT RECURRING FLOW:
+                            // Blueprint is saved and catchUpRecurringRules is invoked.
+                            // Single source of truth ensures idempotent execution.
                             if (parsed.isRecurring) {
                                 db.stateFlowDao().insertFlowRecord(
                                     FlowRecord(
@@ -538,25 +540,12 @@ fun DashboardScreen(db: AppDatabase) {
                                     )
                                 )
 
-                                if (parsed.timestamp <= System.currentTimeMillis()) {
-                                    ledgerEngine.recordMovement(
-                                        nature = parsed.nature,
-                                        sourcePocketId = sourceId,
-                                        targetPocketId = targetId,
-                                        amount = parsed.amount,
-                                        category = parsed.category,
-                                        note = parsed.merchant,
-                                        timestamp = parsed.timestamp,
-                                        autoSplitEnabled = autoSplitEnabled,
-                                        isRecurring = false,
-                                        frequency = "NONE"
-                                    )
+                                val caughtUp = ledgerEngine.catchUpRecurringRules()
+                                if (caughtUp > 0) {
                                     alertManager.showAlert("Scheduled rule saved and initial transaction recorded!", AlertType.SUCCESS)
                                 } else {
-                                    alertManager.showAlert(
-                                        "Scheduled ${parsed.nature.name.lowercase()} rule for ${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(parsed.timestamp))}",
-                                        AlertType.SUCCESS
-                                    )
+                                    val dateStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(parsed.timestamp))
+                                    alertManager.showAlert("Scheduled ${parsed.frequency.lowercase()} rule starting $dateStr", AlertType.SUCCESS)
                                 }
                                 naturalLanguageInput = ""
                                 return@launch
@@ -1311,23 +1300,14 @@ fun DashboardScreen(db: AppDatabase) {
                                             )
                                         )
 
-                                        if (date <= System.currentTimeMillis()) {
-                                            ledgerEngine.recordMovement(
-                                                nature = nature,
-                                                sourcePocketId = effectiveSrc,
-                                                targetPocketId = effectiveTgt,
-                                                amount = amt,
-                                                category = cat,
-                                                note = note,
-                                                timestamp = date,
-                                                autoSplitEnabled = autoSplitEnabled,
-                                                isRecurring = false,
-                                                frequency = "NONE"
-                                            )
-                                        }
+                                        val caughtUp = ledgerEngine.catchUpRecurringRules()
                                         hudInDialogError = null
                                         showCommandHud = false
-                                        alertManager.showAlert("Recurring schedule saved and initial ledger entry recorded!", AlertType.SUCCESS)
+                                        if (caughtUp > 0) {
+                                            alertManager.showAlert("Recurring schedule saved and initial transaction recorded!", AlertType.SUCCESS)
+                                        } else {
+                                            alertManager.showAlert("Recurring schedule saved", AlertType.SUCCESS)
+                                        }
                                         return@launch
                                     }
 
