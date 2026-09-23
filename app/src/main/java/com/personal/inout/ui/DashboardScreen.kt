@@ -2,7 +2,6 @@ package com.personal.inout.ui
 
 import android.Manifest
 import android.app.Activity
-import android.app.DatePickerDialog
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -186,6 +185,9 @@ fun DashboardScreen(db: AppDatabase) {
     var editingRecurringRule by remember { mutableStateOf<FlowRecord?>(null) }
     var recordPendingDeletion by remember { mutableStateOf<FlowRecord?>(null) }
     var showCreatePocketDialog by remember { mutableStateOf(false) }
+    var prefilledCreatePocketName by remember { mutableStateOf("") }
+    var prefilledCreatePocketType by remember { mutableStateOf(PocketType.LIQUID) }
+
     var showAllRecordsSheet by remember { mutableStateOf(false) }
     var showMockPaywall by remember { mutableStateOf(false) }
     var showBurnEditDialog by remember { mutableStateOf(false) }
@@ -197,7 +199,6 @@ fun DashboardScreen(db: AppDatabase) {
     var isCheckingForUpdate by remember { mutableStateOf(false) }
 
     var showFeedbackDialog by remember { mutableStateOf(false) }
-
     var isFabExpanded by remember { mutableStateOf(false) }
 
     val initialPage = remember { prefs.getInt("saved_carousel_page", 0).coerceIn(0, 3) }
@@ -265,13 +266,14 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    // STRICT GATEKEEPER: Zero silent account creation.
     fun verifyLiquidAccountOrPrompt(onAccountReady: (Long) -> Unit) {
         val existingLiquid = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }
         if (existingLiquid != null) {
             onAccountReady(existingLiquid.id)
         } else {
             pendingActionAfterAccountCreation = onAccountReady
+            prefilledCreatePocketName = ""
+            prefilledCreatePocketType = PocketType.LIQUID
             showCreatePocketDialog = true
             alertManager.showAlert("Please create your primary bank/cash account first", AlertType.INFO)
         }
@@ -397,18 +399,10 @@ fun DashboardScreen(db: AppDatabase) {
         scope.launch {
             when (parsed) {
                 is ParsedIntent.CreateAccount -> {
-                    db.stateFlowDao().insertPocket(
-                        VaultPocket(
-                            name = parsed.name,
-                            pocketType = parsed.type,
-                            subType = parsed.type.name,
-                            creditLimit = parsed.limit,
-                            targetAmount = parsed.targetAmount,
-                            targetDateEpoch = parsed.targetDateEpoch
-                        )
-                    )
-                    alertManager.showAlert("Created account '${parsed.name}'", AlertType.SUCCESS)
-                    naturalLanguageInput = ""
+                    prefilledCreatePocketName = parsed.name
+                    prefilledCreatePocketType = parsed.type
+                    showCreatePocketDialog = true
+                    alertManager.showAlert("Account '${parsed.name}' does not exist. Please confirm creation.", AlertType.INFO)
                 }
                 is ParsedIntent.SetDailyBurn -> {
                     dailyBurnCeiling = parsed.newRate
@@ -525,8 +519,8 @@ fun DashboardScreen(db: AppDatabase) {
                                 }
                             }
 
-                            val isFutureScheduled = parsed.isRecurring && parsed.timestamp > (System.currentTimeMillis() + 60000L)
-                            if (isFutureScheduled) {
+                            // If recurring: save template AND if date <= now, record initial realized ledger leg immediately
+                            if (parsed.isRecurring) {
                                 db.stateFlowDao().insertFlowRecord(
                                     FlowRecord(
                                         id = 0L,
@@ -543,10 +537,27 @@ fun DashboardScreen(db: AppDatabase) {
                                         isPaused = false
                                     )
                                 )
-                                alertManager.showAlert(
-                                    "Scheduled ${parsed.nature.name.lowercase()} rule for ${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(parsed.timestamp))}",
-                                    AlertType.SUCCESS
-                                )
+
+                                if (parsed.timestamp <= System.currentTimeMillis()) {
+                                    ledgerEngine.recordMovement(
+                                        nature = parsed.nature,
+                                        sourcePocketId = sourceId,
+                                        targetPocketId = targetId,
+                                        amount = parsed.amount,
+                                        category = parsed.category,
+                                        note = parsed.merchant,
+                                        timestamp = parsed.timestamp,
+                                        autoSplitEnabled = autoSplitEnabled,
+                                        isRecurring = false,
+                                        frequency = "NONE"
+                                    )
+                                    alertManager.showAlert("Scheduled rule saved and initial transaction recorded!", AlertType.SUCCESS)
+                                } else {
+                                    alertManager.showAlert(
+                                        "Scheduled ${parsed.nature.name.lowercase()} rule for ${SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(parsed.timestamp))}",
+                                        AlertType.SUCCESS
+                                    )
+                                }
                                 naturalLanguageInput = ""
                                 return@launch
                             }
@@ -560,7 +571,7 @@ fun DashboardScreen(db: AppDatabase) {
                                 note = parsed.merchant,
                                 timestamp = parsed.timestamp,
                                 autoSplitEnabled = autoSplitEnabled,
-                                isRecurring = parsed.isRecurring,
+                                isRecurring = false,
                                 frequency = parsed.frequency
                             )) {
                                 is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
@@ -744,6 +755,8 @@ fun DashboardScreen(db: AppDatabase) {
                             FloatingActionButton(
                                 onClick = {
                                     if (selectedTab == 1) {
+                                        prefilledCreatePocketName = ""
+                                        prefilledCreatePocketType = PocketType.LIQUID
                                         showCreatePocketDialog = true
                                     } else {
                                         isFabExpanded = !isFabExpanded
@@ -1094,9 +1107,9 @@ fun DashboardScreen(db: AppDatabase) {
                                             isCheckingForUpdate = false
                                             if (res.isSuccess) {
                                                 val info = res.getOrNull()
-                                                if (info != null && info.hasUpdate) {
+                                                if (info != null && info.hasUpdate && info.downloadUrl.isNotBlank()) {
                                                     availableUpdateInfo = info
-                                                    alertManager.showAlert("New update available: v${info.latestVersion}", AlertType.INFO)
+                                                    alertManager.showAlert("New update available: ${info.latestVersion}", AlertType.INFO)
                                                 } else {
                                                     alertManager.showAlert("You are on the latest build", AlertType.SUCCESS)
                                                 }
@@ -1107,7 +1120,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     },
                                     onInstallUpdate = { info ->
                                         AppUpdateEngine.startDownloadAndInstall(context, info.downloadUrl, info.latestVersion)
-                                        alertManager.showAlert("Downloading update v${info.latestVersion}...", AlertType.INFO)
+                                        alertManager.showAlert("Downloading update ${info.latestVersion}...", AlertType.INFO)
                                     },
                                     onOpenFeedback = { showFeedbackDialog = true },
                                     onAutoSplitToggled = {
@@ -1279,6 +1292,44 @@ fun DashboardScreen(db: AppDatabase) {
                                     val effectiveSrc = if (nature == MovementNature.OUTFLOW && srcId == null) validLiquidId else srcId
                                     val effectiveTgt = if (nature == MovementNature.INFLOW && tgtId == null) validLiquidId else tgtId
 
+                                    if (isRec) {
+                                        db.stateFlowDao().insertFlowRecord(
+                                            FlowRecord(
+                                                id = 0L,
+                                                sourcePocketId = effectiveSrc,
+                                                targetPocketId = effectiveTgt,
+                                                amount = amt,
+                                                movementNature = nature,
+                                                category = cat,
+                                                note = note,
+                                                timestamp = date,
+                                                isRecurring = true,
+                                                frequency = freq,
+                                                recurringCadence = freq,
+                                                isPaused = false
+                                            )
+                                        )
+
+                                        if (date <= System.currentTimeMillis()) {
+                                            ledgerEngine.recordMovement(
+                                                nature = nature,
+                                                sourcePocketId = effectiveSrc,
+                                                targetPocketId = effectiveTgt,
+                                                amount = amt,
+                                                category = cat,
+                                                note = note,
+                                                timestamp = date,
+                                                autoSplitEnabled = autoSplitEnabled,
+                                                isRecurring = false,
+                                                frequency = "NONE"
+                                            )
+                                        }
+                                        hudInDialogError = null
+                                        showCommandHud = false
+                                        alertManager.showAlert("Recurring schedule saved and initial ledger entry recorded!", AlertType.SUCCESS)
+                                        return@launch
+                                    }
+
                                     when (val res = ledgerEngine.recordMovement(
                                         nature = nature,
                                         sourcePocketId = effectiveSrc,
@@ -1288,7 +1339,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         note = note,
                                         timestamp = date,
                                         autoSplitEnabled = autoSplitEnabled,
-                                        isRecurring = isRec,
+                                        isRecurring = false,
                                         frequency = freq
                                     )) {
                                         is VaultExecutionResult.OverdraftError -> {
@@ -1311,7 +1362,6 @@ fun DashboardScreen(db: AppDatabase) {
                     EditRecurringRuleDialog(
                         rule = rule,
                         theme = theme,
-                        context = context,
                         onDismiss = { editingRecurringRule = null },
                         onSave = { newAmt, newNote, newFreq, newTimestamp ->
                             scope.launch {
@@ -1412,10 +1462,12 @@ fun DashboardScreen(db: AppDatabase) {
 
                 if (showCreatePocketDialog) {
                     CreateAccountDialog(
+                        initialName = prefilledCreatePocketName,
+                        initialType = prefilledCreatePocketType,
                         theme = theme,
-                        context = context,
                         onDismiss = {
                             showCreatePocketDialog = false
+                            prefilledCreatePocketName = ""
                             pendingActionAfterAccountCreation = null
                         },
                         onSave = { name, type, limit, targetAmt, targetDateEpoch ->
@@ -1431,6 +1483,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     )
                                 )
                                 showCreatePocketDialog = false
+                                prefilledCreatePocketName = ""
                                 alertManager.showAlert("Created account '$name'", AlertType.SUCCESS)
 
                                 pendingActionAfterAccountCreation?.invoke(newId)
@@ -1444,7 +1497,6 @@ fun DashboardScreen(db: AppDatabase) {
                     EditAccountDialog(
                         account = pocket,
                         theme = theme,
-                        context = context,
                         onDismiss = { editingPocket = null },
                         onSave = { updatedName, updatedLimit, updatedTarget, updatedDateEpoch ->
                             scope.launch {
@@ -1670,7 +1722,7 @@ private fun SettingsCardsList(
                                 .padding(10.dp)
                         ) {
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("New Version Available: v${availableUpdate.latestVersion}", color = theme.mildGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("New Version Available: ${availableUpdate.latestVersion}", color = theme.mildGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 Text(availableUpdate.releaseNotes, color = theme.textBright, fontSize = 10.5.sp, maxLines = 2)
                             }
                         }
@@ -1683,7 +1735,7 @@ private fun SettingsCardsList(
                         ) {
                             Icon(Icons.Default.Download, contentDescription = null, tint = theme.bg, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Download & Install v${availableUpdate.latestVersion}", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text("Download & Install ${availableUpdate.latestVersion}", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     } else {
                         Button(
@@ -1695,7 +1747,7 @@ private fun SettingsCardsList(
                         ) {
                             Icon(Icons.Default.Refresh, contentDescription = null, tint = theme.textBright, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text(if (isCheckingUpdate) "Checking GitHub Releases..." else "Check for App Update", color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text(if (isCheckingUpdate) "Checking Alpha Releases..." else "Check for App Update", color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
 
@@ -1851,11 +1903,11 @@ private fun SettingsCardsList(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditRecurringRuleDialog(
     rule: FlowRecord,
     theme: ThemeColors,
-    context: Context,
     onDismiss: () -> Unit,
     onSave: (amount: Double, note: String, freq: String, timestamp: Long) -> Unit
 ) {
@@ -1863,24 +1915,36 @@ private fun EditRecurringRuleDialog(
     var amountText by remember { mutableStateOf((rule.amount ?: 0.0).toInt().toString()) }
     var frequency by remember { mutableStateOf(if (rule.frequency != "NONE") rule.frequency else "MONTHLY") }
     var selectedDateEpoch by remember { mutableStateOf(rule.timestamp) }
+    var showDatePicker by remember { mutableStateOf(false) }
 
     val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateEpoch))
-    val calendar = Calendar.getInstance().apply { timeInMillis = selectedDateEpoch }
-    val datePickerDialog = remember {
+    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = selectedDateEpoch)
+
+    if (showDatePicker) {
         DatePickerDialog(
-            context,
-            { _, year, month, dayOfMonth ->
-                val updatedCal = Calendar.getInstance().apply {
-                    set(Calendar.YEAR, year)
-                    set(Calendar.MONTH, month)
-                    set(Calendar.DAY_OF_MONTH, dayOfMonth)
-                }
-                selectedDateEpoch = updatedCal.timeInMillis
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { selectedDateEpoch = it }
+                    showDatePicker = false
+                }) { Text("Select", color = theme.accent, fontWeight = FontWeight.Bold) }
             },
-            calendar.get(Calendar.YEAR),
-            calendar.get(Calendar.MONTH),
-            calendar.get(Calendar.DAY_OF_MONTH)
-        )
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancel", color = theme.textMuted) }
+            },
+            colors = DatePickerDefaults.colors(containerColor = theme.surface)
+        ) {
+            DatePicker(
+                state = datePickerState,
+                colors = DatePickerDefaults.colors(
+                    titleContentColor = theme.textBright,
+                    headlineContentColor = theme.textBright,
+                    selectedDayContainerColor = theme.accent,
+                    selectedDayContentColor = theme.bg,
+                    todayDateBorderColor = theme.accent
+                )
+            )
+        }
     }
 
     AlertDialog(
@@ -1915,7 +1979,7 @@ private fun EditRecurringRuleDialog(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(8.dp))
                         .background(theme.surfaceAlt)
-                        .clickable { datePickerDialog.show() }
+                        .clickable { showDatePicker = true }
                         .padding(horizontal = 12.dp, vertical = 9.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
@@ -2006,36 +2070,50 @@ private fun EditTransactionDialog(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CreateAccountDialog(
+    initialName: String = "",
+    initialType: PocketType = PocketType.LIQUID,
     theme: ThemeColors,
-    context: Context,
     onDismiss: () -> Unit,
     onSave: (String, PocketType, Double, Double, Long) -> Unit
 ) {
-    var name by remember { mutableStateOf("") }
-    var type by remember { mutableStateOf(PocketType.LIQUID) }
+    var name by remember { mutableStateOf(initialName) }
+    var type by remember { mutableStateOf(initialType) }
     var limit by remember { mutableStateOf("") }
     var targetAmt by remember { mutableStateOf("") }
     var targetDateEpoch by remember { mutableStateOf(System.currentTimeMillis() + (90L * 24 * 3600 * 1000L)) }
+    var showDatePicker by remember { mutableStateOf(false) }
 
     val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(targetDateEpoch))
-    val calendar = Calendar.getInstance().apply { timeInMillis = targetDateEpoch }
-    val datePicker = remember {
+    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = targetDateEpoch)
+
+    if (showDatePicker) {
         DatePickerDialog(
-            context,
-            { _, year, month, dayOfMonth ->
-                val cal = Calendar.getInstance().apply {
-                    set(Calendar.YEAR, year)
-                    set(Calendar.MONTH, month)
-                    set(Calendar.DAY_OF_MONTH, dayOfMonth)
-                }
-                targetDateEpoch = cal.timeInMillis
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { targetDateEpoch = it }
+                    showDatePicker = false
+                }) { Text("Select", color = theme.accent, fontWeight = FontWeight.Bold) }
             },
-            calendar.get(Calendar.YEAR),
-            calendar.get(Calendar.MONTH),
-            calendar.get(Calendar.DAY_OF_MONTH)
-        )
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancel", color = theme.textMuted) }
+            },
+            colors = DatePickerDefaults.colors(containerColor = theme.surface)
+        ) {
+            DatePicker(
+                state = datePickerState,
+                colors = DatePickerDefaults.colors(
+                    titleContentColor = theme.textBright,
+                    headlineContentColor = theme.textBright,
+                    selectedDayContainerColor = theme.accent,
+                    selectedDayContentColor = theme.bg,
+                    todayDateBorderColor = theme.accent
+                )
+            )
+        }
     }
 
     AlertDialog(
@@ -2076,7 +2154,7 @@ private fun CreateAccountDialog(
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
                             .background(theme.surfaceAlt)
-                            .clickable { datePicker.show() }
+                            .clickable { showDatePicker = true }
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
@@ -2105,11 +2183,11 @@ private fun CreateAccountDialog(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditAccountDialog(
     account: VaultPocket,
     theme: ThemeColors,
-    context: Context,
     onDismiss: () -> Unit,
     onSave: (String, Double, Double, Long) -> Unit
 ) {
@@ -2120,24 +2198,36 @@ private fun EditAccountDialog(
     var limit by remember { mutableStateOf(if (accLimit > 0.0) String.format("%.0f", accLimit) else "") }
     var targetAmt by remember { mutableStateOf(if (accTarget > 0.0) String.format("%.0f", accTarget) else "") }
     var targetDateEpoch by remember { mutableStateOf(if (account.targetDateEpoch > 0) account.targetDateEpoch else System.currentTimeMillis() + (90L * 24 * 3600 * 1000L)) }
+    var showDatePicker by remember { mutableStateOf(false) }
 
     val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(targetDateEpoch))
-    val calendar = Calendar.getInstance().apply { timeInMillis = targetDateEpoch }
-    val datePicker = remember {
+    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = targetDateEpoch)
+
+    if (showDatePicker) {
         DatePickerDialog(
-            context,
-            { _, year, month, dayOfMonth ->
-                val cal = Calendar.getInstance().apply {
-                    set(Calendar.YEAR, year)
-                    set(Calendar.MONTH, month)
-                    set(Calendar.DAY_OF_MONTH, dayOfMonth)
-                }
-                targetDateEpoch = cal.timeInMillis
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { targetDateEpoch = it }
+                    showDatePicker = false
+                }) { Text("Select", color = theme.accent, fontWeight = FontWeight.Bold) }
             },
-            calendar.get(Calendar.YEAR),
-            calendar.get(Calendar.MONTH),
-            calendar.get(Calendar.DAY_OF_MONTH)
-        )
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("Cancel", color = theme.textMuted) }
+            },
+            colors = DatePickerDefaults.colors(containerColor = theme.surface)
+        ) {
+            DatePicker(
+                state = datePickerState,
+                colors = DatePickerDefaults.colors(
+                    titleContentColor = theme.textBright,
+                    headlineContentColor = theme.textBright,
+                    selectedDayContainerColor = theme.accent,
+                    selectedDayContentColor = theme.bg,
+                    todayDateBorderColor = theme.accent
+                )
+            )
+        }
     }
 
     AlertDialog(
@@ -2157,7 +2247,7 @@ private fun EditAccountDialog(
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
                             .background(theme.surfaceAlt)
-                            .clickable { datePicker.show() }
+                            .clickable { showDatePicker = true }
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
