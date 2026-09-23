@@ -15,9 +15,7 @@ import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
-import java.text.SimpleDateFormat
-import java.util.Locale
-import java.util.TimeZone
+import java.util.regex.Pattern
 
 data class UpdateInfo(
     val latestVersion: String,
@@ -31,11 +29,13 @@ object AppUpdateEngine {
     private const val GITHUB_OWNER = "snj147"
     private const val GITHUB_REPO = "InOut"
     private const val ROLLING_TAG = "alpha-latest"
+    private const val PREFS_NAME = "inout_update_prefs"
+    private const val KEY_INSTALLED_SHA = "installed_git_sha"
 
     suspend fun checkForUpdate(context: Context): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         runCatching {
-            val pkgInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            val installedAppLastUpdate = pkgInfo.lastUpdateTime
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val currentSha = prefs.getString(KEY_INSTALLED_SHA, "") ?: ""
 
             val url = URL("https://api.github.com/repos/$GITHUB_OWNER/$GITHUB_REPO/releases/tags/$ROLLING_TAG")
             val conn = url.openConnection() as HttpURLConnection
@@ -49,7 +49,7 @@ object AppUpdateEngine {
                 return@runCatching UpdateInfo(
                     latestVersion = ROLLING_TAG,
                     downloadUrl = "",
-                    releaseNotes = "No release tagged '$ROLLING_TAG' found on GitHub.",
+                    releaseNotes = "No release found on GitHub.",
                     hasUpdate = false
                 )
             }
@@ -61,25 +61,21 @@ object AppUpdateEngine {
 
             val responseBody = conn.inputStream.bufferedReader().use { it.readText() }
             val json = JSONObject(responseBody)
-            val body = json.optString("body", "Automated alpha build") ?: "Automated alpha build"
+            val releaseName = json.optString("name", "InOut Alpha")
+            val body = json.optString("body", "")
             val assets = json.optJSONArray("assets")
 
-            var downloadUrl = ""
-            var remoteAssetTimestamp = 0L
+            // Extract the BUILD_SHA:xxxx from release notes
+            val matcher = Pattern.compile("BUILD_SHA:([a-f0-9]+)").matcher(body)
+            val remoteSha = if (matcher.find()) matcher.group(1) ?: "" else ""
 
+            var downloadUrl = ""
             if (assets != null) {
-                val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
-                    timeZone = TimeZone.getTimeZone("UTC")
-                }
                 for (i in 0 until assets.length()) {
                     val asset = assets.getJSONObject(i)
-                    val name = asset.optString("name", "") ?: ""
+                    val name = asset.optString("name", "")
                     if (name.endsWith(".apk")) {
-                        downloadUrl = asset.optString("browser_download_url", "") ?: ""
-                        val updatedAtStr = asset.optString("updated_at", "")
-                        remoteAssetTimestamp = runCatching {
-                            isoFormat.parse(updatedAtStr)?.time ?: 0L
-                        }.getOrDefault(0L)
+                        downloadUrl = asset.optString("browser_download_url", "")
                         break
                     }
                 }
@@ -87,30 +83,30 @@ object AppUpdateEngine {
 
             if (downloadUrl.isBlank()) {
                 return@runCatching UpdateInfo(
-                    latestVersion = ROLLING_TAG,
+                    latestVersion = releaseName,
                     downloadUrl = "",
-                    releaseNotes = "Release exists, but no APK is attached yet.",
+                    releaseNotes = "No APK package found.",
                     hasUpdate = false
                 )
             }
 
-            // Compares the remote APK upload timestamp against the local installation time
-            val isNewer = remoteAssetTimestamp > (installedAppLastUpdate + 10000L)
+            // If currentSha is empty (first time running), or remoteSha doesn't match currentSha:
+            val hasUpdate = remoteSha.isNotBlank() && !remoteSha.equals(currentSha, ignoreCase = true)
 
             UpdateInfo(
-                latestVersion = ROLLING_TAG,
+                latestVersion = releaseName,
                 downloadUrl = downloadUrl,
-                releaseNotes = body,
-                hasUpdate = isNewer
+                releaseNotes = if (hasUpdate) "New build available ($releaseName)" else "You are on the latest build",
+                hasUpdate = hasUpdate
             )
         }
     }
 
     fun startDownloadAndInstall(context: Context, downloadUrl: String, versionLabel: String) {
-        val fileName = "InOut-$versionLabel.apk"
+        val fileName = "InOut-latest.apk"
         val request = DownloadManager.Request(Uri.parse(downloadUrl)).apply {
             setTitle("Downloading InOut Update")
-            setDescription("Alpha build $versionLabel")
+            setDescription(versionLabel)
             setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
             setMimeType("application/vnd.android.package-archive")
@@ -126,6 +122,14 @@ object AppUpdateEngine {
                     try {
                         c?.unregisterReceiver(this)
                     } catch (_: Exception) {}
+
+                    // Save the updated marker so it knows it is installed
+                    val prefs = (c ?: context).getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    val shaMatcher = Pattern.compile("\\(([a-f0-9]+)\\)").matcher(versionLabel)
+                    if (shaMatcher.find()) {
+                        val shortSha = shaMatcher.group(1) ?: ""
+                        prefs.edit().putString(KEY_INSTALLED_SHA, shortSha).apply()
+                    }
 
                     val file = File(
                         Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
