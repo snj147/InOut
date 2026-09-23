@@ -4,41 +4,7 @@ import android.content.Context
 import com.personal.inout.data.MovementNature
 import com.personal.inout.data.PocketType
 import com.personal.inout.data.VaultPocket
-import java.util.Calendar
 import java.util.regex.Pattern
-
-sealed class ParsedIntent {
-    data class Transaction(
-        val nature: MovementNature,
-        val amount: Double,
-        val matchedPocketId: Long?,
-        val targetPocketId: Long? = null,
-        val category: String,
-        val merchant: String,
-        val timestamp: Long = System.currentTimeMillis(),
-        val isRecurring: Boolean = false,
-        val frequency: String = "NONE",
-        val targetPersonName: String? = null
-    ) : ParsedIntent()
-
-    data class CompoundTransactions(
-        val transactions: List<Transaction>
-    ) : ParsedIntent()
-
-    data class CreateAccount(
-        val name: String,
-        val type: PocketType,
-        val limit: Double = 0.0,
-        val targetAmount: Double = 0.0,
-        val targetDateEpoch: Long = 0L
-    ) : ParsedIntent()
-
-    data class SetDailyBurn(val newRate: Double) : ParsedIntent()
-    data class SaveMacroAlias(val alias: String, val fullCommand: String) : ParsedIntent()
-    data class StageDesire(val name: String, val amount: Double) : ParsedIntent()
-    data class TriangularSettle(val debtor: String, val creditor: String, val amount: Double) : ParsedIntent()
-    data class BreakGoalPot(val potName: String, val destinationPocketId: Long?) : ParsedIntent()
-}
 
 object NaturalLanguageParser {
 
@@ -93,7 +59,7 @@ object NaturalLanguageParser {
             return ParsedIntent.StageDesire(name.trim(), amt)
         }
 
-        // 4. Triangular Peer Settle (settle A to B 500)
+        // 4. Triangular Peer Settle
         val triMatcher = Pattern.compile("(?i)settle\\s+([A-Za-z0-9_]+)\\s+to\\s+([A-Za-z0-9_]+)\\s+(\\d+)").matcher(expanded)
         if (triMatcher.matches()) {
             val debtor = triMatcher.group(1) ?: ""
@@ -108,7 +74,6 @@ object NaturalLanguageParser {
             val amountMatcher = Pattern.compile("(\\d+(?:\\.\\d+)?)").matcher(expanded)
             val amt = if (amountMatcher.find()) amountMatcher.group(1)?.toDoubleOrNull() ?: 0.0 else 0.0
 
-            // Extract potential source and destination
             var srcPocket: VaultPocket? = null
             var tgtPocket: VaultPocket? = null
 
@@ -124,7 +89,6 @@ object NaturalLanguageParser {
                 targetNameRaw = toMatcher.group(1)
                 tgtPocket = activePockets.firstOrNull { it.name.equals(targetNameRaw, ignoreCase = true) }
             } else {
-                // Heuristic: word directly following transfer stem
                 val cleaned = expanded.replace("(?i)transf|transfer|xfer|move".toRegex(), "").trim()
                 val candidateTokens = cleaned.split("\\s+".toRegex()).filter { !it.matches("\\d+".toRegex()) && !it.equals("from", true) && !it.equals("to", true) }
                 if (candidateTokens.isNotEmpty()) {
@@ -133,12 +97,11 @@ object NaturalLanguageParser {
                 }
             }
 
-            // Default source to first liquid if not explicitly defined
             if (srcPocket == null) {
                 srcPocket = activePockets.firstOrNull { it.pocketType == PocketType.LIQUID }
             }
 
-            // If target account does not exist, HALT and prompt creation as LIQUID
+            // Halt and prompt account creation if target does not exist
             if (tgtPocket == null) {
                 val missingName = targetNameRaw?.trim() ?: "Destination Account"
                 return ParsedIntent.CreateAccount(
@@ -157,7 +120,7 @@ object NaturalLanguageParser {
             )
         }
 
-        // 6. Multi-Transaction Compound (e.g. coffee 120 and uber 250)
+        // 6. Multi-Transaction Compound
         if (expanded.contains(" and ", ignoreCase = true) || expanded.contains(" & ")) {
             val parts = expanded.split("(?i)\\s+(?:and|&)\\s+".toRegex())
             val subTransactions = mutableListOf<ParsedIntent.Transaction>()
@@ -172,7 +135,7 @@ object NaturalLanguageParser {
             }
         }
 
-        // 7. General Transactions (Inflow / Outflow / Peer)
+        // 7. General Transactions
         return parseSingleTransaction(expanded, activePockets)
     }
 
@@ -197,7 +160,6 @@ object NaturalLanguageParser {
         var frequency = "NONE"
         var timestamp = System.currentTimeMillis()
 
-        // Check matched accounts
         for (pocket in activePockets) {
             if (cleaned.contains(pocket.name, ignoreCase = true)) {
                 if (pocket.pocketType == PocketType.COUNTERPARTY || pocket.subType == "PEER") {
@@ -211,7 +173,6 @@ object NaturalLanguageParser {
 
         val lower = cleaned.lowercase()
 
-        // Recurring cadence
         when {
             lower.contains("monthly") || lower.contains("every month") -> {
                 isRecurring = true
@@ -227,11 +188,9 @@ object NaturalLanguageParser {
             }
         }
 
-        // Inflow keywords
         val isInflow = lower.contains("salary") || lower.contains("income") || lower.contains("deposit") ||
                 lower.contains("earned") || lower.contains("refund") || lower.contains("cashback")
 
-        // Peer movement keywords
         val isLend = lower.startsWith("lend") || lower.startsWith("lent") || lower.contains(" gave to ")
         val isBorrow = lower.startsWith("borrow") || lower.contains(" took from ")
         val isCollect = lower.startsWith("collect") || lower.contains(" received from ")
