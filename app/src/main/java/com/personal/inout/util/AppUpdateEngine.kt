@@ -31,9 +31,9 @@ object AppUpdateEngine {
 
     suspend fun checkForUpdate(context: Context): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         runCatching {
-            val currentVersionName = runCatching {
+            val currentVersionName: String = runCatching {
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName
-            }.getOrDefault("1.0")
+            }.getOrNull() ?: "1.0"
 
             val url = URL("https://api.github.com/repos/$GITHUB_OWNER/$GITHUB_REPO/releases/tags/$ROLLING_TAG")
             val conn = url.openConnection() as HttpURLConnection
@@ -59,17 +59,17 @@ object AppUpdateEngine {
 
             val responseBody = conn.inputStream.bufferedReader().use { it.readText() }
             val json = JSONObject(responseBody)
-            val tagName = json.optString("tag_name", ROLLING_TAG)
-            val body = json.optString("body", "Continuous Alpha build")
+            val tagName: String = json.optString("tag_name", ROLLING_TAG) ?: ROLLING_TAG
+            val body: String = json.optString("body", "Continuous Alpha build") ?: "Continuous Alpha build"
             val assets = json.optJSONArray("assets")
 
             var downloadUrl = ""
             if (assets != null) {
                 for (i in 0 until assets.length()) {
                     val asset = assets.getJSONObject(i)
-                    val name = asset.optString("name", "")
+                    val name = asset.optString("name", "") ?: ""
                     if (name.endsWith(".apk")) {
-                        downloadUrl = asset.optString("browser_download_url", "")
+                        downloadUrl = asset.optString("browser_download_url", "") ?: ""
                         break
                     }
                 }
