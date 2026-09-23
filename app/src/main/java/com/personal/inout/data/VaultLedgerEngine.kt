@@ -1,7 +1,10 @@
 package com.personal.inout.data
 
 import android.content.SharedPreferences
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 
 sealed class VaultExecutionResult {
     data class Success(
@@ -44,7 +47,7 @@ class VaultLedgerEngine(
             val balances = flowRecordDao.getPocketBalancesSync(timestamp)
             val pockets = flowRecordDao.getActivePocketsSync()
 
-            // 1. INFLOW ACCOUNTING: Explicitly enforces targetPocketId and prevents debit checks
+            // 1. INFLOW ACCOUNTING
             if (nature == MovementNature.INFLOW) {
                 val effectiveTarget = targetPocketId ?: sourcePocketId
                 if (effectiveTarget == null || effectiveTarget == 0L) {
@@ -70,7 +73,7 @@ class VaultLedgerEngine(
                 )
             }
 
-            // 2. OUTFLOW ACCOUNTING (Expenses & Outgoing Peer Lending)
+            // 2. OUTFLOW ACCOUNTING
             if (nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
                 if (sourcePocketId == null || sourcePocketId == 0L) {
                     return VaultExecutionResult.OverdraftError("Please specify a source account")
@@ -81,7 +84,7 @@ class VaultLedgerEngine(
 
                 val primaryBal = balances.firstOrNull { it.pocketId == sourcePocketId.toString() }?.computedBalance ?: 0.0
 
-                if (primaryPocket.pocketType == PocketType.LIQUID) {
+                if (primaryPocket.pocketType == PocketType.LIQUID && !isRecurring) {
                     if (primaryBal < amount) {
                         if (!autoSplitEnabled) {
                             return VaultExecutionResult.OverdraftError(
@@ -114,8 +117,8 @@ class VaultLedgerEngine(
                                     category = category.ifBlank { "General" },
                                     note = "${note.ifBlank { category }} (Leg 1)",
                                     timestamp = timestamp,
-                                    isRecurring = isRecurring,
-                                    frequency = frequency
+                                    isRecurring = false,
+                                    frequency = "NONE"
                                 )
                             )
                             remainderNeeded -= chunk
@@ -133,7 +136,9 @@ class VaultLedgerEngine(
                                     movementNature = nature,
                                     category = category.ifBlank { "General" },
                                     note = "${note.ifBlank { category }} (Split Cover)",
-                                    timestamp = timestamp
+                                    timestamp = timestamp,
+                                    isRecurring = false,
+                                    frequency = "NONE"
                                 )
                             )
                             remainderNeeded -= chunk
@@ -148,19 +153,19 @@ class VaultLedgerEngine(
                 }
             }
 
-            // 3. INTERNAL TRANSFERS: Zero-Sum Shift Between Two Owned Accounts
+            // 3. INTERNAL TRANSFERS
             if (nature == MovementNature.TRANSFER) {
                 if (sourcePocketId == null || targetPocketId == null || sourcePocketId == targetPocketId) {
                     return VaultExecutionResult.OverdraftError("Invalid transfer source or destination")
                 }
                 val srcBal = balances.firstOrNull { it.pocketId == sourcePocketId.toString() }?.computedBalance ?: 0.0
                 val srcPocket = pockets.firstOrNull { it.id == sourcePocketId }
-                if (srcPocket?.pocketType == PocketType.LIQUID && srcBal < amount) {
+                if (srcPocket?.pocketType == PocketType.LIQUID && srcBal < amount && !isRecurring) {
                     return VaultExecutionResult.OverdraftError("Cannot transfer ₹${amount.toInt()} from ${srcPocket.name}. Available: ₹${srcBal.toInt()}")
                 }
             }
 
-            // 4. CREDIT CARD BILL PAYMENT: Direct Balance Transfer to Repay Debt
+            // 4. CREDIT CARD BILL PAYMENT
             if (nature == MovementNature.CARD_PAYMENT) {
                 if (sourcePocketId == null || targetPocketId == null) {
                     return VaultExecutionResult.OverdraftError("Source bank account and card target required for card payment")
@@ -235,6 +240,9 @@ class VaultLedgerEngine(
         }
     }
 
+    // STRICT IDEMPOTENT RECURRING ENGINE:
+    // 1. Checks execution fingerprint before inserting
+    // 2. Advances schedule timestamp forward so it never runs twice
     suspend fun catchUpRecurringRules(): Int {
         val now = System.currentTimeMillis()
         val activeSchedules = flowRecordDao.getActiveRecurringSchedulesSync()
@@ -249,17 +257,42 @@ class VaultLedgerEngine(
             }
             if (cadence == CadenceType.NONE) continue
 
-            var nextDue = calculateNextOccurrence(schedule.timestamp, cadence)
-            while (nextDue <= now) {
-                val execution = schedule.copy(
-                    id = 0L,
-                    timestamp = nextDue,
-                    isRecurring = false,
-                    isPaused = false
+            var cursor = schedule.timestamp
+            var updatedScheduleTimestamp = schedule.timestamp
+
+            // If the start date is already past or today, step forward through due cycles
+            while (cursor <= now) {
+                val cycleKey = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date(cursor))
+                val fingerprint = "%[REC#${schedule.id}#$cycleKey]%"
+
+                val alreadyExecuted = flowRecordDao.countRecordsWithFingerprint(fingerprint) > 0
+                if (!alreadyExecuted) {
+                    val executionNote = if (schedule.note.isNotBlank()) {
+                        "${schedule.note} [REC#${schedule.id}#$cycleKey]"
+                    } else {
+                        "${schedule.category} [REC#${schedule.id}#$cycleKey]"
+                    }
+
+                    val execution = schedule.copy(
+                        id = 0L,
+                        note = executionNote,
+                        timestamp = cursor,
+                        isRecurring = false,
+                        isPaused = false
+                    )
+                    flowRecordDao.insertFlowRecord(execution)
+                    generatedCount++
+                }
+
+                cursor = calculateNextOccurrence(cursor, cadence)
+                updatedScheduleTimestamp = cursor
+            }
+
+            // Advance the blueprint's due date into the future so it never re-processes past dates
+            if (updatedScheduleTimestamp != schedule.timestamp) {
+                flowRecordDao.updateFlowRecord(
+                    schedule.copy(timestamp = updatedScheduleTimestamp)
                 )
-                flowRecordDao.insertFlowRecord(execution)
-                generatedCount++
-                nextDue = calculateNextOccurrence(nextDue, cadence)
             }
         }
         return generatedCount
