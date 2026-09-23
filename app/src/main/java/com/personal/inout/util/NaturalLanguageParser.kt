@@ -4,6 +4,9 @@ import android.content.Context
 import com.personal.inout.data.MovementNature
 import com.personal.inout.data.PocketType
 import com.personal.inout.data.VaultPocket
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 import java.util.regex.Pattern
 
 object NaturalLanguageParser {
@@ -51,7 +54,7 @@ object NaturalLanguageParser {
             if (rate != null) return ParsedIntent.SetDailyBurn(rate)
         }
 
-        // 3. Stage Desires (Cool-off quarantine)
+        // 3. Stage Desires
         val wantMatcher = Pattern.compile("(?i)(?:want|stage)\\s+(.+?)\\s+(\\d+)").matcher(expanded)
         if (wantMatcher.matches()) {
             val name = wantMatcher.group(1) ?: "Desire"
@@ -101,7 +104,7 @@ object NaturalLanguageParser {
                 srcPocket = activePockets.firstOrNull { it.pocketType == PocketType.LIQUID }
             }
 
-            // Halt and prompt account creation if target does not exist
+            // Halt and prompt creation if destination bank does not exist
             if (tgtPocket == null) {
                 val missingName = targetNameRaw?.trim() ?: "Destination Account"
                 return ParsedIntent.CreateAccount(
@@ -120,7 +123,7 @@ object NaturalLanguageParser {
             )
         }
 
-        // 6. Multi-Transaction Compound
+        // 6. Compound Transactions (coffee 120 and uber 250)
         if (expanded.contains(" and ", ignoreCase = true) || expanded.contains(" & ")) {
             val parts = expanded.split("(?i)\\s+(?:and|&)\\s+".toRegex())
             val subTransactions = mutableListOf<ParsedIntent.Transaction>()
@@ -147,8 +150,35 @@ object NaturalLanguageParser {
         val amountStr = matcher.group(1) ?: return null
         val amount = amountStr.toDoubleOrNull() ?: return null
 
-        val cleaned = input.replace(amountStr, "").trim()
-        val tokens = cleaned.split("\\s+".toRegex()).filter { it.isNotBlank() }
+        var cleaned = input.replace(amountStr, "").trim()
+        val lower = cleaned.lowercase()
+
+        // DETERMINISTIC RECURRING CONTRACT:
+        // Must explicitly state cadence ("monthly", "weekly", "daily", "every month", etc.)
+        var isRecurring = false
+        var frequency = "NONE"
+        var timestamp = System.currentTimeMillis()
+
+        val isMonthly = lower.contains("monthly") || lower.contains("every month")
+        val isWeekly = lower.contains("weekly") || lower.contains("every week")
+        val isDaily = lower.contains("daily") || lower.contains("every day")
+
+        if (isMonthly || isWeekly || isDaily) {
+            isRecurring = true
+            frequency = when {
+                isMonthly -> "MONTHLY"
+                isWeekly -> "WEEKLY"
+                else -> "DAILY"
+            }
+
+            // Strip the recurrence keyword
+            cleaned = cleaned.replace("(?i)monthly|every\\s+month|weekly|every\\s+week|daily|every\\s+day".toRegex(), "").trim()
+
+            // Resolve date contract:
+            // e.g. "from 01/10/2026", "start 10 Oct 2026", or "on 1st"
+            timestamp = resolveScheduleDate(cleaned)
+            cleaned = cleaned.replace("(?i)(?:from|start|on)\\s+\\d+(?:st|nd|rd|th)?(?:[/-]\\d+[/-]\\d+)?".toRegex(), "").trim()
+        }
 
         var nature = MovementNature.OUTFLOW
         var category = "General"
@@ -156,10 +186,8 @@ object NaturalLanguageParser {
         var matchedPocketId: Long? = null
         var targetPocketId: Long? = null
         var targetPersonName: String? = null
-        var isRecurring = false
-        var frequency = "NONE"
-        var timestamp = System.currentTimeMillis()
 
+        // Match accounts
         for (pocket in activePockets) {
             if (cleaned.contains(pocket.name, ignoreCase = true)) {
                 if (pocket.pocketType == PocketType.COUNTERPARTY || pocket.subType == "PEER") {
@@ -171,30 +199,16 @@ object NaturalLanguageParser {
             }
         }
 
-        val lower = cleaned.lowercase()
+        val tokens = cleaned.split("\\s+".toRegex()).filter { it.isNotBlank() }
+        val finalLower = cleaned.lowercase()
 
-        when {
-            lower.contains("monthly") || lower.contains("every month") -> {
-                isRecurring = true
-                frequency = "MONTHLY"
-            }
-            lower.contains("weekly") || lower.contains("every week") -> {
-                isRecurring = true
-                frequency = "WEEKLY"
-            }
-            lower.contains("daily") || lower.contains("every day") -> {
-                isRecurring = true
-                frequency = "DAILY"
-            }
-        }
+        val isInflow = finalLower.contains("salary") || finalLower.contains("income") || finalLower.contains("deposit") ||
+                finalLower.contains("earned") || finalLower.contains("refund") || finalLower.contains("cashback")
 
-        val isInflow = lower.contains("salary") || lower.contains("income") || lower.contains("deposit") ||
-                lower.contains("earned") || lower.contains("refund") || lower.contains("cashback")
-
-        val isLend = lower.startsWith("lend") || lower.startsWith("lent") || lower.contains(" gave to ")
-        val isBorrow = lower.startsWith("borrow") || lower.contains(" took from ")
-        val isCollect = lower.startsWith("collect") || lower.contains(" received from ")
-        val isRepay = lower.startsWith("repay") || lower.contains(" paid back ")
+        val isLend = finalLower.startsWith("lend") || finalLower.startsWith("lent") || finalLower.contains(" gave to ")
+        val isBorrow = finalLower.startsWith("borrow") || finalLower.contains(" took from ")
+        val isCollect = finalLower.startsWith("collect") || finalLower.contains(" received from ")
+        val isRepay = finalLower.startsWith("repay") || finalLower.contains(" paid back ")
 
         when {
             isLend -> {
@@ -227,13 +241,13 @@ object NaturalLanguageParser {
             }
             isInflow -> {
                 nature = MovementNature.INFLOW
-                category = if (lower.contains("salary")) "Salary" else "Income"
-                merchant = if (lower.contains("salary")) "Salary Deposit" else "Deposit"
+                category = if (finalLower.contains("salary")) "Salary" else "Income"
+                merchant = if (finalLower.contains("salary")) "Salary Deposit" else "Deposit"
                 targetPocketId = matchedPocketId
             }
             else -> {
                 nature = MovementNature.OUTFLOW
-                category = categorizeExpense(lower)
+                category = categorizeExpense(finalLower)
                 merchant = tokens.firstOrNull {
                     it.lowercase() !in listOf("paid", "spent", "for", "at", "to", "from", "on", "in") &&
                             activePockets.none { p -> p.name.equals(it, true) }
@@ -253,6 +267,53 @@ object NaturalLanguageParser {
             frequency = frequency,
             targetPersonName = targetPersonName
         )
+    }
+
+    // STRICT DATE RESOLUTION: Never guesses ambiguously into the past
+    private fun resolveScheduleDate(input: String): Long {
+        val nowCal = Calendar.getInstance()
+
+        // Check for full explicit date: dd/MM/yyyy
+        val fullDateMatcher = Pattern.compile("(?i)(?:from|start|on)\\s+(\\d{1,2})[/-](\\d{1,2})[/-](\\d{4})").matcher(input)
+        if (fullDateMatcher.find()) {
+            val d = fullDateMatcher.group(1)?.toIntOrNull() ?: 1
+            val m = (fullDateMatcher.group(2)?.toIntOrNull() ?: 1) - 1
+            val y = fullDateMatcher.group(3)?.toIntOrNull() ?: nowCal.get(Calendar.YEAR)
+            val cal = Calendar.getInstance().apply {
+                set(Calendar.YEAR, y)
+                set(Calendar.MONTH, m)
+                set(Calendar.DAY_OF_MONTH, d)
+                set(Calendar.HOUR_OF_DAY, 9)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            return cal.timeInMillis
+        }
+
+        // Check for day of month: "on 1st", "on 5", "from 10th"
+        val dayMatcher = Pattern.compile("(?i)(?:on|from|start)\\s+(\\d{1,2})(?:st|nd|rd|th)?").matcher(input)
+        if (dayMatcher.find()) {
+            val targetDay = dayMatcher.group(1)?.toIntOrNull() ?: 1
+            val cal = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, 9)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+
+            val todayDay = cal.get(Calendar.DAY_OF_MONTH)
+            cal.set(Calendar.DAY_OF_MONTH, targetDay)
+
+            // If the day is already past in this current month, roll forward to next month
+            if (targetDay < todayDay) {
+                cal.add(Calendar.MONTH, 1)
+            }
+            return cal.timeInMillis
+        }
+
+        // If no explicit date token is supplied, start from today
+        return System.currentTimeMillis()
     }
 
     private fun categorizeExpense(text: String): String {
