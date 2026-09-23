@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -30,26 +32,26 @@ jobs:
       - name: Build Debug APK
         run: gradle assembleDebug -Pandroid.useAndroidX=true -Pandroid.nonTransitiveRClass=true --no-daemon --stacktrace
 
+      - name: Rename APK with Commit SHA
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          cp app/build/outputs/apk/debug/*.apk InOut-alpha-${SHORT_SHA}.apk
+
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: InOut-v1.0-Debug
-          path: app/build/outputs/apk/debug/*.apk
+          path: InOut-alpha-*.apk
 
-      - name: Recreate Rolling Release
+      - name: Publish Rolling Alpha Release
+        uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
+        with:
+          tag_name: alpha-latest
+          name: "InOut Alpha"
+          body: "BUILD_SHA:${{ github.sha }}"
+          prerelease: true
+          files: InOut-alpha-*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Delete existing release and tag so assets are guaranteed fresh
-          gh release delete alpha-latest --yes || true
-          git tag -d alpha-latest || true
-          git push origin :refs/tags/alpha-latest || true
-
-          # Create fresh release with short SHA
-          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          gh release create alpha-latest \
-            app/build/outputs/apk/debug/*.apk \
-            --title "InOut Alpha ($SHORT_SHA)" \
-            --notes "BUILD_SHA:${{ github.sha }}" \
-            --prerelease
+          
