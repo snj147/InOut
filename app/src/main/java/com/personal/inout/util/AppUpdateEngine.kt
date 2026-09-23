@@ -11,7 +11,7 @@ import android.os.Environment
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
+import org.json.JSONArray
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -28,7 +28,6 @@ object AppUpdateEngine {
 
     private const val GITHUB_OWNER = "snj147"
     private const val GITHUB_REPO = "InOut"
-    private const val ROLLING_TAG = "alpha-latest"
     private const val PREFS_NAME = "inout_update_prefs"
     private const val KEY_INSTALLED_SHA = "installed_git_sha"
 
@@ -37,7 +36,8 @@ object AppUpdateEngine {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             val currentSha = prefs.getString(KEY_INSTALLED_SHA, "") ?: ""
 
-            val url = URL("https://api.github.com/repos/$GITHUB_OWNER/$GITHUB_REPO/releases/tags/$ROLLING_TAG")
+            // Query the top-level releases endpoint (always ordered by latest created first)
+            val url = URL("https://api.github.com/repos/$GITHUB_OWNER/$GITHUB_REPO/releases?per_page=1")
             val conn = url.openConnection() as HttpURLConnection
             conn.setRequestProperty("Accept", "application/vnd.github+json")
             conn.setRequestProperty("User-Agent", "InOut-App")
@@ -45,38 +45,41 @@ object AppUpdateEngine {
             conn.readTimeout = 8000
 
             val code = conn.responseCode
-            if (code == 404) {
-                return@runCatching UpdateInfo(
-                    latestVersion = ROLLING_TAG,
-                    downloadUrl = "",
-                    releaseNotes = "No release found on GitHub.",
-                    hasUpdate = false
-                )
-            }
-
             if (code !in 200..299) {
                 val err = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
                 error("GitHub API status $code: $err")
             }
 
             val responseBody = conn.inputStream.bufferedReader().use { it.readText() }
-            val json = JSONObject(responseBody)
-            val releaseName = json.optString("name", "InOut Alpha")
-            val body = json.optString("body", "")
-            val assets = json.optJSONArray("assets")
+            val releasesArray = JSONArray(responseBody)
+            if (releasesArray.length() == 0) {
+                return@runCatching UpdateInfo(
+                    latestVersion = "InOut",
+                    downloadUrl = "",
+                    releaseNotes = "No releases found.",
+                    hasUpdate = false
+                )
+            }
 
-            // Extract the BUILD_SHA:xxxx from release notes
-            val matcher = Pattern.compile("BUILD_SHA:([a-f0-9]+)").matcher(body)
-            val remoteSha = if (matcher.find()) matcher.group(1) ?: "" else ""
+            val latestRelease = releasesArray.getJSONObject(0)
+            val releaseName = latestRelease.optString("name", "InOut Alpha")
+            val assets = latestRelease.optJSONArray("assets")
 
             var downloadUrl = ""
+            var remoteSha = ""
+
             if (assets != null) {
+                val shaPattern = Pattern.compile("InOut-alpha-([a-f0-9]+)\\.apk")
                 for (i in 0 until assets.length()) {
                     val asset = assets.getJSONObject(i)
                     val name = asset.optString("name", "")
-                    if (name.endsWith(".apk")) {
+                    val matcher = shaPattern.matcher(name)
+                    if (matcher.find()) {
+                        remoteSha = matcher.group(1) ?: ""
                         downloadUrl = asset.optString("browser_download_url", "")
                         break
+                    } else if (name.endsWith(".apk")) {
+                        downloadUrl = asset.optString("browser_download_url", "")
                     }
                 }
             }
@@ -85,18 +88,17 @@ object AppUpdateEngine {
                 return@runCatching UpdateInfo(
                     latestVersion = releaseName,
                     downloadUrl = "",
-                    releaseNotes = "No APK package found.",
+                    releaseNotes = "No APK package attached to release.",
                     hasUpdate = false
                 )
             }
 
-            // If currentSha is empty (first time running), or remoteSha doesn't match currentSha:
             val hasUpdate = remoteSha.isNotBlank() && !remoteSha.equals(currentSha, ignoreCase = true)
 
             UpdateInfo(
-                latestVersion = releaseName,
+                latestVersion = if (remoteSha.isNotBlank()) "Alpha ($remoteSha)" else releaseName,
                 downloadUrl = downloadUrl,
-                releaseNotes = if (hasUpdate) "New build available ($releaseName)" else "You are on the latest build",
+                releaseNotes = if (hasUpdate) "New build available ($remoteSha)" else "You are on the latest build",
                 hasUpdate = hasUpdate
             )
         }
@@ -123,12 +125,11 @@ object AppUpdateEngine {
                         c?.unregisterReceiver(this)
                     } catch (_: Exception) {}
 
-                    // Save the updated marker so it knows it is installed
                     val prefs = (c ?: context).getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    val shaMatcher = Pattern.compile("\\(([a-f0-9]+)\\)").matcher(versionLabel)
-                    if (shaMatcher.find()) {
-                        val shortSha = shaMatcher.group(1) ?: ""
-                        prefs.edit().putString(KEY_INSTALLED_SHA, shortSha).apply()
+                    val matcher = Pattern.compile("\\(([a-f0-9]+)\\)").matcher(versionLabel)
+                    if (matcher.find()) {
+                        val sha = matcher.group(1) ?: ""
+                        prefs.edit().putString(KEY_INSTALLED_SHA, sha).apply()
                     }
 
                     val file = File(
