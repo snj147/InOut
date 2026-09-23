@@ -36,6 +36,10 @@ interface StateFlowDao {
     @Query("UPDATE flow_records SET isRecurring = 0 WHERE id = :id")
     suspend fun stopRecurringSchedule(id: Long)
 
+    @Query("SELECT COUNT(*) FROM flow_records WHERE note LIKE :fingerprint")
+    suspend fun countRecordsWithFingerprint(fingerprint: String): Int
+
+    // STRICT BALANCE GUARANTEE: Only realized, non-recurring records alter account balances.
     @Query("""
         SELECT 
             CAST(pockets.id AS TEXT) AS pocketId,
@@ -47,13 +51,16 @@ interface StateFlowDao {
             pockets.targetDateEpoch AS targetDateEpoch,
             COALESCE(SUM(
                 CASE 
-                    WHEN flow_records.targetPocketId = pockets.id AND flow_records.timestamp <= :currentTime THEN flow_records.amount
-                    WHEN flow_records.sourcePocketId = pockets.id AND flow_records.timestamp <= :currentTime THEN -flow_records.amount
+                    WHEN flow_records.targetPocketId = pockets.id AND flow_records.timestamp <= :currentTime AND flow_records.isRecurring = 0 THEN flow_records.amount
+                    WHEN flow_records.sourcePocketId = pockets.id AND flow_records.timestamp <= :currentTime AND flow_records.isRecurring = 0 THEN -flow_records.amount
                     ELSE 0.0 
                 END
             ), 0.0) AS computedBalance
         FROM pockets
-        LEFT JOIN flow_records ON (pockets.id = flow_records.sourcePocketId OR pockets.id = flow_records.targetPocketId)
+        LEFT JOIN flow_records ON (
+            (pockets.id = flow_records.sourcePocketId OR pockets.id = flow_records.targetPocketId) 
+            AND flow_records.isRecurring = 0
+        )
         WHERE pockets.isArchived = 0
         GROUP BY pockets.id
     """)
@@ -70,13 +77,16 @@ interface StateFlowDao {
             pockets.targetDateEpoch AS targetDateEpoch,
             COALESCE(SUM(
                 CASE 
-                    WHEN flow_records.targetPocketId = pockets.id AND flow_records.timestamp <= :currentTime THEN flow_records.amount
-                    WHEN flow_records.sourcePocketId = pockets.id AND flow_records.timestamp <= :currentTime THEN -flow_records.amount
+                    WHEN flow_records.targetPocketId = pockets.id AND flow_records.timestamp <= :currentTime AND flow_records.isRecurring = 0 THEN flow_records.amount
+                    WHEN flow_records.sourcePocketId = pockets.id AND flow_records.timestamp <= :currentTime AND flow_records.isRecurring = 0 THEN -flow_records.amount
                     ELSE 0.0 
                 END
             ), 0.0) AS computedBalance
         FROM pockets
-        LEFT JOIN flow_records ON (pockets.id = flow_records.sourcePocketId OR pockets.id = flow_records.targetPocketId)
+        LEFT JOIN flow_records ON (
+            (pockets.id = flow_records.sourcePocketId OR pockets.id = flow_records.targetPocketId) 
+            AND flow_records.isRecurring = 0
+        )
         WHERE pockets.isArchived = 0
         GROUP BY pockets.id
     """)
