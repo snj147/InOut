@@ -208,12 +208,20 @@ fun DashboardScreen(db: AppDatabase) {
     }
 
     var naturalLanguageInput by remember { mutableStateOf("") }
-    val placeholderHints = listOf(
-        "salary 50000 sbi",
-        "new bank SBI",
-        "new card Axis limit 50000",
-        "transf 2000 from sbi to idfc",
-        "coffee 120 cash"
+        val placeholderHints = listOf(
+        "<expense> <amount> <account>",
+        "coffee <amount> <cash/bank>",
+        "monthly salary <amount> <bank> start <DD/MM/YYYY>",
+        "every month rent <amount> from <account> on <day>",
+        "weekly sip <amount> <bank> start <DD/MM/YYYY>",
+        "transfer <amount> from <source_account> to <target_account>",
+        "lent <amount> to <person_name>",
+        "borrowed <amount> from <person_name>",
+        "settle <payer> to <receiver> <amount>",
+        "new bank <account_name>",
+        "new card <card_name> limit <credit_limit>",
+        "new goal <pot_name> target <target_amount>",
+        "burn <daily_spending_ceiling>"
     )
     var currentHintIndex by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
