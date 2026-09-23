@@ -30,20 +30,26 @@ jobs:
       - name: Build Debug APK
         run: gradle assembleDebug -Pandroid.useAndroidX=true -Pandroid.nonTransitiveRClass=true --no-daemon --stacktrace
 
-      - name: Upload APK
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: InOut-v1.0-Debug
           path: app/build/outputs/apk/debug/*.apk
 
-      - name: Publish Rolling Alpha Release
-        uses: softprops/action-gh-release@v2
+      - name: Recreate Rolling Release
         if: github.ref == 'refs/heads/main'
-        with:
-          tag_name: alpha-latest
-          name: "InOut Alpha Channel"
-          body: "Automated alpha build from commit ${{ github.sha }}."
-          prerelease: true
-          files: app/build/outputs/apk/debug/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Delete existing release and tag so assets are guaranteed fresh
+          gh release delete alpha-latest --yes || true
+          git tag -d alpha-latest || true
+          git push origin :refs/tags/alpha-latest || true
+
+          # Create fresh release with short SHA
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          gh release create alpha-latest \
+            app/build/outputs/apk/debug/*.apk \
+            --title "InOut Alpha ($SHORT_SHA)" \
+            --notes "BUILD_SHA:${{ github.sha }}" \
+            --prerelease
