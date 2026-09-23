@@ -15,6 +15,9 @@ import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 
 data class UpdateInfo(
     val latestVersion: String,
@@ -31,9 +34,8 @@ object AppUpdateEngine {
 
     suspend fun checkForUpdate(context: Context): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         runCatching {
-            val currentVersionName: String = runCatching {
-                context.packageManager.getPackageInfo(context.packageName, 0).versionName
-            }.getOrNull() ?: "1.0"
+            val pkgInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+            val installedAppLastUpdate = pkgInfo.lastUpdateTime
 
             val url = URL("https://api.github.com/repos/$GITHUB_OWNER/$GITHUB_REPO/releases/tags/$ROLLING_TAG")
             val conn = url.openConnection() as HttpURLConnection
@@ -45,31 +47,39 @@ object AppUpdateEngine {
             val code = conn.responseCode
             if (code == 404) {
                 return@runCatching UpdateInfo(
-                    latestVersion = currentVersionName,
+                    latestVersion = ROLLING_TAG,
                     downloadUrl = "",
-                    releaseNotes = "No newer release build published yet.",
+                    releaseNotes = "No release tagged '$ROLLING_TAG' found on GitHub.",
                     hasUpdate = false
                 )
             }
 
             if (code !in 200..299) {
                 val err = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-                error("Server status $code: $err")
+                error("GitHub API status $code: $err")
             }
 
             val responseBody = conn.inputStream.bufferedReader().use { it.readText() }
             val json = JSONObject(responseBody)
-            val tagName: String = json.optString("tag_name", ROLLING_TAG) ?: ROLLING_TAG
-            val body: String = json.optString("body", "Continuous Alpha build") ?: "Continuous Alpha build"
+            val body = json.optString("body", "Automated alpha build") ?: "Automated alpha build"
             val assets = json.optJSONArray("assets")
 
             var downloadUrl = ""
+            var remoteAssetTimestamp = 0L
+
             if (assets != null) {
+                val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+                    timeZone = TimeZone.getTimeZone("UTC")
+                }
                 for (i in 0 until assets.length()) {
                     val asset = assets.getJSONObject(i)
                     val name = asset.optString("name", "") ?: ""
                     if (name.endsWith(".apk")) {
                         downloadUrl = asset.optString("browser_download_url", "") ?: ""
+                        val updatedAtStr = asset.optString("updated_at", "")
+                        remoteAssetTimestamp = runCatching {
+                            isoFormat.parse(updatedAtStr)?.time ?: 0L
+                        }.getOrDefault(0L)
                         break
                     }
                 }
@@ -77,18 +87,21 @@ object AppUpdateEngine {
 
             if (downloadUrl.isBlank()) {
                 return@runCatching UpdateInfo(
-                    latestVersion = currentVersionName,
+                    latestVersion = ROLLING_TAG,
                     downloadUrl = "",
-                    releaseNotes = "No APK package found in latest release.",
+                    releaseNotes = "Release exists, but no APK is attached yet.",
                     hasUpdate = false
                 )
             }
 
+            // Compares the remote APK upload timestamp against the local installation time
+            val isNewer = remoteAssetTimestamp > (installedAppLastUpdate + 10000L)
+
             UpdateInfo(
-                latestVersion = tagName,
+                latestVersion = ROLLING_TAG,
                 downloadUrl = downloadUrl,
                 releaseNotes = body,
-                hasUpdate = true
+                hasUpdate = isNewer
             )
         }
     }
