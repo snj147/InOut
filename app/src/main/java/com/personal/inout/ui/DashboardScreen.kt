@@ -63,7 +63,6 @@ import java.util.*
 fun DashboardScreen(db: AppDatabase) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val activity = context as? Activity
     val prefs = remember { context.getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE) }
 
     val alertManager = remember { VaultAlertManager() }
@@ -208,7 +207,7 @@ fun DashboardScreen(db: AppDatabase) {
     }
 
     var naturalLanguageInput by remember { mutableStateOf("") }
-        val placeholderHints = listOf(
+    val placeholderHints = listOf(
         "<expense> <amount> <account>",
         "coffee <amount> <cash/bank>",
         "monthly salary <amount> <bank> start <DD/MM/YYYY>",
@@ -527,9 +526,6 @@ fun DashboardScreen(db: AppDatabase) {
                                 }
                             }
 
-                            // STRICT RECURRING FLOW:
-                            // Blueprint is saved and catchUpRecurringRules is invoked.
-                            // Single source of truth ensures idempotent execution.
                             if (parsed.isRecurring) {
                                 db.stateFlowDao().insertFlowRecord(
                                     FlowRecord(
@@ -851,7 +847,6 @@ fun DashboardScreen(db: AppDatabase) {
                                         }
                                     }
 
-                                    // Static Glow Command Bar
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -902,7 +897,6 @@ fun DashboardScreen(db: AppDatabase) {
                                                 }
                                             }
 
-                                            // Real-Time Action Suggester
                                             if (liveSuggestions.isNotEmpty()) {
                                                 HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.6f), thickness = 0.8.dp)
                                                 LazyRow(
@@ -1107,12 +1101,13 @@ fun DashboardScreen(db: AppDatabase) {
                                                 val info = res.getOrNull()
                                                 if (info != null && info.hasUpdate && info.downloadUrl.isNotBlank()) {
                                                     availableUpdateInfo = info
-                                                    alertManager.showAlert("New update available: ${info.latestVersion}", AlertType.INFO)
                                                 } else {
+                                                    availableUpdateInfo = null
                                                     alertManager.showAlert("You are on the latest build", AlertType.SUCCESS)
                                                 }
                                             } else {
-                                                alertManager.showAlert("Update check: ${res.exceptionOrNull()?.message}", AlertType.WARNING)
+                                                availableUpdateInfo = null
+                                                alertManager.showAlert("You are on the latest build", AlertType.SUCCESS)
                                             }
                                         }
                                     },
@@ -1707,18 +1702,18 @@ private fun SettingsCardsList(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(theme.mildGreen.copy(alpha = 0.15f))
+                                .background(theme.accent.copy(alpha = 0.15f))
                                 .padding(10.dp)
                         ) {
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text("New Version Available: ${availableUpdate.latestVersion}", color = theme.mildGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("New Version Available: ${availableUpdate.latestVersion}", color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 Text(availableUpdate.releaseNotes, color = theme.textBright, fontSize = 10.5.sp, maxLines = 2)
                             }
                         }
 
                         Button(
                             onClick = { onInstallUpdate(availableUpdate) },
-                            colors = ButtonDefaults.buttonColors(containerColor = theme.mildGreen),
+                            colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -1892,7 +1887,6 @@ private fun SettingsCardsList(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditRecurringRuleDialog(
     rule: FlowRecord,
@@ -1907,33 +1901,16 @@ private fun EditRecurringRuleDialog(
     var showDatePicker by remember { mutableStateOf(false) }
 
     val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateEpoch))
-    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = selectedDateEpoch)
 
     if (showDatePicker) {
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    datePickerState.selectedDateMillis?.let { selectedDateEpoch = it }
-                    showDatePicker = false
-                }) { Text("Select", color = theme.accent, fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) { Text("Cancel", color = theme.textMuted) }
-            },
-            colors = DatePickerDefaults.colors(containerColor = theme.surface)
-        ) {
-            DatePicker(
-                state = datePickerState,
-                colors = DatePickerDefaults.colors(
-                    titleContentColor = theme.textBright,
-                    headlineContentColor = theme.textBright,
-                    selectedDayContainerColor = theme.accent,
-                    selectedDayContentColor = theme.bg,
-                    todayDateBorderColor = theme.accent
-                )
-            )
-        }
+        CustomCalendarDialog(
+            initialDateMillis = selectedDateEpoch,
+            onDismiss = { showDatePicker = false },
+            onDateSelected = {
+                selectedDateEpoch = it
+                showDatePicker = false
+            }
+        )
     }
 
     AlertDialog(
@@ -2059,7 +2036,6 @@ private fun EditTransactionDialog(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun CreateAccountDialog(
     initialName: String = "",
@@ -2076,33 +2052,16 @@ private fun CreateAccountDialog(
     var showDatePicker by remember { mutableStateOf(false) }
 
     val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(targetDateEpoch))
-    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = targetDateEpoch)
 
     if (showDatePicker) {
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    datePickerState.selectedDateMillis?.let { targetDateEpoch = it }
-                    showDatePicker = false
-                }) { Text("Select", color = theme.accent, fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) { Text("Cancel", color = theme.textMuted) }
-            },
-            colors = DatePickerDefaults.colors(containerColor = theme.surface)
-        ) {
-            DatePicker(
-                state = datePickerState,
-                colors = DatePickerDefaults.colors(
-                    titleContentColor = theme.textBright,
-                    headlineContentColor = theme.textBright,
-                    selectedDayContainerColor = theme.accent,
-                    selectedDayContentColor = theme.bg,
-                    todayDateBorderColor = theme.accent
-                )
-            )
-        }
+        CustomCalendarDialog(
+            initialDateMillis = targetDateEpoch,
+            onDismiss = { showDatePicker = false },
+            onDateSelected = {
+                targetDateEpoch = it
+                showDatePicker = false
+            }
+        )
     }
 
     AlertDialog(
@@ -2172,7 +2131,6 @@ private fun CreateAccountDialog(
     )
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditAccountDialog(
     account: VaultPocket,
@@ -2190,33 +2148,16 @@ private fun EditAccountDialog(
     var showDatePicker by remember { mutableStateOf(false) }
 
     val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(targetDateEpoch))
-    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = targetDateEpoch)
 
     if (showDatePicker) {
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    datePickerState.selectedDateMillis?.let { targetDateEpoch = it }
-                    showDatePicker = false
-                }) { Text("Select", color = theme.accent, fontWeight = FontWeight.Bold) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDatePicker = false }) { Text("Cancel", color = theme.textMuted) }
-            },
-            colors = DatePickerDefaults.colors(containerColor = theme.surface)
-        ) {
-            DatePicker(
-                state = datePickerState,
-                colors = DatePickerDefaults.colors(
-                    titleContentColor = theme.textBright,
-                    headlineContentColor = theme.textBright,
-                    selectedDayContainerColor = theme.accent,
-                    selectedDayContentColor = theme.bg,
-                    todayDateBorderColor = theme.accent
-                )
-            )
-        }
+        CustomCalendarDialog(
+            initialDateMillis = targetDateEpoch,
+            onDismiss = { showDatePicker = false },
+            onDateSelected = {
+                targetDateEpoch = it
+                showDatePicker = false
+            }
+        )
     }
 
     AlertDialog(
