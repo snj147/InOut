@@ -124,34 +124,18 @@ fun CompactInputField(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ThemedDatePickerDialog(
     initialDateMillis: Long,
     onDismiss: () -> Unit,
     onDateSelected: (Long) -> Unit
 ) {
-    val datePickerState = rememberDatePickerState(initialSelectedDateMillis = initialDateMillis)
-    val theme = LocalThemeColors.current
-
-    DatePickerDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = {
-                datePickerState.selectedDateMillis?.let { onDateSelected(it) }
-            }) {
-                Text("Select", color = theme.accent, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel", color = theme.textMuted)
-            }
-        },
-        colors = DatePickerDefaults.colors(containerColor = theme.surface)
-    ) {
-        DatePicker(state = datePickerState)
-    }
+    // Delegates directly to CustomCalendarDialog to standardize the compact amber look across the whole app
+    CustomCalendarDialog(
+        initialDateMillis = initialDateMillis,
+        onDismiss = onDismiss,
+        onDateSelected = onDateSelected
+    )
 }
 
 @Composable
