@@ -130,7 +130,6 @@ fun ThemedDatePickerDialog(
     onDismiss: () -> Unit,
     onDateSelected: (Long) -> Unit
 ) {
-    // Delegates directly to CustomCalendarDialog to standardize the compact amber look across the whole app
     CustomCalendarDialog(
         initialDateMillis = initialDateMillis,
         onDismiss = onDismiss,
