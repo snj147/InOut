@@ -4,9 +4,6 @@ import android.content.Context
 import com.personal.inout.data.MovementNature
 import com.personal.inout.data.PocketType
 import com.personal.inout.data.VaultPocket
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Locale
 import java.util.regex.Pattern
 
 sealed class ParsedIntent {
@@ -77,11 +74,11 @@ object NaturalLanguageParser {
         }
 
         // 4. Peer Commands (Collect, Lent, Borrow, Repay)
-        // Syntax: collect 2000 from ABC  OR  collect from ABC 2000
-        val collectMatcher = Pattern.compile("^(?:collect|received|got)\\s+(\\d+(?:\\.\\d+)?)\\s+(?:from\\s+)?([a-zA-Z0-9_\\s]+)$", Pattern.CASE_INSENSITIVE).matcher(trimmed)
+        // Shorthands: collect, col, rec, received, got
+        val collectMatcher = Pattern.compile("^(?:collect|col|rec|received|got)\\s+(\\d+(?:\\.\\d+)?)\\s+from\\s+([a-zA-Z0-9_\\s]+)$", Pattern.CASE_INSENSITIVE).matcher(trimmed)
         if (collectMatcher.find()) {
             val amt = collectMatcher.group(1)?.toDoubleOrNull() ?: 0.0
-            val personRaw = collectMatcher.group(2)?.trim()?.removePrefix("from ")?.trim() ?: ""
+            val personRaw = collectMatcher.group(2)?.trim() ?: ""
             if (personRaw.isNotBlank()) {
                 val matchedPocket = rawPockets.firstOrNull { it.pocketType == PocketType.COUNTERPARTY && it.name.equals(personRaw, ignoreCase = true) }
                 return ParsedIntent.Transaction(
@@ -99,11 +96,11 @@ object NaturalLanguageParser {
             }
         }
 
-        // Syntax: lent 2000 to ABC  OR  lend 2000 to ABC
-        val lendMatcher = Pattern.compile("^(?:lent|lend|gave)\\s+(\\d+(?:\\.\\d+)?)\\s+(?:to\\s+)?([a-zA-Z0-9_\\s]+)$", Pattern.CASE_INSENSITIVE).matcher(trimmed)
+        // Shorthands: lent, lend, gave, giv
+        val lendMatcher = Pattern.compile("^(?:lent|lend|gave|giv)\\s+(\\d+(?:\\.\\d+)?)\\s+to\\s+([a-zA-Z0-9_\\s]+)$", Pattern.CASE_INSENSITIVE).matcher(trimmed)
         if (lendMatcher.find()) {
             val amt = lendMatcher.group(1)?.toDoubleOrNull() ?: 0.0
-            val personRaw = lendMatcher.group(2)?.trim()?.removePrefix("to ")?.trim() ?: ""
+            val personRaw = lendMatcher.group(2)?.trim() ?: ""
             if (personRaw.isNotBlank()) {
                 val matchedPocket = rawPockets.firstOrNull { it.pocketType == PocketType.COUNTERPARTY && it.name.equals(personRaw, ignoreCase = true) }
                 return ParsedIntent.Transaction(
@@ -121,11 +118,11 @@ object NaturalLanguageParser {
             }
         }
 
-        // Syntax: borrowed 2000 from ABC  OR  borrow 2000 from ABC
-        val borrowMatcher = Pattern.compile("^(?:borrowed|borrow)\\s+(\\d+(?:\\.\\d+)?)\\s+(?:from\\s+)?([a-zA-Z0-9_\\s]+)$", Pattern.CASE_INSENSITIVE).matcher(trimmed)
+        // Shorthands: borrowed, borrow, bor
+        val borrowMatcher = Pattern.compile("^(?:borrowed|borrow|bor)\\s+(\\d+(?:\\.\\d+)?)\\s+from\\s+([a-zA-Z0-9_\\s]+)$", Pattern.CASE_INSENSITIVE).matcher(trimmed)
         if (borrowMatcher.find()) {
             val amt = borrowMatcher.group(1)?.toDoubleOrNull() ?: 0.0
-            val personRaw = borrowMatcher.group(2)?.trim()?.removePrefix("from ")?.trim() ?: ""
+            val personRaw = borrowMatcher.group(2)?.trim() ?: ""
             if (personRaw.isNotBlank()) {
                 val matchedPocket = rawPockets.firstOrNull { it.pocketType == PocketType.COUNTERPARTY && it.name.equals(personRaw, ignoreCase = true) }
                 return ParsedIntent.Transaction(
@@ -143,8 +140,8 @@ object NaturalLanguageParser {
             }
         }
 
-        // 5. Transfer between accounts: transfer 5000 from SBI to HDFC
-        val transferMatcher = Pattern.compile("^transfer\\s+(\\d+(?:\\.\\d+)?)\\s+from\\s+(.+?)\\s+to\\s+(.+)$", Pattern.CASE_INSENSITIVE).matcher(trimmed)
+        // 5. Transfer Shorthands: transfer, trf, xfer, tfr
+        val transferMatcher = Pattern.compile("^(?:transfer|trf|xfer|tfr)\\s+(\\d+(?:\\.\\d+)?)\\s+from\\s+(.+?)\\s+to\\s+(.+)$", Pattern.CASE_INSENSITIVE).matcher(trimmed)
         if (transferMatcher.find()) {
             val amt = transferMatcher.group(1)?.toDoubleOrNull() ?: 0.0
             val srcName = transferMatcher.group(2)?.trim() ?: ""
@@ -165,17 +162,16 @@ object NaturalLanguageParser {
             )
         }
 
-        // 6. Generic Standard Flow: <merchant/category> <amount> [from/in <account>]
-        // E.g.: "coffee 150 sbi" OR "salary 50000 into hdfc" OR "shoes 2000 hdfc"
+        // 6. Generic Standard Flow with Shorthands
         var isRecurring = false
         var cadence = "NONE"
-        if (lower.contains("every month") || lower.contains("monthly")) {
+        if (lower.contains("every month") || lower.contains("monthly") || lower.startsWith("rec month")) {
             isRecurring = true
             cadence = "MONTHLY"
-        } else if (lower.contains("every week") || lower.contains("weekly")) {
+        } else if (lower.contains("every week") || lower.contains("weekly") || lower.startsWith("rec week")) {
             isRecurring = true
             cadence = "WEEKLY"
-        } else if (lower.contains("every day") || lower.contains("daily")) {
+        } else if (lower.contains("every day") || lower.contains("daily") || lower.startsWith("rec day")) {
             isRecurring = true
             cadence = "DAILY"
         }
@@ -214,6 +210,9 @@ object NaturalLanguageParser {
             .removePrefix("monthly")
             .removePrefix("weekly")
             .removePrefix("daily")
+            .removePrefix("rec month")
+            .removePrefix("rec week")
+            .removePrefix("rec day")
             .trim()
             .ifBlank { if (isInflow) "Income" else "General Expense" }
 
