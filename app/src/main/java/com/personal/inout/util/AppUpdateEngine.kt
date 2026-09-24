@@ -31,7 +31,6 @@ object AppUpdateEngine {
     private const val PREFS_NAME = "inout_update_prefs"
     private const val KEY_INSTALLED_SHA = "installed_git_sha"
 
-    // Authenticated read token for private repository releases & assets
     private const val GITHUB_READ_TOKEN =
         "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"
 
@@ -42,11 +41,13 @@ object AppUpdateEngine {
 
             val url = URL("https://api.github.com/repos/$GITHUB_OWNER/$GITHUB_REPO/releases?per_page=1")
             val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
             conn.setRequestProperty("Accept", "application/vnd.github+json")
-            conn.setRequestProperty("User-Agent", "InOut-App")
             conn.setRequestProperty("Authorization", "Bearer $GITHUB_READ_TOKEN")
-            conn.connectTimeout = 8000
-            conn.readTimeout = 8000
+            conn.setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
+            conn.setRequestProperty("User-Agent", "InOut-App")
+            conn.connectTimeout = 10000
+            conn.readTimeout = 10000
 
             val code = conn.responseCode
             if (code !in 200..299) {
@@ -80,7 +81,6 @@ object AppUpdateEngine {
                     val matcher = shaPattern.matcher(name)
                     if (matcher.find()) {
                         remoteSha = matcher.group(1) ?: ""
-                        // GitHub private asset API download URL
                         downloadUrl = asset.optString("url", asset.optString("browser_download_url", ""))
                         break
                     } else if (name.endsWith(".apk")) {
@@ -116,6 +116,7 @@ object AppUpdateEngine {
             setDescription(versionLabel)
             addRequestHeader("Authorization", "Bearer $GITHUB_READ_TOKEN")
             addRequestHeader("Accept", "application/octet-stream")
+            addRequestHeader("X-GitHub-Api-Version", "2022-11-28")
             addRequestHeader("User-Agent", "InOut-App")
             setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
             setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
