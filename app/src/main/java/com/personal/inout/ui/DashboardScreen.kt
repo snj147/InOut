@@ -606,7 +606,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         sourcePocketId = sourceId,
                                         targetPocketId = targetId,
                                         amount = parsed.amount,
-                                        nature = parsed.nature,
+                                        movementNature = parsed.nature,
                                         category = parsed.category,
                                         note = parsed.merchant,
                                         timestamp = parsed.timestamp,
@@ -1010,35 +1010,33 @@ fun DashboardScreen(db: AppDatabase) {
                                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
                                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                                 ) {
-                                                    // Quick bar command pill click handler
-items(quickBarCommandPills) { (pillTitle, pillTemplate, pillIcon) ->
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(theme.surfaceAlt)
-            .clickable {
-                val t = pillTemplate
-                val placeholderTarget = listOf("BANK", "NAME", "<amount>", "<bank>", "<person>")
-                    .firstOrNull { t.contains(it) }
+                                                    items(quickBarCommandPills) { (pillTitle, pillTemplate, pillIcon) ->
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .clip(RoundedCornerShape(6.dp))
+                                                                .background(theme.surfaceAlt)
+                                                                .clickable {
+                                                                    val t = pillTemplate
+                                                                    val placeholderTarget = listOf("BANK", "NAME", "<amount>", "<bank>", "<person>")
+                                                                        .firstOrNull { t.contains(it) }
 
-                if (placeholderTarget != null) {
-                    val start = t.indexOf(placeholderTarget)
-                    val end = start + placeholderTarget.length
-                    naturalLanguageInput = TextFieldValue(text = t, selection = TextRange(start, end))
-                } else {
-                    naturalLanguageInput = TextFieldValue(text = t, selection = TextRange(t.length))
-                }
-                quickBarFocusRequester.requestFocus()
-            }
-            .padding(horizontal = 8.dp, vertical = 5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp)
-    ) {
-        Icon(imageVector = pillIcon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(13.dp))
-        Text(text = pillTitle, color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
+                                                                    if (placeholderTarget != null) {
+                                                                        val start = t.indexOf(placeholderTarget)
+                                                                        val end = start + placeholderTarget.length
+                                                                        naturalLanguageInput = TextFieldValue(text = t, selection = TextRange(start, end))
+                                                                    } else {
+                                                                        naturalLanguageInput = TextFieldValue(text = t, selection = TextRange(t.length))
+                                                                    }
+                                                                    quickBarFocusRequester.requestFocus()
+                                                                }
+                                                                .padding(horizontal = 8.dp, vertical = 5.dp),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                                        ) {
+                                                            Icon(imageVector = pillIcon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(13.dp))
+                                                            Text(text = pillTitle, color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }
@@ -1484,7 +1482,7 @@ items(quickBarCommandPills) { (pillTitle, pillTemplate, pillIcon) ->
                                                 sourcePocketId = effectiveSrc,
                                                 targetPocketId = effectiveTgt,
                                                 amount = amt,
-                                                nature = nature,
+                                                movementNature = nature,
                                                 category = cat,
                                                 note = note,
                                                 timestamp = date,
@@ -1879,7 +1877,6 @@ private fun CleanVaultHeader(
         }
     }
 }
-
 
 @Composable
 private fun SettingsCardsList(
