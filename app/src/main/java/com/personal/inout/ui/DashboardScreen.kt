@@ -46,7 +46,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -75,9 +74,53 @@ fun DashboardScreen(db: AppDatabase) {
     val alertManager = remember { VaultAlertManager() }
     val ledgerEngine = remember { VaultLedgerEngine(db.stateFlowDao(), prefs) }
 
+    // Read installed APK metadata safely
+    val packageInfo = remember {
+        try {
+            context.packageManager.getPackageInfo(context.packageName, 0)
+        } catch (e: Exception) {
+            null
+        }
+    }
+    val currentInstalledSha = remember(packageInfo) {
+        val vName = packageInfo?.versionName ?: "1dcb750"
+        if (vName.startsWith("InOut-alpha-")) vName.removePrefix("InOut-alpha-").removeSuffix(".apk") else vName
+    }
+    val lastInstalledTimeFormatted = remember(packageInfo) {
+        val t = packageInfo?.lastUpdateTime ?: System.currentTimeMillis()
+        SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(t))
+    }
+
+    // Auto-Log App Updates into System Notices
+    LaunchedEffect(currentInstalledSha) {
+        val lastLoggedBuild = prefs.getString("last_logged_build_sha", "")
+        if (lastLoggedBuild != currentInstalledSha && currentInstalledSha.isNotBlank()) {
+            db.stateFlowDao().insertNotice(
+                SystemNotice(
+                    title = "App Updated",
+                    message = "InOut upgraded to build ${currentInstalledSha.take(7)} on $lastInstalledTimeFormatted.",
+                    type = "APP_UPDATE",
+                    timestamp = System.currentTimeMillis(),
+                    isRead = false
+                )
+            )
+            prefs.edit().putString("last_logged_build_sha", currentInstalledSha).apply()
+        }
+    }
+
+    // Catch up recurring schedules
     LaunchedEffect(Unit) {
         val generated = ledgerEngine.catchUpRecurringRules()
         if (generated > 0) {
+            db.stateFlowDao().insertNotice(
+                SystemNotice(
+                    title = "Recurring Ledger Catch-Up",
+                    message = "Auto-executed $generated recurring schedule(s) successfully.",
+                    type = "RECURRING_TRIGGER",
+                    timestamp = System.currentTimeMillis(),
+                    isRead = false
+                )
+            )
             alertManager.showAlert("Auto-recorded $generated recurring schedule(s)", AlertType.SUCCESS)
         }
     }
@@ -112,6 +155,8 @@ fun DashboardScreen(db: AppDatabase) {
     val rawPockets by db.stateFlowDao().observeAllActivePockets().collectAsState(initial = emptyList())
     val flowRecords by db.stateFlowDao().observeAllFlowRecords().collectAsState(initial = emptyList())
     val stagedDesires by db.stateFlowDao().observeActiveStagedDesires().collectAsState(initial = emptyList())
+    val unreadNoticeCount by db.stateFlowDao().observeUnreadNoticeCount().collectAsState(initial = 0)
+    val systemNotices by db.stateFlowDao().observeAllNotices().collectAsState(initial = emptyList())
 
     val completedTransactions = remember(flowRecords) {
         flowRecords.filter { !it.isRecurring }
@@ -198,6 +243,7 @@ fun DashboardScreen(db: AppDatabase) {
     var showMockPaywall by remember { mutableStateOf(false) }
     var showBurnEditDialog by remember { mutableStateOf(false) }
     var showClearLedgerConfirmation by remember { mutableStateOf(false) }
+    var showNoticesSheet by remember { mutableStateOf(false) }
 
     var pendingActionAfterAccountCreation by remember { mutableStateOf<((Long) -> Unit)?>(null) }
 
@@ -213,9 +259,10 @@ fun DashboardScreen(db: AppDatabase) {
         prefs.edit().putInt("saved_carousel_page", pagerState.currentPage).apply()
     }
 
+    // Interactive Telegram-Style Quick Bar State
     var naturalLanguageInput by remember { mutableStateOf(TextFieldValue("")) }
     var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
-    val focusRequester = remember { FocusRequester() }
+    val quickBarFocusRequester = remember { FocusRequester() }
 
     val placeholderHints = listOf(
         "coffee 120 BANK",
@@ -243,9 +290,33 @@ fun DashboardScreen(db: AppDatabase) {
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
 
-    val liveSuggestions by remember(naturalLanguageInput.text, rawPockets) {
+    // Dynamic Context-Aware Autocomplete Pills (Telegram-Style)
+    val quickBarCommandPills = remember(naturalLanguageInput.text, rawPockets) {
         derivedStateOf {
-            QuickBarSuggester.evaluate(naturalLanguageInput.text, rawPockets)
+            val q = naturalLanguageInput.text.trim().lowercase()
+            when {
+                q.isEmpty() -> listOf(
+                    Triple("+ Bank", "create bank BANK", Icons.Filled.AccountBalance),
+                    Triple("+ Borrower", "new borrower NAME", Icons.Filled.PersonAdd),
+                    Triple("+ Card", "new card BANK limit 50k", Icons.Filled.CreditCard),
+                    Triple("Transfer", "trf 5000 from BANK to BANK", Icons.Filled.SwapHoriz)
+                )
+                q.startsWith("create") || q.startsWith("new") || q.startsWith("add") -> listOf(
+                    Triple("Bank Account", "$q bank ", Icons.Filled.AccountBalance),
+                    Triple("Borrower (Person)", "$q borrower ", Icons.Filled.Person),
+                    Triple("Lender (Person)", "$q lender ", Icons.Filled.PersonOutline),
+                    Triple("Credit Card", "$q card ", Icons.Filled.CreditCard),
+                    Triple("Goal Pot", "$q goal ", Icons.Filled.Savings)
+                )
+                q.contains("monthly") || q.contains("weekly") || q.contains("every") -> listOf(
+                    Triple("From 5th", "${naturalLanguageInput.text.trim()} from 5th", Icons.Filled.CalendarMonth),
+                    Triple("From 1st", "${naturalLanguageInput.text.trim()} from 1st", Icons.Filled.CalendarMonth),
+                    Triple("From 10th", "${naturalLanguageInput.text.trim()} from 10th", Icons.Filled.CalendarMonth)
+                )
+                else -> QuickBarSuggester.evaluate(naturalLanguageInput.text, rawPockets).map {
+                    Triple(it.title, it.template, it.icon)
+                }
+            }
         }
     }
 
@@ -426,6 +497,14 @@ fun DashboardScreen(db: AppDatabase) {
                             targetDateEpoch = 0L
                         )
                     )
+                    db.stateFlowDao().insertNotice(
+                        SystemNotice(
+                            title = "Account Created",
+                            message = "Created new ${parsed.type.name.lowercase()} ledger: '${parsed.name}'",
+                            type = "LEDGER_SYSTEM",
+                            timestamp = System.currentTimeMillis()
+                        )
+                    )
                     alertManager.showAlert("Account '${parsed.name}' created", AlertType.SUCCESS)
                     naturalLanguageInput = TextFieldValue("")
                 }
@@ -442,12 +521,6 @@ fun DashboardScreen(db: AppDatabase) {
                     dailyBurnCeiling = parsed.newRate
                     prefs.edit().putFloat("daily_burn_ceiling", parsed.newRate.toFloat()).apply()
                     alertManager.showAlert("Daily Burn set to ₹${parsed.newRate.toInt()}/day", AlertType.SUCCESS)
-                    naturalLanguageInput = TextFieldValue("")
-                }
-                is ParsedIntent.SaveMacroAlias -> {
-                    val macroPrefs = context.getSharedPreferences("vault_macros", Context.MODE_PRIVATE)
-                    macroPrefs.edit().putString(parsed.alias, parsed.fullCommand).apply()
-                    alertManager.showAlert("Macro '${parsed.alias}' mapped", AlertType.SUCCESS)
                     naturalLanguageInput = TextFieldValue("")
                 }
                 is ParsedIntent.StageDesire -> {
@@ -481,28 +554,6 @@ fun DashboardScreen(db: AppDatabase) {
                         db.stateFlowDao().updatePocket(goal.copy(isArchived = true))
                         alertManager.showAlert("Pot '${goal.name}' broken. Returned ₹${bal.toInt()}", AlertType.SUCCESS)
                         naturalLanguageInput = TextFieldValue("")
-                    }
-                }
-                is ParsedIntent.CompoundTransactions -> {
-                    verifyLiquidAccountOrPrompt { validLiquidId ->
-                        scope.launch {
-                            var successCount = 0
-                            for (sub in parsed.transactions) {
-                                val effectiveSrc = sub.matchedPocketId ?: validLiquidId
-                                val res = ledgerEngine.recordMovement(
-                                    nature = sub.nature,
-                                    sourcePocketId = effectiveSrc,
-                                    targetPocketId = sub.targetPocketId,
-                                    amount = sub.amount,
-                                    category = sub.category,
-                                    note = sub.merchant,
-                                    autoSplitEnabled = autoSplitEnabled
-                                )
-                                if (res is VaultExecutionResult.Success) successCount++
-                            }
-                            alertManager.showAlert("Recorded $successCount compound transactions", AlertType.SUCCESS)
-                            naturalLanguageInput = TextFieldValue("")
-                        }
                     }
                 }
                 is ParsedIntent.Transaction -> {
@@ -669,8 +720,13 @@ fun DashboardScreen(db: AppDatabase) {
                         totalSpent = totalOutflowLifetime,
                         isProUser = isProUnlocked,
                         isPrivacyMode = isPrivacyMode,
+                        unreadNoticeCount = unreadNoticeCount,
                         theme = theme,
-                        onTogglePrivacy = { isPrivacyMode = !isPrivacyMode }
+                        onTogglePrivacy = { isPrivacyMode = !isPrivacyMode },
+                        onOpenNotices = {
+                            showNoticesSheet = true
+                            scope.launch { db.stateFlowDao().markAllNoticesRead() }
+                        }
                     )
                 },
                 bottomBar = {
@@ -873,6 +929,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         }
                                     }
 
+                                    // The Interactive Telegram-Style Slot Quick Bar
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -915,11 +972,11 @@ fun DashboardScreen(db: AppDatabase) {
                                                         onTextLayout = { textLayoutResult = it },
                                                         modifier = Modifier
                                                             .fillMaxWidth()
-                                                            .focusRequester(focusRequester)
-                                                            .pointerInput(Unit) {
+                                                            .focusRequester(quickBarFocusRequester)
+                                                            .pointerInput(naturalLanguageInput.text) {
                                                                 detectTapGestures(
                                                                     onTap = { offset ->
-                                                                        focusRequester.requestFocus()
+                                                                        quickBarFocusRequester.requestFocus()
                                                                         val layout = textLayoutResult ?: return@detectTapGestures
                                                                         val tapPosition = layout.getOffsetForPosition(offset)
                                                                         val text = naturalLanguageInput.text
@@ -936,7 +993,7 @@ fun DashboardScreen(db: AppDatabase) {
                                                                         }
                                                                     },
                                                                     onDoubleTap = { offset ->
-                                                                        focusRequester.requestFocus()
+                                                                        quickBarFocusRequester.requestFocus()
                                                                         val layout = textLayoutResult ?: return@detectTapGestures
                                                                         val tapPosition = layout.getOffsetForPosition(offset)
                                                                         naturalLanguageInput = naturalLanguageInput.copy(selection = TextRange(tapPosition, tapPosition))
@@ -953,36 +1010,38 @@ fun DashboardScreen(db: AppDatabase) {
                                                 }
                                             }
 
-                                            if (liveSuggestions.isNotEmpty()) {
+                                            // Telegram-Style Dynamic Autocomplete Tokens
+                                            if (quickBarCommandPills.isNotEmpty()) {
                                                 HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.6f), thickness = 0.8.dp)
                                                 LazyRow(
                                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
                                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                                 ) {
-                                                    items(liveSuggestions) { suggestion ->
+                                                    items(quickBarCommandPills) { (pillTitle, pillTemplate, pillIcon) ->
                                                         Row(
                                                             modifier = Modifier
                                                                 .clip(RoundedCornerShape(6.dp))
                                                                 .background(theme.surfaceAlt)
                                                                 .clickable {
-                                                                    val t = suggestion.template
-                                                                    val varToken = listOf("<amount>", "<bank>", "<person>", "BANK", "NAME")
+                                                                    val t = pillTemplate
+                                                                    val placeholderTarget = listOf("BANK", "NAME", "<amount>", "<bank>", "<person>")
                                                                         .firstOrNull { t.contains(it) }
-                                                                    if (varToken != null) {
-                                                                        val start = t.indexOf(varToken)
-                                                                        val end = start + varToken.length
+
+                                                                    if (placeholderTarget != null) {
+                                                                        val start = t.indexOf(placeholderTarget)
+                                                                        val end = start + placeholderTarget.length
                                                                         naturalLanguageInput = TextFieldValue(t, selection = TextRange(start, end))
                                                                     } else {
                                                                         naturalLanguageInput = TextFieldValue(t, selection = TextRange(t.length))
                                                                     }
-                                                                    focusRequester.requestFocus()
+                                                                    quickBarFocusRequester.requestFocus()
                                                                 }
                                                                 .padding(horizontal = 8.dp, vertical = 5.dp),
                                                             verticalAlignment = Alignment.CenterVertically,
                                                             horizontalArrangement = Arrangement.spacedBy(5.dp)
                                                         ) {
-                                                            Icon(suggestion.icon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(13.dp))
-                                                            Text(suggestion.title, color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                            Icon(pillIcon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(13.dp))
+                                                            Text(pillTitle, color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                                         }
                                                     }
                                                 }
@@ -1154,6 +1213,8 @@ fun DashboardScreen(db: AppDatabase) {
 
                                 SettingsCardsList(
                                     theme = theme,
+                                    currentSha = currentInstalledSha,
+                                    lastUpdatedDate = lastInstalledTimeFormatted,
                                     autoSplitEnabled = autoSplitEnabled,
                                     phantomLockEnabled = phantomLockEnabled,
                                     activeThemeMode = activeThemeMode,
@@ -1244,6 +1305,74 @@ fun DashboardScreen(db: AppDatabase) {
                             .background(Color.Black.copy(alpha = 0.35f))
                             .clickable { isFabExpanded = false }
                     )
+                }
+
+                if (showNoticesSheet) {
+                    ModalBottomSheet(
+                        onDismissRequest = { showNoticesSheet = false },
+                        containerColor = theme.surface,
+                        tonalElevation = 8.dp
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("System & Ledger Notices", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                if (systemNotices.isNotEmpty()) {
+                                    TextButton(onClick = {
+                                        scope.launch { db.stateFlowDao().clearAllNotices() }
+                                    }) {
+                                        Text("Clear All", color = theme.mildRed, fontSize = 12.sp)
+                                    }
+                                }
+                            }
+
+                            if (systemNotices.isEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 32.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("No system notifications logged.", color = theme.textMuted, fontSize = 12.5.sp)
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    items(systemNotices, key = { it.id }) { notice ->
+                                        Card(
+                                            shape = RoundedCornerShape(10.dp),
+                                            colors = CardDefaults.cardColors(containerColor = theme.surfaceAlt),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(notice.title, color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                    val timeStr = SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(notice.timestamp))
+                                                    Text(timeStr, color = theme.textMuted, fontSize = 10.sp)
+                                                }
+                                                Text(notice.message, color = theme.textBright, fontSize = 11.5.sp)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(16.dp))
+                        }
+                    }
                 }
 
                 if (showFeedbackDialog) {
@@ -1682,8 +1811,10 @@ private fun CleanVaultHeader(
     totalSpent: Double,
     isProUser: Boolean,
     isPrivacyMode: Boolean,
+    unreadNoticeCount: Int,
     theme: ThemeColors,
-    onTogglePrivacy: () -> Unit
+    onTogglePrivacy: () -> Unit,
+    onOpenNotices: () -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
@@ -1702,8 +1833,8 @@ private fun CleanVaultHeader(
             Text("THE VAULT", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.8.sp)
         }
 
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Column(horizontalAlignment = Alignment.End) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(end = 4.dp)) {
                 Text(
                     text = if (isPrivacyMode) "↓ ₹ •••" else "↓ ₹ ${String.format("%,.0f", totalSpent)}",
                     color = theme.mildRed,
@@ -1717,6 +1848,27 @@ private fun CleanVaultHeader(
                     fontWeight = FontWeight.Bold
                 )
             }
+
+            // Notification Bell with Badge
+            IconButton(onClick = onOpenNotices) {
+                BadgedBox(
+                    badge = {
+                        if (unreadNoticeCount > 0) {
+                            Badge(containerColor = theme.mildRed) {
+                                Text("$unreadNoticeCount", color = Color.White, fontSize = 9.sp)
+                            }
+                        }
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Notifications,
+                        contentDescription = "Notices",
+                        tint = if (unreadNoticeCount > 0) theme.accent else theme.textMuted,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+
             IconButton(onClick = onTogglePrivacy) {
                 Icon(
                     imageVector = if (isPrivacyMode) Icons.Default.VisibilityOff else Icons.Default.Visibility,
@@ -1732,6 +1884,8 @@ private fun CleanVaultHeader(
 @Composable
 private fun SettingsCardsList(
     theme: ThemeColors,
+    currentSha: String,
+    lastUpdatedDate: String,
     autoSplitEnabled: Boolean,
     phantomLockEnabled: Boolean,
     activeThemeMode: AppThemeMode,
@@ -1756,6 +1910,31 @@ private fun SettingsCardsList(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(bottom = 96.dp)
     ) {
+        // Dedicated, Clean About & Version Card
+        item {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = theme.surface),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("ABOUT INOUT", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("InOut Vault (Alpha)", color = theme.textBright, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                            Text("Current Build: ${currentSha.take(7)}", color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Last Installed: $lastUpdatedDate", color = theme.textMuted, fontSize = 10.5.sp)
+                        }
+                    }
+                }
+            }
+        }
+
         item {
             Card(
                 shape = RoundedCornerShape(14.dp),
