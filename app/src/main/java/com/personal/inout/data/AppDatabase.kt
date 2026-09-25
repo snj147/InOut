@@ -39,12 +39,12 @@ data class VaultPocket(
 )
 
 @Entity(tableName = "flow_records")
-data class FlowRecord(
+data class FlowRecord @JvmOverloads constructor(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
     val sourcePocketId: Long? = null,
     val targetPocketId: Long? = null,
     val amount: Double? = 0.0,
-    @ColumnInfo(name = "movementNature") val nature: MovementNature,
+    @ColumnInfo(name = "movementNature") val nature: MovementNature = MovementNature.OUTFLOW,
     val category: String = "General",
     val note: String = "",
     val timestamp: Long = System.currentTimeMillis(),
@@ -53,7 +53,37 @@ data class FlowRecord(
     val recurringCadence: String = "NONE",
     val isPaused: Boolean = false
 ) {
-    // Backwards-compatibility getter for any internal code referencing movementNature
+    // Secondary constructor to satisfy callers passing 'movementNature = ...' as a named argument
+    @Ignore
+    constructor(
+        id: Long = 0L,
+        sourcePocketId: Long? = null,
+        targetPocketId: Long? = null,
+        amount: Double? = 0.0,
+        movementNature: MovementNature,
+        category: String = "General",
+        note: String = "",
+        timestamp: Long = System.currentTimeMillis(),
+        isRecurring: Boolean = false,
+        frequency: String = "NONE",
+        recurringCadence: String = "NONE",
+        isPaused: Boolean = false
+    ) : this(
+        id = id,
+        sourcePocketId = sourcePocketId,
+        targetPocketId = targetPocketId,
+        amount = amount,
+        nature = movementNature,
+        category = category,
+        note = note,
+        timestamp = timestamp,
+        isRecurring = isRecurring,
+        frequency = frequency,
+        recurringCadence = recurringCadence,
+        isPaused = isPaused
+    )
+
+    // Property getter so code reading record.movementNature continues to compile
     val movementNature: MovementNature get() = nature
 }
 
