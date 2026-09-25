@@ -1816,14 +1816,30 @@ private fun CleanVaultHeader(
     ) {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("InOut", color = theme.textBright, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                Text(
+                    text = "InOut",
+                    color = theme.textBright,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Black
+                )
                 if (isProUser) {
                     Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(theme.accent).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                        Text("PRO", color = theme.bg, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                        Text(
+                            text = "PRO",
+                            color = theme.bg,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Black
+                        )
                     }
                 }
             }
-            Text("THE VAULT", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.8.sp)
+            Text(
+                text = "THE VAULT",
+                color = theme.textMuted,
+                fontSize = 9.5.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.8.sp
+            )
         }
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -1848,7 +1864,7 @@ private fun CleanVaultHeader(
                         if (unreadNoticeCount > 0) {
                             Badge(containerColor = theme.mildRed) {
                                 Text(
-                                    text = "$unreadNoticeCount",
+                                    text = unreadNoticeCount.toString(),
                                     color = Color.White,
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold
@@ -1858,20 +1874,20 @@ private fun CleanVaultHeader(
                     }
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Notifications,
+                        imageVector = Icons.Filled.Notifications,
                         contentDescription = "Notices",
-                        tint = if (unreadNoticeCount > 0) theme.accent else theme.textMuted,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(20.dp),
+                        tint = if (unreadNoticeCount > 0) theme.accent else theme.textMuted
                     )
                 }
             }
 
             IconButton(onClick = onTogglePrivacy) {
                 Icon(
-                    imageVector = if (isPrivacyMode) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                    imageVector = if (isPrivacyMode) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
                     contentDescription = "Toggle Privacy",
-                    tint = theme.textMuted,
-                    modifier = Modifier.size(20.dp)
+                    modifier = Modifier.size(20.dp),
+                    tint = theme.textMuted
                 )
             }
         }
