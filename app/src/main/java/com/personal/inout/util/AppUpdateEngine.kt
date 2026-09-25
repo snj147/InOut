@@ -9,11 +9,9 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import androidx.core.content.FileProvider
-import com.personal.inout.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
-import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -54,7 +52,12 @@ object AppUpdateEngine {
                 return@withContext Result.success(UpdateInfo(false, "", "", "No releases found"))
             }
 
-            val currentSha = BuildConfig.BUILD_COMMIT_SHA.trim()
+            val installedVersionName = try {
+                val pkgInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+                pkgInfo.versionName?.trim() ?: ""
+            } catch (e: Exception) {
+                ""
+            }
 
             data class CandidateAsset(
                 val name: String,
@@ -86,7 +89,6 @@ object AppUpdateEngine {
                             0L
                         }
 
-                        // Extract SHA from InOut-alpha-<sha>.apk or fallback to name
                         val extractedSha = if (name.startsWith("InOut-alpha-") && name.endsWith(".apk")) {
                             name.removePrefix("InOut-alpha-").removeSuffix(".apk")
                         } else {
@@ -102,11 +104,13 @@ object AppUpdateEngine {
                 return@withContext Result.success(UpdateInfo(false, "", "", "No APK assets found"))
             }
 
-            // Always pick the newest uploaded APK across all assets
             val newestAsset = candidateList.maxByOrNull { it.timestamp } ?: candidateList.first()
+            val targetSha = newestAsset.sha.trim()
 
-            val isNewer = if (currentSha.isNotBlank() && currentSha != "DEV" && newestAsset.sha.isNotBlank()) {
-                !currentSha.startsWith(newestAsset.sha) && !newestAsset.sha.startsWith(currentSha)
+            val isNewer = if (installedVersionName.isNotBlank() && targetSha.isNotBlank()) {
+                val cleanInstalled = installedVersionName.lowercase()
+                val cleanTarget = targetSha.lowercase()
+                cleanInstalled != cleanTarget && !cleanInstalled.contains(cleanTarget) && !cleanTarget.contains(cleanInstalled)
             } else {
                 false
             }
@@ -114,9 +118,9 @@ object AppUpdateEngine {
             Result.success(
                 UpdateInfo(
                     hasUpdate = isNewer,
-                    latestVersion = newestAsset.sha.take(7),
+                    latestVersion = targetSha.take(7),
                     downloadUrl = newestAsset.downloadUrl,
-                    releaseNotes = "New Alpha Build: ${newestAsset.sha.take(7)}"
+                    releaseNotes = "New Alpha Build: ${targetSha.take(7)}"
                 )
             )
         } catch (e: Exception) {
