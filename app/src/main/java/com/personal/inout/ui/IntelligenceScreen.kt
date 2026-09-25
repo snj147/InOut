@@ -1,134 +1,172 @@
 package com.personal.inout.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.personal.inout.data.FlowRecord
-import com.personal.inout.data.MovementNature
-import com.personal.inout.data.PocketBalanceSummary
-import com.personal.inout.data.StagedDesire
-import java.util.Calendar
+import com.personal.inout.data.*
+import java.text.SimpleDateFormat
+import java.util.*
+import kotlin.math.abs
 
 @Composable
 fun IntelligenceScreen(
-    pocketBalances: List<PocketBalanceSummary> = emptyList(),
-    flowRecords: List<FlowRecord> = emptyList(),
-    recurringSchedules: List<FlowRecord> = emptyList(),
-    stagedDesires: List<StagedDesire> = emptyList(),
-    dailyBurnCeiling: Double = 450.0,
-    trueSafeLiquid: Double = 0.0,
-    isPrivacyMode: Boolean = false,
+    pocketBalances: List<PocketBalanceTuple>,
+    flowRecords: List<FlowRecord>,
+    recurringSchedules: List<FlowRecord>,
+    stagedDesires: List<StagedDesire>,
+    dailyBurnCeiling: Double,
+    trueSafeLiquid: Double,
+    isPrivacyMode: Boolean,
     theme: ThemeColors
 ) {
-    val todayStart = remember {
-        Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, 0)
-            set(Calendar.MINUTE, 0)
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-        }.timeInMillis
+    val totalExpenseLifetime = remember(flowRecords) {
+        flowRecords.filter {
+            !it.isRecurring && it.nature in listOf(
+                MovementNature.OUTFLOW,
+                MovementNature.PEER_LEND,
+                MovementNature.PEER_REPAY,
+                MovementNature.CARD_PAYMENT
+            )
+        }.sumOf { it.amount ?: 0.0 }
     }
 
-    val spentToday = remember(flowRecords) {
-        flowRecords.filter { it.timestamp >= todayStart && it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY) }
-            .sumOf { it.amount }
+    val totalIncomeLifetime = remember(flowRecords) {
+        flowRecords.filter {
+            !it.isRecurring && it.nature in listOf(
+                MovementNature.INFLOW,
+                MovementNature.PEER_COLLECT
+            )
+        }.sumOf { it.amount ?: 0.0 }
     }
 
-    val burnDelta = dailyBurnCeiling - spentToday
-    val isPacingHealthy = burnDelta >= 0
-
-    // Leakage / Zombie Rule Detection:
-    // 1. Strictly OUTFLOW subscriptions (Salary and Inflows are explicitly excluded)
-    // 2. 30-day grace period: rules created less than 30 days ago are never flagged
-    val inactiveRecurring = remember(recurringSchedules, flowRecords) {
-        val thirtyDaysAgo = System.currentTimeMillis() - (30L * 24 * 3600 * 1000L)
-        recurringSchedules.filter { rule ->
-            val isOutflow = rule.nature !in listOf(MovementNature.INFLOW) &&
-                    !rule.category.equals("Salary", ignoreCase = true) &&
-                    !rule.note.contains("salary", ignoreCase = true)
-
-            val isOlderThan30Days = rule.timestamp < thirtyDaysAgo
-            val hasRecentMatch = flowRecords.any {
-                it.note.equals(rule.note, ignoreCase = true) && it.timestamp >= thirtyDaysAgo && !it.isRecurring
-            }
-
-            isOutflow && isOlderThan30Days && !hasRecentMatch && !rule.isPaused
+    val categoryBreakdown = remember(flowRecords) {
+        flowRecords.filter {
+            !it.isRecurring && it.nature in listOf(
+                MovementNature.OUTFLOW,
+                MovementNature.PEER_LEND,
+                MovementNature.PEER_REPAY,
+                MovementNature.CARD_PAYMENT
+            )
         }
+            .groupBy { it.category.ifBlank { "General" } }
+            .mapValues { (_, list) -> list.sumOf { it.amount ?: 0.0 } }
+            .toList()
+            .sortedByDescending { it.second }
     }
 
-    val totalImpulseSaved = remember(stagedDesires) {
-        stagedDesires.sumOf { it.amount }
+    val runwayDays = if (dailyBurnCeiling > 0.0) {
+        (trueSafeLiquid / dailyBurnCeiling).toInt()
+    } else {
+        0
     }
 
-    val burnProgress = if (dailyBurnCeiling > 0) (spentToday / dailyBurnCeiling).toFloat().coerceIn(0f, 1f) else 0f
+    val netWorth = remember(pocketBalances) {
+        pocketBalances.sumOf { it.computedBalance ?: 0.0 }
+    }
+
+    val activeGoals = remember(pocketBalances) {
+        pocketBalances.filter { it.pocketType == PocketType.SAVING_GOAL }
+    }
 
     LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
-        contentPadding = PaddingValues(top = 16.dp, bottom = 100.dp)
+        contentPadding = PaddingValues(top = 16.dp, bottom = 96.dp)
     ) {
         item {
-            Text("Decision Console & Intelligence", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text(
+                text = "Financial Intelligence",
+                color = theme.textBright,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold
+            )
         }
 
-        // 1. Pacing & Trajectory Gauge (At-a-Glance Audit)
+        // Summary Net Worth & Burn Rate Card
         item {
             Card(
                 shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(containerColor = theme.surface),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("TRAJECTORY & PACING GAUGE", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
-
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            text = if (isPrivacyMode) "₹ ••• / ₹ •••" else "₹${spentToday.toInt()} spent of ₹${dailyBurnCeiling.toInt()} target",
-                            color = theme.textBright,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold
+                            "NET CAPITAL POSITION",
+                            color = theme.textMuted,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
                         )
-                        Text(
-                            text = if (isPacingHealthy) "+₹${burnDelta.toInt()} buffer" else "-₹${Math.abs(burnDelta).toInt()} spiked",
-                            color = if (isPacingHealthy) theme.mildGreen else theme.mildRed,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (netWorth >= 0.0) theme.mildGreen.copy(alpha = 0.2f) else theme.mildRed.copy(alpha = 0.2f))
+                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                if (netWorth >= 0.0) "Solvent" else "Deficit",
+                                color = if (netWorth >= 0.0) theme.mildGreen else theme.mildRed,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
 
-                    LinearProgressIndicator(
-                        progress = burnProgress,
-                        modifier = Modifier.fillMaxWidth().height(4.dp),
-                        color = if (isPacingHealthy) theme.mildGreen else theme.mildRed,
-                        trackColor = theme.surfaceAlt
-                    )
+                    val netWorthStr = if (isPrivacyMode) "₹ •••" else "${if (netWorth >= 0.0) "" else "-"}₹${String.format("%,.0f", abs(netWorth))}"
+                    Text(netWorthStr, color = theme.textBright, fontSize = 26.sp, fontWeight = FontWeight.Black)
 
-                    Text(
-                        text = if (isPacingHealthy)
-                            "Pacing on track. Spending within your daily ceiling preserves your survival horizon."
-                        else
-                            "Spend spiked above ceiling. Running below ₹${(dailyBurnCeiling * 0.8).toInt()}/day for 3 days will restore runway equilibrium.",
-                        color = theme.textMuted,
-                        fontSize = 11.sp
-                    )
+                    HorizontalDivider(color = theme.surfaceAlt, thickness = 0.5.dp)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text("Safe Liquid Runway", color = theme.textMuted, fontSize = 10.5.sp)
+                            Text(
+                                if (isPrivacyMode) "•• Days" else "$runwayDays Days",
+                                color = theme.accent,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("Daily Ceiling", color = theme.textMuted, fontSize = 10.5.sp)
+                            Text(
+                                "₹${dailyBurnCeiling.toInt()}/day",
+                                color = theme.textBright,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
         }
 
-        // 2. Leakage & Zombie Rule Detector (Filtered & Inflows Excluded)
+        // Active Staged Desires & Cool-off Quarantine
         item {
             Card(
                 shape = RoundedCornerShape(14.dp),
@@ -136,28 +174,56 @@ fun IntelligenceScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("LEAKAGE & ZOMBIE RULES", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "COOL-OFF DESIRES QUARANTINE",
+                            color = theme.textMuted,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                        Text(
+                            "${stagedDesires.size} staged",
+                            color = theme.accent,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
 
-                    if (inactiveRecurring.isEmpty()) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = theme.mildGreen, modifier = Modifier.size(16.dp))
-                            Text("Zero leakage detected across active recurring schedules.", color = theme.textBright, fontSize = 12.sp)
-                        }
+                    if (stagedDesires.isEmpty()) {
+                        Text(
+                            "No impulse purchases staged. Type 'stage <item> <amount>' to place an item in quarantine.",
+                            color = theme.textMuted,
+                            fontSize = 11.5.sp
+                        )
                     } else {
-                        inactiveRecurring.forEach { rule ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).padding(10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Icon(Icons.Default.Warning, contentDescription = null, tint = theme.mildRed, modifier = Modifier.size(16.dp))
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            stagedDesires.forEach { desire ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(theme.surfaceAlt)
+                                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Column {
-                                        Text(rule.note.ifBlank { rule.category }, color = theme.textBright, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
-                                        Text("No manual transactions logged in 30+ days", color = theme.textMuted, fontSize = 10.sp)
+                                        Text(desire.name, color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        val ageDays = ((System.currentTimeMillis() - desire.createdAtEpoch) / (24L * 3600 * 1000L)).toInt()
+                                        Text("In quarantine: $ageDays days", color = theme.textMuted, fontSize = 10.sp)
                                     }
+                                    Text(
+                                        "₹${desire.amount.toInt()}",
+                                        color = theme.textBright,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
-                                Text("₹${rule.amount.toInt()}", color = theme.mildRed, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -165,37 +231,102 @@ fun IntelligenceScreen(
             }
         }
 
-        // 3. Impulse Capital Saved Trophy Card
+        // Saving Goal Pots Progress
+        if (activeGoals.isNotEmpty()) {
+            item {
+                Card(
+                    shape = RoundedCornerShape(14.dp),
+                    colors = CardDefaults.cardColors(containerColor = theme.surface),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            "SAVINGS GOAL POTS",
+                            color = theme.textMuted,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+
+                        activeGoals.forEach { goal ->
+                            val currentAmt = (goal.computedBalance ?: 0.0).coerceAtLeast(0.0)
+                            val targetAmt = (goal.targetAmount ?: 0.0).coerceAtLeast(1.0)
+                            val progress = (currentAmt / targetAmt).toFloat().coerceIn(0f, 1f)
+                            val percent = (progress * 100).toInt()
+
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(goal.pocketName ?: "Goal", color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        "₹${currentAmt.toInt()} / ₹${targetAmt.toInt()} ($percent%)",
+                                        color = theme.accent,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                LinearProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .clip(CircleShape),
+                                    color = theme.accent,
+                                    trackColor = theme.surfaceAlt
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Category Breakdown
         item {
             Card(
                 shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(containerColor = theme.surface),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("IMPULSE CAPITAL RECLAIMED", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
-
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        text = if (isPrivacyMode) "₹ ••• Saved" else "₹${String.format("%,.0f", totalImpulseSaved)} Saved",
-                        color = theme.accent,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Black
-                    )
-
-                    Text(
-                        text = "Money reclaimed by holding desire items past the 48-hour cool-off quarantine without purchasing.",
+                        "TOP EXPENSE CHANNELS",
                         color = theme.textMuted,
-                        fontSize = 11.sp
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
                     )
 
-                    val recentDropped = stagedDesires.take(3)
-                    if (recentDropped.isNotEmpty()) {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            recentDropped.forEach { item ->
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("• ${item.name}", color = theme.textBright, fontSize = 11.5.sp)
-                                    Text("₹${item.amount.toInt()}", color = theme.mildGreen, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                    if (categoryBreakdown.isEmpty()) {
+                        Text("No spending history recorded yet.", color = theme.textMuted, fontSize = 11.5.sp)
+                    } else {
+                        val maxExpense = (categoryBreakdown.firstOrNull()?.second ?: 1.0).coerceAtLeast(1.0)
+                        categoryBreakdown.take(6).forEach { (cat, amt) ->
+                            val ratio = (amt / maxExpense).toFloat().coerceIn(0f, 1f)
+                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(cat, color = theme.textBright, fontSize = 12.sp)
+                                    Text(
+                                        if (isPrivacyMode) "₹ •••" else "₹${amt.toInt()}",
+                                        color = theme.textBright,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
+                                LinearProgressIndicator(
+                                    progress = { ratio },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(4.dp)
+                                        .clip(CircleShape),
+                                    color = theme.mildRed,
+                                    trackColor = theme.surfaceAlt
+                                )
                             }
                         }
                     }
