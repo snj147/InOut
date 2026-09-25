@@ -1010,33 +1010,35 @@ fun DashboardScreen(db: AppDatabase) {
                                                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
                                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                                 ) {
-                                                    items(quickBarCommandPills) { (pillTitle, pillTemplate, pillIcon) ->
-                                                        Row(
-                                                            modifier = Modifier
-                                                                .clip(RoundedCornerShape(6.dp))
-                                                                .background(theme.surfaceAlt)
-                                                                .clickable {
-                                                                    val t = pillTemplate
-                                                                    val placeholderTarget = listOf("BANK", "NAME", "<amount>", "<bank>", "<person>")
-                                                                        .firstOrNull { t.contains(it) }
+                                                    // Quick bar command pill click handler
+items(quickBarCommandPills) { (pillTitle, pillTemplate, pillIcon) ->
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(theme.surfaceAlt)
+            .clickable {
+                val t = pillTemplate
+                val placeholderTarget = listOf("BANK", "NAME", "<amount>", "<bank>", "<person>")
+                    .firstOrNull { t.contains(it) }
 
-                                                                    if (placeholderTarget != null) {
-                                                                        val start = t.indexOf(placeholderTarget)
-                                                                        val end = start + placeholderTarget.length
-                                                                        naturalLanguageInput = TextFieldValue(t, selection = TextRange(start, end))
-                                                                    } else {
-                                                                        naturalLanguageInput = TextFieldValue(t, selection = TextRange(t.length))
-                                                                    }
-                                                                    quickBarFocusRequester.requestFocus()
-                                                                }
-                                                                .padding(horizontal = 8.dp, vertical = 5.dp),
-                                                            verticalAlignment = Alignment.CenterVertically,
-                                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                                        ) {
-                                                            Icon(pillIcon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(13.dp))
-                                                            Text(pillTitle, color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                                        }
-                                                    }
+                if (placeholderTarget != null) {
+                    val start = t.indexOf(placeholderTarget)
+                    val end = start + placeholderTarget.length
+                    naturalLanguageInput = TextFieldValue(text = t, selection = TextRange(start, end))
+                } else {
+                    naturalLanguageInput = TextFieldValue(text = t, selection = TextRange(t.length))
+                }
+                quickBarFocusRequester.requestFocus()
+            }
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        Icon(imageVector = pillIcon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(13.dp))
+        Text(text = pillTitle, color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
                                                 }
                                             }
                                         }
@@ -1816,30 +1818,14 @@ private fun CleanVaultHeader(
     ) {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(
-                    text = "InOut",
-                    color = theme.textBright,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Black
-                )
+                Text(text = "InOut", color = theme.textBright, fontSize = 22.sp, fontWeight = FontWeight.Black)
                 if (isProUser) {
                     Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(theme.accent).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                        Text(
-                            text = "PRO",
-                            color = theme.bg,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Black
-                        )
+                        Text(text = "PRO", color = theme.bg, fontSize = 9.sp, fontWeight = FontWeight.Black)
                     }
                 }
             }
-            Text(
-                text = "THE VAULT",
-                color = theme.textMuted,
-                fontSize = 9.5.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.8.sp
-            )
+            Text(text = "THE VAULT", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.8.sp)
         }
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
