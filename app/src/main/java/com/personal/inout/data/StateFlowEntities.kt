@@ -2,7 +2,6 @@ package com.personal.inout.data
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
-import androidx.room.Ignore
 import androidx.room.PrimaryKey
 
 enum class PocketType {
@@ -38,12 +37,12 @@ data class VaultPocket(
 )
 
 @Entity(tableName = "flow_records")
-data class FlowRecord @JvmOverloads constructor(
+data class FlowRecord(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
     val sourcePocketId: Long? = null,
     val targetPocketId: Long? = null,
     val amount: Double? = 0.0,
-    @ColumnInfo(name = "movementNature") val nature: MovementNature = MovementNature.OUTFLOW,
+    val movementNature: MovementNature = MovementNature.OUTFLOW,
     val category: String = "General",
     val note: String = "",
     val timestamp: Long = System.currentTimeMillis(),
@@ -52,36 +51,8 @@ data class FlowRecord @JvmOverloads constructor(
     val recurringCadence: String = "NONE",
     val isPaused: Boolean = false
 ) {
-    @Ignore
-    constructor(
-        id: Long = 0L,
-        sourcePocketId: Long? = null,
-        targetPocketId: Long? = null,
-        amount: Double? = 0.0,
-        movementNature: MovementNature,
-        category: String = "General",
-        note: String = "",
-        timestamp: Long = System.currentTimeMillis(),
-        isRecurring: Boolean = false,
-        frequency: String = "NONE",
-        recurringCadence: String = "NONE",
-        isPaused: Boolean = false
-    ) : this(
-        id = id,
-        sourcePocketId = sourcePocketId,
-        targetPocketId = targetPocketId,
-        amount = amount,
-        nature = movementNature,
-        category = category,
-        note = note,
-        timestamp = timestamp,
-        isRecurring = isRecurring,
-        frequency = frequency,
-        recurringCadence = recurringCadence,
-        isPaused = isPaused
-    )
-
-    val movementNature: MovementNature get() = nature
+    // Read-only alias so files calling .nature compile without ambiguity
+    val nature: MovementNature get() = movementNature
 }
 
 @Entity(tableName = "staged_desires")
