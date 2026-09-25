@@ -44,7 +44,7 @@ data class FlowRecord(
     val sourcePocketId: Long? = null,
     val targetPocketId: Long? = null,
     val amount: Double? = 0.0,
-    val movementNature: MovementNature,
+    @ColumnInfo(name = "movementNature") val nature: MovementNature,
     val category: String = "General",
     val note: String = "",
     val timestamp: Long = System.currentTimeMillis(),
@@ -52,7 +52,10 @@ data class FlowRecord(
     val frequency: String = "NONE",
     val recurringCadence: String = "NONE",
     val isPaused: Boolean = false
-)
+) {
+    // Backwards-compatibility getter for any internal code referencing movementNature
+    val movementNature: MovementNature get() = nature
+}
 
 @Entity(tableName = "staged_desires")
 data class StagedDesire(
@@ -120,7 +123,6 @@ interface StateFlowDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertStagedDesire(desire: StagedDesire): Long
 
-    // System Notices DAO methods
     @Query("SELECT * FROM system_notices ORDER BY timestamp DESC")
     fun observeAllNotices(): Flow<List<SystemNotice>>
 
