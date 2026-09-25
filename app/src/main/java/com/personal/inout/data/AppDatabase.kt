@@ -99,7 +99,7 @@ data class SystemNotice(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
     val title: String,
     val message: String,
-    val type: String, // "APP_UPDATE", "RECURRING_TRIGGER", "LEDGER_SYSTEM"
+    val type: String,
     val timestamp: Long = System.currentTimeMillis(),
     val isRead: Boolean = false
 )
@@ -114,7 +114,11 @@ data class PocketBalanceSummary(
     @ColumnInfo(name = "targetDateEpoch") val targetDateEpoch: Long = 0L,
     @ColumnInfo(name = "currentBalance") val currentBalance: Double = 0.0,
     @ColumnInfo(name = "computedBalance") val computedBalance: Double = 0.0
-)
+) {
+    // Backwards compatibility properties for older callers (PdfDossierExporter, DynamicCockpit)
+    val name: String get() = pocketName
+    val id: Long get() = pocketId.toLongOrNull() ?: 0L
+}
 
 typealias PocketBalanceTuple = PocketBalanceSummary
 
