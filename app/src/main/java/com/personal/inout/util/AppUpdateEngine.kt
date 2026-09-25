@@ -9,173 +9,173 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import androidx.core.content.FileProvider
+import com.personal.inout.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.regex.Pattern
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 data class UpdateInfo(
+    val hasUpdate: Boolean,
     val latestVersion: String,
     val downloadUrl: String,
-    val releaseNotes: String,
-    val hasUpdate: Boolean
+    val releaseNotes: String
 )
 
 object AppUpdateEngine {
 
-    private const val GITHUB_OWNER = "snj147"
-    private const val GITHUB_REPO = "InOut"
-    private const val PREFS_NAME = "inout_update_prefs"
-    private const val KEY_INSTALLED_SHA = "installed_git_sha"
-
-    private const val GITHUB_READ_TOKEN =
-        "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"
+    private const val GITHUB_REPO_OWNER = "snj147"
+    private const val GITHUB_REPO_NAME = "InOut"
+    private const val RELEASES_API_URL = "https://api.github.com/repos/$GITHUB_REPO_OWNER/$GITHUB_REPO_NAME/releases"
 
     suspend fun checkForUpdate(context: Context): Result<UpdateInfo> = withContext(Dispatchers.IO) {
-        runCatching {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val currentSha = prefs.getString(KEY_INSTALLED_SHA, "") ?: ""
-
-            val url = URL("https://api.github.com/repos/$GITHUB_OWNER/$GITHUB_REPO/releases?per_page=1")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("Accept", "application/vnd.github+json")
-            conn.setRequestProperty("Authorization", "Bearer $GITHUB_READ_TOKEN")
-            conn.setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
-            conn.setRequestProperty("User-Agent", "InOut-App")
-            conn.connectTimeout = 10000
-            conn.readTimeout = 10000
-
-            val code = conn.responseCode
-            if (code !in 200..299) {
-                val err = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-                error("GitHub API status $code: $err")
+        try {
+            val url = URL(RELEASES_API_URL)
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                setRequestProperty("Accept", "application/vnd.github.v3+json")
+                setRequestProperty("User-Agent", "InOut-Android-Updater")
+                connectTimeout = 10000
+                readTimeout = 10000
             }
 
-            val responseBody = conn.inputStream.bufferedReader().use { it.readText() }
+            if (connection.responseCode != 200) {
+                return@withContext Result.failure(Exception("GitHub API HTTP ${connection.responseCode}"))
+            }
+
+            val responseBody = connection.inputStream.bufferedReader().use { it.readText() }
             val releasesArray = JSONArray(responseBody)
             if (releasesArray.length() == 0) {
-                return@runCatching UpdateInfo(
-                    latestVersion = "InOut",
-                    downloadUrl = "",
-                    releaseNotes = "No releases found.",
-                    hasUpdate = false
-                )
+                return@withContext Result.success(UpdateInfo(false, "", "", "No releases found"))
             }
 
-            val latestRelease = releasesArray.getJSONObject(0)
-            val releaseName = latestRelease.optString("name", "InOut Alpha")
-            val assets = latestRelease.optJSONArray("assets")
+            val currentSha = BuildConfig.BUILD_COMMIT_SHA.trim()
 
-            var downloadUrl = ""
-            var remoteSha = ""
+            data class CandidateAsset(
+                val name: String,
+                val downloadUrl: String,
+                val sha: String,
+                val timestamp: Long
+            )
 
-            if (assets != null) {
-                val shaPattern = Pattern.compile("InOut-alpha-([a-f0-9]+)\\.apk")
+            val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
+                timeZone = java.util.TimeZone.getTimeZone("UTC")
+            }
+
+            val candidateList = mutableListOf<CandidateAsset>()
+
+            for (r in 0 until releasesArray.length()) {
+                val releaseObj = releasesArray.getJSONObject(r)
+                val assets = releaseObj.optJSONArray("assets") ?: continue
+
                 for (i in 0 until assets.length()) {
                     val asset = assets.getJSONObject(i)
-                    val name = asset.optString("name", "")
-                    val matcher = shaPattern.matcher(name)
-                    if (matcher.find()) {
-                        remoteSha = matcher.group(1) ?: ""
-                        downloadUrl = asset.optString("url", asset.optString("browser_download_url", ""))
-                        break
-                    } else if (name.endsWith(".apk")) {
-                        downloadUrl = asset.optString("url", asset.optString("browser_download_url", ""))
+                    val name = asset.getString("name")
+
+                    if (name.endsWith(".apk", ignoreCase = true)) {
+                        val downloadUrl = asset.getString("browser_download_url")
+                        val updatedStr = asset.optString("updated_at", asset.optString("created_at", ""))
+                        val timestamp = try {
+                            isoFormat.parse(updatedStr)?.time ?: 0L
+                        } catch (e: Exception) {
+                            0L
+                        }
+
+                        // Extract SHA from InOut-alpha-<sha>.apk or fallback to name
+                        val extractedSha = if (name.startsWith("InOut-alpha-") && name.endsWith(".apk")) {
+                            name.removePrefix("InOut-alpha-").removeSuffix(".apk")
+                        } else {
+                            name
+                        }
+
+                        candidateList.add(CandidateAsset(name, downloadUrl, extractedSha, timestamp))
                     }
                 }
             }
 
-            if (downloadUrl.isBlank()) {
-                return@runCatching UpdateInfo(
-                    latestVersion = releaseName,
-                    downloadUrl = "",
-                    releaseNotes = "No APK package attached to release.",
-                    hasUpdate = false
-                )
+            if (candidateList.isEmpty()) {
+                return@withContext Result.success(UpdateInfo(false, "", "", "No APK assets found"))
             }
 
-            val hasUpdate = remoteSha.isNotBlank() && !remoteSha.equals(currentSha, ignoreCase = true)
+            // Always pick the newest uploaded APK across all assets
+            val newestAsset = candidateList.maxByOrNull { it.timestamp } ?: candidateList.first()
 
-            UpdateInfo(
-                latestVersion = if (remoteSha.isNotBlank()) "Alpha ($remoteSha)" else releaseName,
-                downloadUrl = downloadUrl,
-                releaseNotes = if (hasUpdate) "New build available ($remoteSha)" else "You are on the latest build",
-                hasUpdate = hasUpdate
+            val isNewer = if (currentSha.isNotBlank() && currentSha != "DEV" && newestAsset.sha.isNotBlank()) {
+                !currentSha.startsWith(newestAsset.sha) && !newestAsset.sha.startsWith(currentSha)
+            } else {
+                false
+            }
+
+            Result.success(
+                UpdateInfo(
+                    hasUpdate = isNewer,
+                    latestVersion = newestAsset.sha.take(7),
+                    downloadUrl = newestAsset.downloadUrl,
+                    releaseNotes = "New Alpha Build: ${newestAsset.sha.take(7)}"
+                )
             )
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
-    fun startDownloadAndInstall(context: Context, downloadUrl: String, versionLabel: String) {
-        val fileName = "InOut-latest.apk"
+    fun startDownloadAndInstall(context: Context, downloadUrl: String, versionTag: String) {
+        val fileName = "InOut-update-$versionTag.apk"
+        val destinationFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), fileName)
+        if (destinationFile.exists()) {
+            destinationFile.delete()
+        }
+
         val request = DownloadManager.Request(Uri.parse(downloadUrl)).apply {
             setTitle("Downloading InOut Update")
-            setDescription(versionLabel)
-            addRequestHeader("Authorization", "Bearer $GITHUB_READ_TOKEN")
-            addRequestHeader("Accept", "application/octet-stream")
-            addRequestHeader("X-GitHub-Api-Version", "2022-11-28")
-            addRequestHeader("User-Agent", "InOut-App")
+            setDescription("Fetching build $versionTag")
             setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+            setDestinationUri(Uri.fromFile(destinationFile))
             setMimeType("application/vnd.android.package-archive")
         }
 
-        val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val downloadId = downloadManager.enqueue(request)
+        val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        val downloadId = dm.enqueue(request)
 
         val receiver = object : BroadcastReceiver() {
-            override fun onReceive(c: Context?, intent: Intent?) {
-                val id = intent?.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L) ?: -1L
+            override fun onReceive(recvContext: Context?, intent: Intent?) {
+                val id = intent?.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1L)
                 if (id == downloadId) {
                     try {
-                        c?.unregisterReceiver(this)
-                    } catch (_: Exception) {}
-
-                    val prefs = (c ?: context).getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    val matcher = Pattern.compile("\\(([a-f0-9]+)\\)").matcher(versionLabel)
-                    if (matcher.find()) {
-                        val sha = matcher.group(1) ?: ""
-                        prefs.edit().putString(KEY_INSTALLED_SHA, sha).apply()
-                    }
-
-                    val file = File(
-                        Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                        fileName
-                    )
-                    if (file.exists()) {
-                        installApk(c ?: context, file)
-                    }
+                        context.unregisterReceiver(this)
+                    } catch (ignored: Exception) {}
+                    launchInstaller(context, destinationFile)
                 }
             }
         }
 
+        val filter = IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(
-                receiver,
-                IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
-                Context.RECEIVER_EXPORTED
-            )
+            context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
         } else {
-            context.registerReceiver(
-                receiver,
-                IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-            )
+            context.registerReceiver(receiver, filter)
         }
     }
 
-    private fun installApk(context: Context, file: File) {
-        val uri = FileProvider.getUriForFile(
+    private fun launchInstaller(context: Context, apkFile: File) {
+        if (!apkFile.exists()) return
+
+        val apkUri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
-            file
+            apkFile
         )
+
         val installIntent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
+            setDataAndType(apkUri, "application/vnd.android.package-archive")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
         }
+
         context.startActivity(installIntent)
     }
 }
