@@ -5,98 +5,14 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface StateFlowDao {
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun insertFlowRecord(record: FlowRecord): Long
-
-    @Update
-    suspend fun updateFlowRecord(record: FlowRecord)
-
-    @Delete
-    suspend fun deleteFlowRecord(record: FlowRecord)
-
-    @Query("DELETE FROM flow_records WHERE id = :id")
-    suspend fun deleteFlowRecordById(id: Long)
-
-    @Query("SELECT * FROM flow_records ORDER BY timestamp DESC")
-    fun getAllFlowRecords(): Flow<List<FlowRecord>>
-
-    @Query("SELECT * FROM flow_records ORDER BY timestamp DESC")
-    fun observeAllFlowRecords(): Flow<List<FlowRecord>>
-
-    @Query("SELECT * FROM flow_records WHERE isRecurring = 1 ORDER BY timestamp DESC")
-    fun getRecurringSchedules(): Flow<List<FlowRecord>>
-
-    @Query("SELECT * FROM flow_records WHERE isRecurring = 1 AND isPaused = 0")
-    suspend fun getActiveRecurringSchedulesSync(): List<FlowRecord>
-
-    @Query("UPDATE flow_records SET isPaused = :isPaused WHERE id = :id")
-    suspend fun setRecurringPausedState(id: Long, isPaused: Boolean)
-
-    @Query("UPDATE flow_records SET isRecurring = 0 WHERE id = :id")
-    suspend fun stopRecurringSchedule(id: Long)
-
-    @Query("SELECT COUNT(*) FROM flow_records WHERE note LIKE :fingerprint")
-    suspend fun countRecordsWithFingerprint(fingerprint: String): Int
-
-    // STRICT BALANCE GUARANTEE: Only realized, non-recurring records alter account balances.
-    @Query("""
-        SELECT 
-            CAST(pockets.id AS TEXT) AS pocketId,
-            pockets.name AS name,
-            pockets.pocketType AS pocketType,
-            pockets.subType AS subType,
-            pockets.creditLimit AS creditLimit,
-            pockets.targetAmount AS targetAmount,
-            pockets.targetDateEpoch AS targetDateEpoch,
-            COALESCE(SUM(
-                CASE 
-                    WHEN flow_records.targetPocketId = pockets.id AND flow_records.timestamp <= :currentTime AND flow_records.isRecurring = 0 THEN flow_records.amount
-                    WHEN flow_records.sourcePocketId = pockets.id AND flow_records.timestamp <= :currentTime AND flow_records.isRecurring = 0 THEN -flow_records.amount
-                    ELSE 0.0 
-                END
-            ), 0.0) AS computedBalance
-        FROM pockets
-        LEFT JOIN flow_records ON (
-            (pockets.id = flow_records.sourcePocketId OR pockets.id = flow_records.targetPocketId) 
-            AND flow_records.isRecurring = 0
-        )
-        WHERE pockets.isArchived = 0
-        GROUP BY pockets.id
-    """)
-    fun observePocketBalances(currentTime: Long = System.currentTimeMillis()): Flow<List<PocketBalanceSummary>>
-
-    @Query("""
-        SELECT 
-            CAST(pockets.id AS TEXT) AS pocketId,
-            pockets.name AS name,
-            pockets.pocketType AS pocketType,
-            pockets.subType AS subType,
-            pockets.creditLimit AS creditLimit,
-            pockets.targetAmount AS targetAmount,
-            pockets.targetDateEpoch AS targetDateEpoch,
-            COALESCE(SUM(
-                CASE 
-                    WHEN flow_records.targetPocketId = pockets.id AND flow_records.timestamp <= :currentTime AND flow_records.isRecurring = 0 THEN flow_records.amount
-                    WHEN flow_records.sourcePocketId = pockets.id AND flow_records.timestamp <= :currentTime AND flow_records.isRecurring = 0 THEN -flow_records.amount
-                    ELSE 0.0 
-                END
-            ), 0.0) AS computedBalance
-        FROM pockets
-        LEFT JOIN flow_records ON (
-            (pockets.id = flow_records.sourcePocketId OR pockets.id = flow_records.targetPocketId) 
-            AND flow_records.isRecurring = 0
-        )
-        WHERE pockets.isArchived = 0
-        GROUP BY pockets.id
-    """)
-    suspend fun getPocketBalancesSync(currentTime: Long = System.currentTimeMillis()): List<PocketBalanceSummary>
-
-    @Query("SELECT * FROM pockets WHERE isArchived = 0")
+    @Query("SELECT * FROM vault_pockets WHERE isArchived = 0 ORDER BY id ASC")
     fun observeAllActivePockets(): Flow<List<VaultPocket>>
 
-    @Query("SELECT * FROM pockets WHERE isArchived = 0")
+    @Query("SELECT * FROM vault_pockets WHERE isArchived = 0 ORDER BY id ASC")
     suspend fun getActivePocketsSync(): List<VaultPocket>
+
+    @Query("SELECT * FROM vault_pockets WHERE id = :id LIMIT 1")
+    suspend fun getPocketById(id: Long): VaultPocket?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPocket(pocket: VaultPocket): Long
@@ -104,15 +20,93 @@ interface StateFlowDao {
     @Update
     suspend fun updatePocket(pocket: VaultPocket)
 
+    @Query("SELECT * FROM flow_records ORDER BY timestamp DESC")
+    fun observeAllFlowRecords(): Flow<List<FlowRecord>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFlowRecord(record: FlowRecord): Long
+
+    @Update
+    suspend fun updateFlowRecord(record: FlowRecord)
+
+    @Query("DELETE FROM flow_records WHERE id = :id")
+    suspend fun deleteFlowRecordById(id: Long)
+
+    @Query("UPDATE flow_records SET isPaused = :isPaused WHERE id = :id")
+    suspend fun setRecurringPausedState(id: Long, isPaused: Boolean)
+
+    @Query("SELECT * FROM staged_desires WHERE isFulfilled = 0 ORDER BY createdAtEpoch DESC")
+    fun observeActiveStagedDesires(): Flow<List<StagedDesire>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertStagedDesire(desire: StagedDesire): Long
 
-    @Update
-    suspend fun updateStagedDesire(desire: StagedDesire)
+    @Query("SELECT * FROM system_notices ORDER BY timestamp DESC")
+    fun observeAllNotices(): Flow<List<SystemNotice>>
 
-    @Query("SELECT * FROM staged_desires WHERE status = 'STAGED' ORDER BY coolOffUntil ASC")
-    fun observeActiveStagedDesires(): Flow<List<StagedDesire>>
+    @Query("SELECT COUNT(*) FROM system_notices WHERE isRead = 0")
+    fun observeUnreadNoticeCount(): Flow<Int>
 
-    @Query("SELECT COALESCE(SUM(amount), 0.0) FROM staged_desires WHERE status = 'ARCHIVED'")
-    fun observeSavedImpulseTotal(): Flow<Double>
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNotice(notice: SystemNotice): Long
+
+    @Query("UPDATE system_notices SET isRead = 1 WHERE isRead = 0")
+    suspend fun markAllNoticesRead()
+
+    @Query("DELETE FROM system_notices")
+    suspend fun clearAllNotices()
+
+    @Query("""
+        SELECT 
+            CAST(p.id AS TEXT) AS pocketId,
+            p.name AS pocketName,
+            p.pocketType AS pocketType,
+            p.subType AS subType,
+            COALESCE(p.creditLimit, 0.0) AS creditLimit,
+            COALESCE(p.targetAmount, 0.0) AS targetAmount,
+            p.targetDateEpoch AS targetDateEpoch,
+            COALESCE(SUM(CASE 
+                WHEN f.targetPocketId = p.id AND f.isRecurring = 0 THEN f.amount 
+                WHEN f.sourcePocketId = p.id AND f.isRecurring = 0 THEN -f.amount 
+                ELSE 0.0 
+            END), 0.0) AS currentBalance,
+            COALESCE(SUM(CASE 
+                WHEN f.targetPocketId = p.id AND f.isRecurring = 0 THEN f.amount 
+                WHEN f.sourcePocketId = p.id AND f.isRecurring = 0 THEN -f.amount 
+                ELSE 0.0 
+            END), 0.0) AS computedBalance
+        FROM vault_pockets p
+        LEFT JOIN flow_records f ON (p.id = f.sourcePocketId OR p.id = f.targetPocketId)
+        WHERE p.isArchived = 0
+        GROUP BY p.id
+        ORDER BY p.id ASC
+    """)
+    fun observePocketBalances(): Flow<List<PocketBalanceSummary>>
+
+    @Query("""
+        SELECT 
+            CAST(p.id AS TEXT) AS pocketId,
+            p.name AS pocketName,
+            p.pocketType AS pocketType,
+            p.subType AS subType,
+            COALESCE(p.creditLimit, 0.0) AS creditLimit,
+            COALESCE(p.targetAmount, 0.0) AS targetAmount,
+            p.targetDateEpoch AS targetDateEpoch,
+            COALESCE(SUM(CASE 
+                WHEN f.targetPocketId = p.id AND f.isRecurring = 0 THEN f.amount 
+                WHEN f.sourcePocketId = p.id AND f.isRecurring = 0 THEN -f.amount 
+                ELSE 0.0 
+            END), 0.0) AS currentBalance,
+            COALESCE(SUM(CASE 
+                WHEN f.targetPocketId = p.id AND f.isRecurring = 0 THEN f.amount 
+                WHEN f.sourcePocketId = p.id AND f.isRecurring = 0 THEN -f.amount 
+                ELSE 0.0 
+            END), 0.0) AS computedBalance
+        FROM vault_pockets p
+        LEFT JOIN flow_records f ON (p.id = f.sourcePocketId OR p.id = f.targetPocketId)
+        WHERE p.isArchived = 0
+        GROUP BY p.id
+        ORDER BY p.id ASC
+    """)
+    suspend fun getPocketBalancesSync(): List<PocketBalanceSummary>
 }
