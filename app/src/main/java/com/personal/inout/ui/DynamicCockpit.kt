@@ -157,7 +157,7 @@ fun DynamicCockpit(
                         flows.filter { it.nature == MovementNature.OUTFLOW }.forEach { f ->
                             val diffDays = ((now - f.timestamp) / (1000 * 60 * 60 * 24)).toInt()
                             if (diffDays in 0..6) {
-                                dayBuckets[6 - diffDays] += f.amount
+                                dayBuckets[6 - diffDays] += (f.amount ?: 0.0)
                             }
                         }
                         dayBuckets.toList()
