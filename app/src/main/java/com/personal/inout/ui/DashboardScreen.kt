@@ -1848,9 +1848,10 @@ private fun CleanVaultHeader(
                         if (unreadNoticeCount > 0) {
                             Badge(containerColor = theme.mildRed) {
                                 Text(
-                                    text = unreadNoticeCount.toString(),
+                                    text = "$unreadNoticeCount",
                                     color = Color.White,
-                                    fontSize = 9.sp
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                         }
@@ -1876,6 +1877,7 @@ private fun CleanVaultHeader(
         }
     }
 }
+
 
 @Composable
 private fun SettingsCardsList(
