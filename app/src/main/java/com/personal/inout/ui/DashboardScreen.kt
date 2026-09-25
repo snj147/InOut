@@ -730,12 +730,13 @@ fun DashboardScreen(db: AppDatabase) {
                         tonalElevation = 6.dp,
                         modifier = Modifier.navigationBarsPadding().clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                     ) {
-                        listOf(
+                        val navItems = listOf(
                             Triple(0, "Vault", Icons.Filled.MenuBook),
                             Triple(1, "Accounts", Icons.Filled.AccountBalance),
                             Triple(2, "Insights", Icons.Filled.Insights),
                             Triple(3, "Settings", Icons.Filled.Settings)
-                        ).forEach { (idx, title, icon) ->
+                        )
+                        navItems.forEach { (idx, title, icon) ->
                             NavigationBarItem(
                                 selected = selectedTab == idx,
                                 onClick = {
@@ -911,8 +912,8 @@ fun DashboardScreen(db: AppDatabase) {
                                             horizontalArrangement = Arrangement.Center,
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            repeat(4) { idx ->
-                                                val isSel = pagerState.currentPage == idx
+                                            repeat(4) { dotIdx ->
+                                                val isSel = pagerState.currentPage == dotIdx
                                                 Box(
                                                     modifier = Modifier
                                                         .padding(horizontal = 3.dp)
@@ -981,60 +982,61 @@ fun DashboardScreen(db: AppDatabase) {
                                                                             }
                                                                             var end = tapPosition
                                                                             while (end < text.length && !text[end].isWhitespace()) {
-                                                                            end++
+                                                                                end++
+                                                                            }
+                                                                            naturalLanguageInput = naturalLanguageInput.copy(selection = TextRange(start, end))
                                                                         }
-                                                                        naturalLanguageInput = naturalLanguageInput.copy(selection = TextRange(start, end))
+                                                                    },
+                                                                    onDoubleTap = { offset ->
+                                                                        quickBarFocusRequester.requestFocus()
+                                                                        val layout = textLayoutResult ?: return@detectTapGestures
+                                                                        val tapPosition = layout.getOffsetForPosition(offset)
+                                                                        naturalLanguageInput = naturalLanguageInput.copy(selection = TextRange(tapPosition, tapPosition))
                                                                     }
-                                                                },
-                                                                onDoubleTap = { offset ->
-                                                                    quickBarFocusRequester.requestFocus()
-                                                                    val layout = textLayoutResult ?: return@detectTapGestures
-                                                                    val tapPosition = layout.getOffsetForPosition(offset)
-                                                                    naturalLanguageInput = naturalLanguageInput.copy(selection = TextRange(tapPosition, tapPosition))
-                                                                }
-                                                            )
-                                                        }
-                                                )
-                                            }
+                                                                )
+                                                            }
+                                                    )
+                                                }
 
-                                            if (naturalLanguageInput.text.isNotBlank()) {
-                                                IconButton(onClick = { executeQuickBarCommand(naturalLanguageInput.text) }) {
-                                                    Icon(imageVector = Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
+                                                if (naturalLanguageInput.text.isNotBlank()) {
+                                                    IconButton(onClick = { executeQuickBarCommand(naturalLanguageInput.text) }) {
+                                                        Icon(imageVector = Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
+                                                    }
                                                 }
                                             }
-                                        }
 
-                                        if (quickBarCommandPills.isNotEmpty()) {
-                                            HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.6f), thickness = 0.8.dp)
-                                            LazyRow(
-                                                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                            ) {
-                                                items(quickBarCommandPills) { (pillTitle, pillTemplate, pillIcon) ->
-                                                    Row(
-                                                        modifier = Modifier
-                                                            .clip(RoundedCornerShape(6.dp))
-                                                            .background(theme.surfaceAlt)
-                                                            .clickable {
-                                                                val t = pillTemplate
-                                                                val placeholderTarget = listOf("BANK", "NAME", "<amount>", "<bank>", "<person>")
-                                                                    .firstOrNull { t.contains(it) }
+                                            if (quickBarCommandPills.isNotEmpty()) {
+                                                HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.6f), thickness = 0.8.dp)
+                                                LazyRow(
+                                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    items(quickBarCommandPills) { (pillTitle, pillTemplate, pillIcon) ->
+                                                        Row(
+                                                            modifier = Modifier
+                                                                .clip(RoundedCornerShape(6.dp))
+                                                                .background(theme.surfaceAlt)
+                                                                .clickable {
+                                                                    val t = pillTemplate
+                                                                    val placeholderTarget = listOf("BANK", "NAME", "<amount>", "<bank>", "<person>")
+                                                                        .firstOrNull { t.contains(it) }
 
-                                                                if (placeholderTarget != null) {
-                                                                    val start = t.indexOf(placeholderTarget)
-                                                                    val end = start + placeholderTarget.length
-                                                                    naturalLanguageInput = TextFieldValue(text = t, selection = TextRange(start, end))
-                                                                } else {
-                                                                    naturalLanguageInput = TextFieldValue(text = t, selection = TextRange(t.length))
+                                                                    if (placeholderTarget != null) {
+                                                                        val start = t.indexOf(placeholderTarget)
+                                                                        val end = start + placeholderTarget.length
+                                                                        naturalLanguageInput = TextFieldValue(text = t, selection = TextRange(start, end))
+                                                                    } else {
+                                                                        naturalLanguageInput = TextFieldValue(text = t, selection = TextRange(t.length))
+                                                                    }
+                                                                    quickBarFocusRequester.requestFocus()
                                                                 }
-                                                                quickBarFocusRequester.requestFocus()
-                                                            }
-                                                            .padding(horizontal = 8.dp, vertical = 5.dp),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                                    ) {
-                                                        Icon(imageVector = pillIcon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(13.dp))
-                                                        Text(text = pillTitle, color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                                .padding(horizontal = 8.dp, vertical = 5.dp),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                                        ) {
+                                                            Icon(imageVector = pillIcon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(13.dp))
+                                                            Text(text = pillTitle, color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1100,608 +1102,607 @@ fun DashboardScreen(db: AppDatabase) {
                                 }
                             }
                         }
-                    }
 
-                    1 -> AccountPocketsView(
-                        pocketBalances = pocketBalances,
-                        rawPockets = rawPockets,
-                        recurringSchedules = recurringTemplates,
-                        isPrivacyMode = isPrivacyMode,
-                        onTransactPocket = { pocket ->
-                            selectedPocketIdForHud = pocket.id
-                            ocrPrefilledNote = ""
-                            ocrPrefilledAmount = null
-                            hudInDialogError = null
-                            showCommandHud = true
-                        },
-                        onEditPocket = { editingPocket = it },
-                        onDeletePocketSafe = { pocket, balance ->
-                            val bal = balance ?: 0.0
-                            if (bal != 0.0) {
-                                alertManager.showAlert("Cannot delete account with active balance of ₹${bal.toInt()}", AlertType.WARNING)
-                            } else {
-                                scope.launch {
-                                    db.stateFlowDao().updatePocket(pocket.copy(isArchived = true))
-                                    alertManager.showAlert("${pocket.name} removed", AlertType.SUCCESS)
-                                }
-                            }
-                        },
-                        onTogglePauseRecurring = { schedule ->
-                            scope.launch {
-                                db.stateFlowDao().setRecurringPausedState(schedule.id, !schedule.isPaused)
-                                alertManager.showAlert(if (schedule.isPaused) "Resumed rule" else "Paused rule", AlertType.SUCCESS)
-                            }
-                        },
-                        onEditRecurring = { schedule -> editingRecurringRule = schedule },
-                        onDeleteRecurringSafe = { schedule ->
-                            scope.launch {
-                                db.stateFlowDao().deleteFlowRecordById(schedule.id)
-                                alertManager.showAlert("Recurring schedule deleted", AlertType.SUCCESS)
-                            }
-                        },
-                        onRecordCardSettlement = { cardId, liquidId, amt ->
-                            scope.launch {
-                                when (val res = ledgerEngine.recordMovement(
-                                    nature = MovementNature.CARD_PAYMENT,
-                                    sourcePocketId = liquidId,
-                                    targetPocketId = cardId,
-                                    amount = amt ?: 0.0,
-                                    category = "Bill Payment",
-                                    note = "Card Dues Clearance",
-                                    autoSplitEnabled = autoSplitEnabled
-                                )) {
-                                    is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
-                                    is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
-                                }
-                            }
-                        },
-                        onPeerAction = { nature, peerId, liquidId, amt ->
-                            scope.launch {
-                                val (src, tgt) = if (nature in listOf(MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) liquidId to peerId else peerId to liquidId
-                                when (val res = ledgerEngine.recordMovement(
-                                    nature = nature,
-                                    sourcePocketId = src,
-                                    targetPocketId = tgt,
-                                    amount = amt ?: 0.0,
-                                    category = "Peer Transfer",
-                                    note = nature.name,
-                                    autoSplitEnabled = autoSplitEnabled
-                                )) {
-                                    is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
-                                    is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
-                                }
-                            }
-                        }
-                    )
-
-                    2 -> IntelligenceScreen(
-                        pocketBalances = pocketBalances,
-                        flowRecords = flowRecords,
-                        recurringSchedules = recurringTemplates,
-                        stagedDesires = stagedDesires,
-                        dailyBurnCeiling = dailyBurnCeiling,
-                        trueSafeLiquid = trueSafeLiquid,
-                        isPrivacyMode = isPrivacyMode,
-                        theme = theme
-                    )
-
-                    3 -> {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(horizontal = 16.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 16.dp, bottom = 12.dp)
-                            ) {
-                                Text(
-                                    text = "Settings & Vault Controls",
-                                    color = theme.textBright,
-                                    fontSize = 17.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-
-                            SettingsCardsList(
-                                theme = theme,
-                                currentSha = currentInstalledSha,
-                                lastUpdatedDate = lastInstalledTimeFormatted,
-                                autoSplitEnabled = autoSplitEnabled,
-                                phantomLockEnabled = phantomLockEnabled,
-                                activeThemeMode = activeThemeMode,
-                                isProUnlocked = isProUnlocked,
-                                availableUpdate = availableUpdateInfo,
-                                isCheckingUpdate = isCheckingForUpdate,
-                                onCheckUpdate = {
+                        1 -> AccountPocketsView(
+                            pocketBalances = pocketBalances,
+                            rawPockets = rawPockets,
+                            recurringSchedules = recurringTemplates,
+                            isPrivacyMode = isPrivacyMode,
+                            onTransactPocket = { pocket ->
+                                selectedPocketIdForHud = pocket.id
+                                ocrPrefilledNote = ""
+                                ocrPrefilledAmount = null
+                                hudInDialogError = null
+                                showCommandHud = true
+                            },
+                            onEditPocket = { editingPocket = it },
+                            onDeletePocketSafe = { pocket, balance ->
+                                val bal = balance ?: 0.0
+                                if (bal != 0.0) {
+                                    alertManager.showAlert("Cannot delete account with active balance of ₹${bal.toInt()}", AlertType.WARNING)
+                                } else {
                                     scope.launch {
-                                        isCheckingForUpdate = true
-                                        val res = AppUpdateEngine.checkForUpdate(context)
-                                        isCheckingForUpdate = false
-                                        if (res.isSuccess) {
-                                            val info = res.getOrNull()
-                                            if (info != null && info.hasUpdate && info.downloadUrl.isNotBlank()) {
-                                                availableUpdateInfo = info
+                                        db.stateFlowDao().updatePocket(pocket.copy(isArchived = true))
+                                        alertManager.showAlert("${pocket.name} removed", AlertType.SUCCESS)
+                                    }
+                                }
+                            },
+                            onTogglePauseRecurring = { schedule ->
+                                scope.launch {
+                                    db.stateFlowDao().setRecurringPausedState(schedule.id, !schedule.isPaused)
+                                    alertManager.showAlert(if (schedule.isPaused) "Resumed rule" else "Paused rule", AlertType.SUCCESS)
+                                }
+                            },
+                            onEditRecurring = { schedule -> editingRecurringRule = schedule },
+                            onDeleteRecurringSafe = { schedule ->
+                                scope.launch {
+                                    db.stateFlowDao().deleteFlowRecordById(schedule.id)
+                                    alertManager.showAlert("Recurring schedule deleted", AlertType.SUCCESS)
+                                }
+                            },
+                            onRecordCardSettlement = { cardId, liquidId, amt ->
+                                scope.launch {
+                                    when (val res = ledgerEngine.recordMovement(
+                                        nature = MovementNature.CARD_PAYMENT,
+                                        sourcePocketId = liquidId,
+                                        targetPocketId = cardId,
+                                        amount = amt ?: 0.0,
+                                        category = "Bill Payment",
+                                        note = "Card Dues Clearance",
+                                        autoSplitEnabled = autoSplitEnabled
+                                    )) {
+                                        is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
+                                        is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
+                                    }
+                                }
+                            },
+                            onPeerAction = { nature, peerId, liquidId, amt ->
+                                scope.launch {
+                                    val (src, tgt) = if (nature in listOf(MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) liquidId to peerId else peerId to liquidId
+                                    when (val res = ledgerEngine.recordMovement(
+                                        nature = nature,
+                                        sourcePocketId = src,
+                                        targetPocketId = tgt,
+                                        amount = amt ?: 0.0,
+                                        category = "Peer Transfer",
+                                        note = nature.name,
+                                        autoSplitEnabled = autoSplitEnabled
+                                    )) {
+                                        is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
+                                        is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
+                                    }
+                                }
+                            }
+                        )
+
+                        2 -> IntelligenceScreen(
+                            pocketBalances = pocketBalances,
+                            flowRecords = flowRecords,
+                            recurringSchedules = recurringTemplates,
+                            stagedDesires = stagedDesires,
+                            dailyBurnCeiling = dailyBurnCeiling,
+                            trueSafeLiquid = trueSafeLiquid,
+                            isPrivacyMode = isPrivacyMode,
+                            theme = theme
+                        )
+
+                        3 -> {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 16.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(top = 16.dp, bottom = 12.dp)
+                                ) {
+                                    Text(
+                                        text = "Settings & Vault Controls",
+                                        color = theme.textBright,
+                                        fontSize = 17.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                SettingsCardsList(
+                                    theme = theme,
+                                    currentSha = currentInstalledSha,
+                                    lastUpdatedDate = lastInstalledTimeFormatted,
+                                    autoSplitEnabled = autoSplitEnabled,
+                                    phantomLockEnabled = phantomLockEnabled,
+                                    activeThemeMode = activeThemeMode,
+                                    isProUnlocked = isProUnlocked,
+                                    availableUpdate = availableUpdateInfo,
+                                    isCheckingUpdate = isCheckingForUpdate,
+                                    onCheckUpdate = {
+                                        scope.launch {
+                                            isCheckingForUpdate = true
+                                            val res = AppUpdateEngine.checkForUpdate(context)
+                                            isCheckingForUpdate = false
+                                            if (res.isSuccess) {
+                                                val info = res.getOrNull()
+                                                if (info != null && info.hasUpdate && info.downloadUrl.isNotBlank()) {
+                                                    availableUpdateInfo = info
+                                                } else {
+                                                    availableUpdateInfo = null
+                                                    alertManager.showAlert("You are on the latest build", AlertType.SUCCESS)
+                                                }
                                             } else {
                                                 availableUpdateInfo = null
                                                 alertManager.showAlert("You are on the latest build", AlertType.SUCCESS)
                                             }
-                                        } else {
-                                            availableUpdateInfo = null
-                                            alertManager.showAlert("You are on the latest build", AlertType.SUCCESS)
                                         }
-                                    }
-                                },
-                                onInstallUpdate = { info ->
-                                    AppUpdateEngine.startDownloadAndInstall(context, info.downloadUrl, info.latestVersion)
-                                    alertManager.showAlert("Downloading update ${info.latestVersion}...", AlertType.INFO)
-                                },
-                                onOpenFeedback = { showFeedbackDialog = true },
-                                onAutoSplitToggled = {
-                                    autoSplitEnabled = it
-                                    prefs.edit().putBoolean("auto_split_debit", it).apply()
-                                },
-                                onPhantomLockToggled = {
-                                    phantomLockEnabled = it
-                                    prefs.edit().putBoolean("phantom_lock_enabled", it).apply()
-                                },
-                                onThemeSelected = { mode ->
-                                    activeThemeMode = mode
-                                    prefs.edit().putString("selected_theme", mode.name).apply()
-                                },
-                                onExportPdf = {
-                                    scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords) }
-                                },
-                                onExportCsv = {
-                                    val compatList = completedTransactions.map { flowRecord ->
-                                        val sourceId = flowRecord.sourcePocketId ?: flowRecord.targetPocketId ?: 0L
-                                        val isExpense = flowRecord.nature in listOf(
-                                            MovementNature.OUTFLOW,
-                                            MovementNature.PEER_LEND,
-                                            MovementNature.PEER_REPAY,
-                                            MovementNature.CARD_PAYMENT
-                                        )
-                                        Transaction(
-                                            id = flowRecord.id,
-                                            accountId = sourceId,
-                                            flowType = if (isExpense) "OUT" else "IN",
-                                            type = flowRecord.nature.name,
-                                            category = flowRecord.category,
-                                            amount = flowRecord.amount ?: 0.0,
-                                            timestamp = flowRecord.timestamp,
-                                            note = flowRecord.note,
-                                            isRecurring = flowRecord.isRecurring,
-                                            frequency = flowRecord.frequency
-                                        )
-                                    }
-                                    CsvExporter.exportAndShareTransactions(context, compatList)
-                                },
-                                onExportEncryptedBackup = {
-                                    backupExportLauncher.launch("inout_vault_backup_${System.currentTimeMillis()}.vault")
-                                },
-                                onRestoreEncryptedBackup = {
-                                    backupRestoreLauncher.launch(arrayOf("application/octet-stream", "*/*"))
-                                },
-                                onClearLedger = { showClearLedgerConfirmation = true },
-                                onOpenPaywall = { showMockPaywall = true }
-                            )
+                                    },
+                                    onInstallUpdate = { info ->
+                                        AppUpdateEngine.startDownloadAndInstall(context, info.downloadUrl, info.latestVersion)
+                                        alertManager.showAlert("Downloading update ${info.latestVersion}...", AlertType.INFO)
+                                    },
+                                    onOpenFeedback = { showFeedbackDialog = true },
+                                    onAutoSplitToggled = {
+                                        autoSplitEnabled = it
+                                        prefs.edit().putBoolean("auto_split_debit", it).apply()
+                                    },
+                                    onPhantomLockToggled = {
+                                        phantomLockEnabled = it
+                                        prefs.edit().putBoolean("phantom_lock_enabled", it).apply()
+                                    },
+                                    onThemeSelected = { mode ->
+                                        activeThemeMode = mode
+                                        prefs.edit().putString("selected_theme", mode.name).apply()
+                                    },
+                                    onExportPdf = {
+                                        scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords) }
+                                    },
+                                    onExportCsv = {
+                                        val compatList = completedTransactions.map { flowRecord ->
+                                            val sourceId = flowRecord.sourcePocketId ?: flowRecord.targetPocketId ?: 0L
+                                            val isExpense = flowRecord.nature in listOf(
+                                                MovementNature.OUTFLOW,
+                                                MovementNature.PEER_LEND,
+                                                MovementNature.PEER_REPAY,
+                                                MovementNature.CARD_PAYMENT
+                                            )
+                                            Transaction(
+                                                id = flowRecord.id,
+                                                accountId = sourceId,
+                                                flowType = if (isExpense) "OUT" else "IN",
+                                                type = flowRecord.nature.name,
+                                                category = flowRecord.category,
+                                                amount = flowRecord.amount ?: 0.0,
+                                                timestamp = flowRecord.timestamp,
+                                                note = flowRecord.note,
+                                                isRecurring = flowRecord.isRecurring,
+                                                frequency = flowRecord.frequency
+                                            )
+                                        }
+                                        CsvExporter.exportAndShareTransactions(context, compatList)
+                                    },
+                                    onExportEncryptedBackup = {
+                                        backupExportLauncher.launch("inout_vault_backup_${System.currentTimeMillis()}.vault")
+                                    },
+                                    onRestoreEncryptedBackup = {
+                                        backupRestoreLauncher.launch(arrayOf("application/octet-stream", "*/*"))
+                                    },
+                                    onClearLedger = { showClearLedgerConfirmation = true },
+                                    onOpenPaywall = { showMockPaywall = true }
+                                )
+                            }
                         }
                     }
                 }
-            }
 
-            if (isFabExpanded) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.35f))
-                        .clickable { isFabExpanded = false }
-                )
-            }
-
-            if (showNoticesSheet) {
-                ModalBottomSheet(
-                    onDismissRequest = { showNoticesSheet = false },
-                    containerColor = theme.surface,
-                    tonalElevation = 8.dp
-                ) {
-                    Column(
+                if (isFabExpanded) {
+                    Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp, vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.35f))
+                            .clickable { isFabExpanded = false }
+                    )
+                }
+
+                if (showNoticesSheet) {
+                    ModalBottomSheet(
+                        onDismissRequest = { showNoticesSheet = false },
+                        containerColor = theme.surface,
+                        tonalElevation = 8.dp
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            Text(text = "System & Ledger Notices", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                            if (systemNotices.isNotEmpty()) {
-                                TextButton(onClick = {
-                                    scope.launch { db.stateFlowDao().clearAllNotices() }
-                                }) {
-                                    Text(text = "Clear All", color = theme.mildRed, fontSize = 12.sp)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(text = "System & Ledger Notices", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                if (systemNotices.isNotEmpty()) {
+                                    TextButton(onClick = {
+                                        scope.launch { db.stateFlowDao().clearAllNotices() }
+                                    }) {
+                                        Text(text = "Clear All", color = theme.mildRed, fontSize = 12.sp)
+                                    }
                                 }
                             }
-                        }
 
-                        if (systemNotices.isEmpty()) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 32.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(text = "No system notifications logged.", color = theme.textMuted, fontSize = 12.5.sp)
-                            }
-                        } else {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                items(systemNotices, key = { it.id }) { notice ->
-                                    Card(
-                                        shape = RoundedCornerShape(10.dp),
-                                        colors = CardDefaults.cardColors(containerColor = theme.surfaceAlt),
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(text = notice.title, color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                                val timeStr = SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(notice.timestamp))
-                                                Text(text = timeStr, color = theme.textMuted, fontSize = 10.sp)
+                            if (systemNotices.isEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 32.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(text = "No system notifications logged.", color = theme.textMuted, fontSize = 12.5.sp)
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    items(systemNotices, key = { it.id }) { notice ->
+                                        Card(
+                                            shape = RoundedCornerShape(10.dp),
+                                            colors = CardDefaults.cardColors(containerColor = theme.surfaceAlt),
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) {
+                                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(text = notice.title, color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                    val timeStr = SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(notice.timestamp))
+                                                    Text(text = timeStr, color = theme.textMuted, fontSize = 10.sp)
+                                                }
+                                                Text(text = notice.message, color = theme.textBright, fontSize = 11.5.sp)
                                             }
-                                            Text(text = notice.message, color = theme.textBright, fontSize = 11.5.sp)
                                         }
                                     }
                                 }
                             }
+                            Spacer(Modifier.height(16.dp))
                         }
-                        Spacer(Modifier.height(16.dp))
                     }
                 }
-            }
 
-            if (showFeedbackDialog) {
-                FeedbackDialog(
-                    theme = theme,
-                    onShowAlert = { msg, isError ->
-                        alertManager.showAlert(msg, if (isError) AlertType.ERROR else AlertType.SUCCESS)
-                    },
-                    onDismiss = { showFeedbackDialog = false }
-                )
-            }
+                if (showFeedbackDialog) {
+                    FeedbackDialog(
+                        theme = theme,
+                        onShowAlert = { msg, isError ->
+                            alertManager.showAlert(msg, if (isError) AlertType.ERROR else AlertType.SUCCESS)
+                        },
+                        onDismiss = { showFeedbackDialog = false }
+                    )
+                }
 
-            if (showBurnEditDialog) {
-                var burnInput by remember { mutableStateOf(dailyBurnCeiling.toInt().toString()) }
-                AlertDialog(
-                    onDismissRequest = { showBurnEditDialog = false },
-                    containerColor = theme.surface,
-                    title = { Text(text = "Update Daily Burn Ceiling", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
-                    text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(text = "Set daily spending limit. Runway days adapt dynamically.", color = theme.textMuted, fontSize = 12.sp)
-                            CompactInputField(value = burnInput, onValueChange = { burnInput = it }, placeholder = "Daily amount in ₹")
-                        }
-                    },
-                    confirmButton = {
-                        Button(
-                            onClick = {
-                                val parsed = burnInput.toDoubleOrNull()
-                                if (parsed != null && parsed > 0) {
-                                    dailyBurnCeiling = parsed
-                                    prefs.edit().putFloat("daily_burn_ceiling", parsed.toFloat()).apply()
-                                }
-                                showBurnEditDialog = false
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-                        ) { Text(text = "Save", color = theme.bg, fontWeight = FontWeight.Bold) }
-                    },
-                    dismissButton = { TextButton(onClick = { showBurnEditDialog = false }) { Text(text = "Cancel", color = theme.textMuted) } }
-                )
-            }
-
-            if (showClearLedgerConfirmation) {
-                var verificationInput by remember { mutableStateOf("") }
-                AlertDialog(
-                    onDismissRequest = {
-                        showClearLedgerConfirmation = false
-                        verificationInput = ""
-                    },
-                    containerColor = theme.surface,
-                    title = { Text(text = "CONFIRM TOTAL PURGE", color = theme.mildRed, fontWeight = FontWeight.Black) },
-                    text = {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                text = "This action will permanently delete all records AND archive all accounts. To verify this destructive action, type PURGE below:",
-                                color = theme.textMuted,
-                                fontSize = 12.5.sp
-                            )
-                            CompactInputField(
-                                value = verificationInput,
-                                onValueChange = { verificationInput = it },
-                                placeholder = "Type PURGE"
-                            )
-                        }
-                    },
-                    confirmButton = {
-                        Button(
-                            onClick = {
-                                if (verificationInput.trim() == "PURGE") {
-                                    scope.launch {
-                                        flowRecords.forEach { db.stateFlowDao().deleteFlowRecordById(it.id) }
-                                        rawPockets.forEach { db.stateFlowDao().updatePocket(it.copy(isArchived = true)) }
-                                        alertManager.showAlert("All vault records and accounts purged", AlertType.SUCCESS)
-                                        showClearLedgerConfirmation = false
-                                        verificationInput = ""
+                if (showBurnEditDialog) {
+                    var burnInput by remember { mutableStateOf(dailyBurnCeiling.toInt().toString()) }
+                    AlertDialog(
+                        onDismissRequest = { showBurnEditDialog = false },
+                        containerColor = theme.surface,
+                        title = { Text(text = "Update Daily Burn Ceiling", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(text = "Set daily spending limit. Runway days adapt dynamically.", color = theme.textMuted, fontSize = 12.sp)
+                                CompactInputField(value = burnInput, onValueChange = { burnInput = it }, placeholder = "Daily amount in ₹")
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    val parsed = burnInput.toDoubleOrNull()
+                                    if (parsed != null && parsed > 0) {
+                                        dailyBurnCeiling = parsed
+                                        prefs.edit().putFloat("daily_burn_ceiling", parsed.toFloat()).apply()
                                     }
-                                } else {
-                                    alertManager.showAlert("Verification phrase did not match 'PURGE'", AlertType.ERROR)
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed),
-                            enabled = verificationInput.trim() == "PURGE"
-                        ) { Text(text = "Purge Everything", color = Color.White, fontWeight = FontWeight.Bold) }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = {
+                                    showBurnEditDialog = false
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
+                            ) { Text(text = "Save", color = theme.bg, fontWeight = FontWeight.Bold) }
+                        },
+                        dismissButton = { TextButton(onClick = { showBurnEditDialog = false }) { Text(text = "Cancel", color = theme.textMuted) } }
+                    )
+                }
+
+                if (showClearLedgerConfirmation) {
+                    var verificationInput by remember { mutableStateOf("") }
+                    AlertDialog(
+                        onDismissRequest = {
                             showClearLedgerConfirmation = false
                             verificationInput = ""
-                        }) { Text(text = "Cancel", color = theme.textMuted) }
-                    }
-                )
-            }
-
-            if (showCommandHud) {
-                FloatingCommandHud(
-                    activePockets = rawPockets,
-                    prefilledPocketId = selectedPocketIdForHud,
-                    prefilledNote = ocrPrefilledNote,
-                    prefilledAmount = ocrPrefilledAmount,
-                    inDialogErrorMessage = hudInDialogError,
-                    onDismiss = {
-                        showCommandHud = false
-                        hudInDialogError = null
-                    },
-                    onSubmit = { nature, srcId, tgtId, amt, cat, note, date, isRec, freq ->
-                        verifyLiquidAccountOrPrompt { validLiquidId ->
-                            scope.launch {
-                                val effectiveSrc = if (nature == MovementNature.OUTFLOW && srcId == null) validLiquidId else srcId
-                                val effectiveTgt = if (nature == MovementNature.INFLOW && tgtId == null) validLiquidId else tgtId
-
-                                if (isRec) {
-                                    db.stateFlowDao().insertFlowRecord(
-                                        FlowRecord(
-                                            id = 0L,
-                                            sourcePocketId = effectiveSrc,
-                                            targetPocketId = effectiveTgt,
-                                            amount = amt,
-                                            movementNature = nature,
-                                            category = cat,
-                                            note = note,
-                                            timestamp = date,
-                                            isRecurring = true,
-                                            frequency = freq,
-                                            recurringCadence = freq,
-                                            isPaused = false
-                                        )
-                                    )
-
-                                    val caughtUp = ledgerEngine.catchUpRecurringRules()
-                                    hudInDialogError = null
-                                    showCommandHud = false
-                                    if (caughtUp > 0) {
-                                        alertManager.showAlert("Recurring schedule saved and initial transaction recorded!", AlertType.SUCCESS)
+                        },
+                        containerColor = theme.surface,
+                        title = { Text(text = "CONFIRM TOTAL PURGE", color = theme.mildRed, fontWeight = FontWeight.Black) },
+                        text = {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "This action will permanently delete all records AND archive all accounts. To verify this destructive action, type PURGE below:",
+                                    color = theme.textMuted,
+                                    fontSize = 12.5.sp
+                                )
+                                CompactInputField(
+                                    value = verificationInput,
+                                    onValueChange = { verificationInput = it },
+                                    placeholder = "Type PURGE"
+                                )
+                            }
+                        },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    if (verificationInput.trim() == "PURGE") {
+                                        scope.launch {
+                                            flowRecords.forEach { db.stateFlowDao().deleteFlowRecordById(it.id) }
+                                            rawPockets.forEach { db.stateFlowDao().updatePocket(it.copy(isArchived = true)) }
+                                            alertManager.showAlert("All vault records and accounts purged", AlertType.SUCCESS)
+                                            showClearLedgerConfirmation = false
+                                            verificationInput = ""
+                                        }
                                     } else {
-                                        alertManager.showAlert("Recurring schedule saved", AlertType.SUCCESS)
+                                        alertManager.showAlert("Verification phrase did not match 'PURGE'", AlertType.ERROR)
                                     }
-                                    return@launch
-                                }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed),
+                                enabled = verificationInput.trim() == "PURGE"
+                            ) { Text(text = "Purge Everything", color = Color.White, fontWeight = FontWeight.Bold) }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = {
+                                showClearLedgerConfirmation = false
+                                verificationInput = ""
+                            }) { Text(text = "Cancel", color = theme.textMuted) }
+                        }
+                    )
+                }
 
-                                when (val res = ledgerEngine.recordMovement(
-                                    nature = nature,
-                                    sourcePocketId = effectiveSrc,
-                                    targetPocketId = effectiveTgt,
-                                    amount = amt,
-                                    category = cat,
-                                    note = note,
-                                    timestamp = date,
-                                    autoSplitEnabled = autoSplitEnabled,
-                                    isRecurring = false,
-                                    frequency = freq
-                                )) {
-                                    is VaultExecutionResult.OverdraftError -> {
-                                        hudInDialogError = res.message
-                                        alertManager.showAlert(res.message, AlertType.ERROR)
-                                    }
-                                    is VaultExecutionResult.Success -> {
+                if (showCommandHud) {
+                    FloatingCommandHud(
+                        activePockets = rawPockets,
+                        prefilledPocketId = selectedPocketIdForHud,
+                        prefilledNote = ocrPrefilledNote,
+                        prefilledAmount = ocrPrefilledAmount,
+                        inDialogErrorMessage = hudInDialogError,
+                        onDismiss = {
+                            showCommandHud = false
+                            hudInDialogError = null
+                        },
+                        onSubmit = { nature, srcId, tgtId, amt, cat, note, date, isRec, freq ->
+                            verifyLiquidAccountOrPrompt { validLiquidId ->
+                                scope.launch {
+                                    val effectiveSrc = if (nature == MovementNature.OUTFLOW && srcId == null) validLiquidId else srcId
+                                    val effectiveTgt = if (nature == MovementNature.INFLOW && tgtId == null) validLiquidId else tgtId
+
+                                    if (isRec) {
+                                        db.stateFlowDao().insertFlowRecord(
+                                            FlowRecord(
+                                                id = 0L,
+                                                sourcePocketId = effectiveSrc,
+                                                targetPocketId = effectiveTgt,
+                                                amount = amt,
+                                                movementNature = nature,
+                                                category = cat,
+                                                note = note,
+                                                timestamp = date,
+                                                isRecurring = true,
+                                                frequency = freq,
+                                                recurringCadence = freq,
+                                                isPaused = false
+                                            )
+                                        )
+
+                                        val caughtUp = ledgerEngine.catchUpRecurringRules()
                                         hudInDialogError = null
                                         showCommandHud = false
-                                        alertManager.showAlert(res.summary, AlertType.SUCCESS)
+                                        if (caughtUp > 0) {
+                                            alertManager.showAlert("Recurring schedule saved and initial transaction recorded!", AlertType.SUCCESS)
+                                        } else {
+                                            alertManager.showAlert("Recurring schedule saved", AlertType.SUCCESS)
+                                        }
+                                        return@launch
+                                    }
+
+                                    when (val res = ledgerEngine.recordMovement(
+                                        nature = nature,
+                                        sourcePocketId = effectiveSrc,
+                                        targetPocketId = effectiveTgt,
+                                        amount = amt,
+                                        category = cat,
+                                        note = note,
+                                        timestamp = date,
+                                        autoSplitEnabled = autoSplitEnabled,
+                                        isRecurring = false,
+                                        frequency = freq
+                                    )) {
+                                        is VaultExecutionResult.OverdraftError -> {
+                                            hudInDialogError = res.message
+                                            alertManager.showAlert(res.message, AlertType.ERROR)
+                                        }
+                                        is VaultExecutionResult.Success -> {
+                                            hudInDialogError = null
+                                            showCommandHud = false
+                                            alertManager.showAlert(res.summary, AlertType.SUCCESS)
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                )
-            }
+                    )
+                }
 
-            editingRecurringRule?.let { rule ->
-                EditRecurringRuleDialog(
-                    rule = rule,
-                    theme = theme,
-                    onDismiss = { editingRecurringRule = null },
-                    onSave = { newAmt, newNote, newFreq, newTimestamp ->
-                        scope.launch {
-                            db.stateFlowDao().updateFlowRecord(
-                                rule.copy(
-                                    amount = newAmt,
-                                    note = newNote,
-                                    frequency = newFreq,
-                                    recurringCadence = newFreq,
-                                    timestamp = newTimestamp
+                editingRecurringRule?.let { rule ->
+                    EditRecurringRuleDialog(
+                        rule = rule,
+                        theme = theme,
+                        onDismiss = { editingRecurringRule = null },
+                        onSave = { newAmt, newNote, newFreq, newTimestamp ->
+                            scope.launch {
+                                db.stateFlowDao().updateFlowRecord(
+                                    rule.copy(
+                                        amount = newAmt,
+                                        note = newNote,
+                                        frequency = newFreq,
+                                        recurringCadence = newFreq,
+                                        timestamp = newTimestamp
+                                    )
                                 )
-                            )
-                            editingRecurringRule = null
-                            alertManager.showAlert("Recurring schedule updated", AlertType.SUCCESS)
+                                editingRecurringRule = null
+                                alertManager.showAlert("Recurring schedule updated", AlertType.SUCCESS)
+                            }
                         }
-                    }
-                )
-            }
+                    )
+                }
 
-            editingFlowRecord?.let { flow ->
-                EditTransactionDialog(
-                    record = flow,
-                    theme = theme,
-                    onDismiss = { editingFlowRecord = null },
-                    onSave = { updatedCategory, updatedNote ->
-                        scope.launch {
-                            db.stateFlowDao().updateFlowRecord(flow.copy(category = updatedCategory, note = updatedNote))
+                editingFlowRecord?.let { flow ->
+                    EditTransactionDialog(
+                        record = flow,
+                        theme = theme,
+                        onDismiss = { editingFlowRecord = null },
+                        onSave = { updatedCategory, updatedNote ->
+                            scope.launch {
+                                db.stateFlowDao().updateFlowRecord(flow.copy(category = updatedCategory, note = updatedNote))
+                                editingFlowRecord = null
+                                alertManager.showAlert("Transaction updated", AlertType.SUCCESS)
+                            }
+                        },
+                        onDelete = {
+                            recordPendingDeletion = flow
                             editingFlowRecord = null
-                            alertManager.showAlert("Transaction updated", AlertType.SUCCESS)
                         }
-                    },
-                    onDelete = {
-                        recordPendingDeletion = flow
-                        editingFlowRecord = null
-                    }
-                )
-            }
+                    )
+                }
 
-            recordPendingDeletion?.let { flow ->
-                val delAmt = (flow.amount ?: 0.0).toInt()
-                AlertDialog(
-                    onDismissRequest = { recordPendingDeletion = null },
-                    containerColor = theme.surface,
-                    title = { Text(text = "Confirm Deletion", color = Color.White) },
-                    text = { Text(text = "Delete entry of ₹$delAmt for '${flow.note.ifBlank { flow.category }}'? Balances will adjust.", color = Color(0xFFCCCCCC)) },
-                    confirmButton = {
-                        Button(
-                            onClick = {
-                                scope.launch {
-                                    db.stateFlowDao().deleteFlowRecordById(flow.id)
-                                    recordPendingDeletion = null
-                                    alertManager.showAlert("Transaction deleted and balance restored", AlertType.SUCCESS)
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed)
-                        ) { Text(text = "Delete", color = Color.White) }
-                    },
-                    dismissButton = { TextButton(onClick = { recordPendingDeletion = null }) { Text(text = "Cancel", color = theme.textMuted) } }
-                )
-            }
+                recordPendingDeletion?.let { flow ->
+                    val delAmt = (flow.amount ?: 0.0).toInt()
+                    AlertDialog(
+                        onDismissRequest = { recordPendingDeletion = null },
+                        containerColor = theme.surface,
+                        title = { Text(text = "Confirm Deletion", color = Color.White) },
+                        text = { Text(text = "Delete entry of ₹$delAmt for '${flow.note.ifBlank { flow.category }}'? Balances will adjust.", color = Color(0xFFCCCCCC)) },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    scope.launch {
+                                        db.stateFlowDao().deleteFlowRecordById(flow.id)
+                                        recordPendingDeletion = null
+                                        alertManager.showAlert("Transaction deleted and balance restored", AlertType.SUCCESS)
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed)
+                            ) { Text(text = "Delete", color = Color.White) }
+                        },
+                        dismissButton = { TextButton(onClick = { recordPendingDeletion = null }) { Text(text = "Cancel", color = theme.textMuted) } }
+                    )
+                }
 
-            if (showAllRecordsSheet) {
-                AllTransactionsSearchSheet(
-                    flowRecords = completedTransactions,
-                    isPrivacyMode = isPrivacyMode,
-                    isProUser = isProUnlocked,
-                    onDismiss = { showAllRecordsSheet = false },
-                    onEditRecord = { flow -> editingFlowRecord = flow },
-                    onExportCsv = {
-                        val compatList = completedTransactions.map { flowRecord ->
-                            val sourceId = flowRecord.sourcePocketId ?: flowRecord.targetPocketId ?: 0L
-                            val isExpense = flowRecord.nature in listOf(
-                                MovementNature.OUTFLOW,
-                                MovementNature.PEER_LEND,
-                                MovementNature.PEER_REPAY,
-                                MovementNature.CARD_PAYMENT
-                            )
-                            Transaction(
-                                id = flowRecord.id,
-                                accountId = sourceId,
-                                flowType = if (isExpense) "OUT" else "IN",
-                                type = flowRecord.nature.name,
-                                category = flowRecord.category,
-                                amount = flowRecord.amount ?: 0.0,
-                                timestamp = flowRecord.timestamp,
-                                note = flowRecord.note,
-                                isRecurring = flowRecord.isRecurring,
-                                frequency = flowRecord.frequency
-                            )
-                        }
-                        CsvExporter.exportAndShareTransactions(context, compatList)
-                    },
-                    onExportPdfDossier = {
-                        scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords) }
-                    }
-                )
-            }
-
-            if (showCreatePocketDialog) {
-                CreateAccountDialog(
-                    initialName = prefilledCreatePocketName,
-                    initialType = prefilledCreatePocketType,
-                    theme = theme,
-                    onDismiss = {
-                        showCreatePocketDialog = false
-                        prefilledCreatePocketName = ""
-                        pendingActionAfterAccountCreation = null
-                    },
-                    onSave = { name, type, limit, targetAmt, targetDateEpoch ->
-                        scope.launch {
-                            val newId = db.stateFlowDao().insertPocket(
-                                VaultPocket(
-                                    name = name,
-                                    pocketType = type,
-                                    subType = type.name,
-                                    creditLimit = limit,
-                                    targetAmount = targetAmt,
-                                    targetDateEpoch = targetDateEpoch
+                if (showAllRecordsSheet) {
+                    AllTransactionsSearchSheet(
+                        flowRecords = completedTransactions,
+                        isPrivacyMode = isPrivacyMode,
+                        isProUser = isProUnlocked,
+                        onDismiss = { showAllRecordsSheet = false },
+                        onEditRecord = { flow -> editingFlowRecord = flow },
+                        onExportCsv = {
+                            val compatList = completedTransactions.map { flowRecord ->
+                                val sourceId = flowRecord.sourcePocketId ?: flowRecord.targetPocketId ?: 0L
+                                val isExpense = flowRecord.nature in listOf(
+                                    MovementNature.OUTFLOW,
+                                    MovementNature.PEER_LEND,
+                                    MovementNature.PEER_REPAY,
+                                    MovementNature.CARD_PAYMENT
                                 )
-                            )
+                                Transaction(
+                                    id = flowRecord.id,
+                                    accountId = sourceId,
+                                    flowType = if (isExpense) "OUT" else "IN",
+                                    type = flowRecord.nature.name,
+                                    category = flowRecord.category,
+                                    amount = flowRecord.amount ?: 0.0,
+                                    timestamp = flowRecord.timestamp,
+                                    note = flowRecord.note,
+                                    isRecurring = flowRecord.isRecurring,
+                                    frequency = flowRecord.frequency
+                                )
+                            }
+                            CsvExporter.exportAndShareTransactions(context, compatList)
+                        },
+                        onExportPdfDossier = {
+                            scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords) }
+                        }
+                    )
+                }
+
+                if (showCreatePocketDialog) {
+                    CreateAccountDialog(
+                        initialName = prefilledCreatePocketName,
+                        initialType = prefilledCreatePocketType,
+                        theme = theme,
+                        onDismiss = {
                             showCreatePocketDialog = false
                             prefilledCreatePocketName = ""
-                            alertManager.showAlert("Created account '$name'", AlertType.SUCCESS)
-
-                            pendingActionAfterAccountCreation?.invoke(newId)
                             pendingActionAfterAccountCreation = null
-                        }
-                    }
-                )
-            }
-
-            editingPocket?.let { pocket ->
-                EditAccountDialog(
-                    account = pocket,
-                    theme = theme,
-                    onDismiss = { editingPocket = null },
-                    onSave = { updatedName, updatedLimit, updatedTarget, updatedDateEpoch ->
-                        scope.launch {
-                            db.stateFlowDao().updatePocket(
-                                pocket.copy(
-                                    name = updatedName,
-                                    creditLimit = updatedLimit,
-                                    targetAmount = updatedTarget,
-                                    targetDateEpoch = updatedDateEpoch
+                        },
+                        onSave = { name, type, limit, targetAmt, targetDateEpoch ->
+                            scope.launch {
+                                val newId = db.stateFlowDao().insertPocket(
+                                    VaultPocket(
+                                        name = name,
+                                        pocketType = type,
+                                        subType = type.name,
+                                        creditLimit = limit,
+                                        targetAmount = targetAmt,
+                                        targetDateEpoch = targetDateEpoch
+                                    )
                                 )
-                            )
-                            editingPocket = null
-                            alertManager.showAlert("${pocket.name} updated", AlertType.SUCCESS)
+                                showCreatePocketDialog = false
+                                prefilledCreatePocketName = ""
+                                alertManager.showAlert("Created account '$name'", AlertType.SUCCESS)
+
+                                pendingActionAfterAccountCreation?.invoke(newId)
+                                pendingActionAfterAccountCreation = null
+                            }
                         }
-                    }
-                )
+                    )
+                }
+
+                editingPocket?.let { pocket ->
+                    EditAccountDialog(
+                        account = pocket,
+                        theme = theme,
+                        onDismiss = { editingPocket = null },
+                        onSave = { updatedName, updatedLimit, updatedTarget, updatedDateEpoch ->
+                            scope.launch {
+                                db.stateFlowDao().updatePocket(
+                                    pocket.copy(
+                                        name = updatedName,
+                                        creditLimit = updatedLimit,
+                                        targetAmount = updatedTarget,
+                                        targetDateEpoch = updatedDateEpoch
+                                    )
+                                )
+                                editingPocket = null
+                                alertManager.showAlert("${pocket.name} updated", AlertType.SUCCESS)
+                            }
+                        }
+                    )
+                }
+
+                if (showMockPaywall) {
+                    MockPaywallBottomSheet(
+                        currentProState = isProUnlocked,
+                        onDismiss = { showMockPaywall = false },
+                        onSimulatePurchaseSuccess = { billingManager.simulatePurchaseSuccess() },
+                        onSimulateRevokePro = { billingManager.simulateRevokePro() }
+                    )
+                }
             }
 
-            if (showMockPaywall) {
-                MockPaywallBottomSheet(
-                    currentProState = isProUnlocked,
-                    onDismiss = { showMockPaywall = false },
-                    onSimulatePurchaseSuccess = { billingManager.simulatePurchaseSuccess() },
-                    onSimulateRevokePro = { billingManager.simulateRevokePro() }
-                )
-            }
+            VaultFloatingTopOverlay(alertManager = alertManager, theme = theme)
         }
-
-        VaultFloatingTopOverlay(alertManager = alertManager, theme = theme)
     }
-}
 }
 
 @Composable
