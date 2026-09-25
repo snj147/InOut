@@ -166,14 +166,14 @@ fun DashboardScreen(db: AppDatabase) {
 
     val totalLiquid = remember(pocketBalances) {
         pocketBalances.filter { it.pocketType == PocketType.LIQUID }
-            .sumOf { it.currentBalance ?: 0.0 }
+            .sumOf { it.currentBalance }
             .coerceAtLeast(0.0)
     }
 
     val unpaidCardDues = remember(pocketBalances) {
         pocketBalances.filter { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }
-            .filter { (it.computedBalance ?: 0.0) < 0.0 }
-            .sumOf { Math.abs(it.computedBalance ?: 0.0) }
+            .filter { it.computedBalance < 0.0 }
+            .sumOf { Math.abs(it.computedBalance) }
     }
 
     val trueSafeLiquid = if (phantomLockEnabled) (totalLiquid - unpaidCardDues).coerceAtLeast(0.0) else totalLiquid
@@ -218,7 +218,7 @@ fun DashboardScreen(db: AppDatabase) {
 
     val peerNet = remember(pocketBalances) {
         pocketBalances.filter { it.pocketType == PocketType.COUNTERPARTY || it.pocketType == PocketType.PEER || it.subType == "PEER" }
-            .sumOf { it.computedBalance ?: 0.0 }
+            .sumOf { it.computedBalance }
     }
 
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -1847,7 +1847,11 @@ private fun CleanVaultHeader(
                     badge = {
                         if (unreadNoticeCount > 0) {
                             Badge(containerColor = theme.mildRed) {
-                                Text("$unreadNoticeCount", color = Color.White, fontSize = 9.sp)
+                                Text(
+                                    text = unreadNoticeCount.toString(),
+                                    color = Color.White,
+                                    fontSize = 9.sp
+                                )
                             }
                         }
                     }
