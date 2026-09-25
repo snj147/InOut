@@ -74,7 +74,6 @@ fun DashboardScreen(db: AppDatabase) {
     val alertManager = remember { VaultAlertManager() }
     val ledgerEngine = remember { VaultLedgerEngine(db.stateFlowDao(), prefs) }
 
-    // Read installed APK metadata safely
     val packageInfo = remember {
         try {
             context.packageManager.getPackageInfo(context.packageName, 0)
@@ -91,7 +90,6 @@ fun DashboardScreen(db: AppDatabase) {
         SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(t))
     }
 
-    // Auto-Log App Updates into System Notices
     LaunchedEffect(currentInstalledSha) {
         val lastLoggedBuild = prefs.getString("last_logged_build_sha", "")
         if (lastLoggedBuild != currentInstalledSha && currentInstalledSha.isNotBlank()) {
@@ -108,7 +106,6 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    // Catch up recurring schedules
     LaunchedEffect(Unit) {
         val generated = ledgerEngine.catchUpRecurringRules()
         if (generated > 0) {
@@ -259,7 +256,6 @@ fun DashboardScreen(db: AppDatabase) {
         prefs.edit().putInt("saved_carousel_page", pagerState.currentPage).apply()
     }
 
-    // Interactive Telegram-Style Quick Bar State
     var naturalLanguageInput by remember { mutableStateOf(TextFieldValue("")) }
     var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
     val quickBarFocusRequester = remember { FocusRequester() }
@@ -290,7 +286,6 @@ fun DashboardScreen(db: AppDatabase) {
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
 
-    // Dynamic Context-Aware Autocomplete Pills (Telegram-Style)
     val quickBarCommandPills = remember(naturalLanguageInput.text, rawPockets) {
         derivedStateOf {
             val q = naturalLanguageInput.text.trim().lowercase()
@@ -611,7 +606,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         sourcePocketId = sourceId,
                                         targetPocketId = targetId,
                                         amount = parsed.amount,
-                                        movementNature = parsed.nature,
+                                        nature = parsed.nature,
                                         category = parsed.category,
                                         note = parsed.merchant,
                                         timestamp = parsed.timestamp,
@@ -929,7 +924,6 @@ fun DashboardScreen(db: AppDatabase) {
                                         }
                                     }
 
-                                    // The Interactive Telegram-Style Slot Quick Bar
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
@@ -1010,7 +1004,6 @@ fun DashboardScreen(db: AppDatabase) {
                                                 }
                                             }
 
-                                            // Telegram-Style Dynamic Autocomplete Tokens
                                             if (quickBarCommandPills.isNotEmpty()) {
                                                 HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.6f), thickness = 0.8.dp)
                                                 LazyRow(
@@ -1489,7 +1482,7 @@ fun DashboardScreen(db: AppDatabase) {
                                                 sourcePocketId = effectiveSrc,
                                                 targetPocketId = effectiveTgt,
                                                 amount = amt,
-                                                movementNature = nature,
+                                                nature = nature,
                                                 category = cat,
                                                 note = note,
                                                 timestamp = date,
@@ -1849,7 +1842,6 @@ private fun CleanVaultHeader(
                 )
             }
 
-            // Notification Bell with Badge
             IconButton(onClick = onOpenNotices) {
                 BadgedBox(
                     badge = {
@@ -1910,7 +1902,6 @@ private fun SettingsCardsList(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(bottom = 96.dp)
     ) {
-        // Dedicated, Clean About & Version Card
         item {
             Card(
                 shape = RoundedCornerShape(14.dp),
