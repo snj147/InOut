@@ -53,7 +53,6 @@ data class FlowRecord @JvmOverloads constructor(
     val recurringCadence: String = "NONE",
     val isPaused: Boolean = false
 ) {
-    // Secondary constructor to satisfy callers passing 'movementNature = ...' as a named argument
     @Ignore
     constructor(
         id: Long = 0L,
@@ -83,7 +82,6 @@ data class FlowRecord @JvmOverloads constructor(
         isPaused = isPaused
     )
 
-    // Property getter so code reading record.movementNature continues to compile
     val movementNature: MovementNature get() = nature
 }
 
@@ -106,17 +104,19 @@ data class SystemNotice(
     val isRead: Boolean = false
 )
 
-data class PocketBalanceTuple(
-    @ColumnInfo(name = "pocketId") val pocketId: String?,
-    @ColumnInfo(name = "pocketName") val pocketName: String?,
-    @ColumnInfo(name = "pocketType") val pocketType: PocketType?,
-    @ColumnInfo(name = "subType") val subType: String?,
-    @ColumnInfo(name = "creditLimit") val creditLimit: Double?,
-    @ColumnInfo(name = "targetAmount") val targetAmount: Double?,
-    @ColumnInfo(name = "targetDateEpoch") val targetDateEpoch: Long?,
-    @ColumnInfo(name = "currentBalance") val currentBalance: Double?,
-    @ColumnInfo(name = "computedBalance") val computedBalance: Double?
+data class PocketBalanceSummary(
+    @ColumnInfo(name = "pocketId") val pocketId: String = "",
+    @ColumnInfo(name = "pocketName") val pocketName: String = "",
+    @ColumnInfo(name = "pocketType") val pocketType: PocketType = PocketType.LIQUID,
+    @ColumnInfo(name = "subType") val subType: String = "",
+    @ColumnInfo(name = "creditLimit") val creditLimit: Double = 0.0,
+    @ColumnInfo(name = "targetAmount") val targetAmount: Double = 0.0,
+    @ColumnInfo(name = "targetDateEpoch") val targetDateEpoch: Long = 0L,
+    @ColumnInfo(name = "currentBalance") val currentBalance: Double = 0.0,
+    @ColumnInfo(name = "computedBalance") val computedBalance: Double = 0.0
 )
+
+typealias PocketBalanceTuple = PocketBalanceSummary
 
 @Dao
 interface StateFlowDao {
@@ -170,12 +170,12 @@ interface StateFlowDao {
 
     @Query("""
         SELECT 
-            p.id AS pocketId,
+            CAST(p.id AS TEXT) AS pocketId,
             p.name AS pocketName,
             p.pocketType AS pocketType,
             p.subType AS subType,
-            p.creditLimit AS creditLimit,
-            p.targetAmount AS targetAmount,
+            COALESCE(p.creditLimit, 0.0) AS creditLimit,
+            COALESCE(p.targetAmount, 0.0) AS targetAmount,
             p.targetDateEpoch AS targetDateEpoch,
             COALESCE(SUM(CASE 
                 WHEN f.targetPocketId = p.id AND f.isRecurring = 0 THEN f.amount 
@@ -193,7 +193,7 @@ interface StateFlowDao {
         GROUP BY p.id
         ORDER BY p.id ASC
     """)
-    fun observePocketBalances(): Flow<List<PocketBalanceTuple>>
+    fun observePocketBalances(): Flow<List<PocketBalanceSummary>>
 }
 
 @Database(
