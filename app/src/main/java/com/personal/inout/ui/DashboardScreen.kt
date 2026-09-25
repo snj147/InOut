@@ -1,7 +1,6 @@
 package com.personal.inout.ui
 
 import android.Manifest
-import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -20,6 +19,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -40,12 +40,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -206,21 +213,24 @@ fun DashboardScreen(db: AppDatabase) {
         prefs.edit().putInt("saved_carousel_page", pagerState.currentPage).apply()
     }
 
-    var naturalLanguageInput by remember { mutableStateOf("") }
+    var naturalLanguageInput by remember { mutableStateOf(TextFieldValue("")) }
+    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val focusRequester = remember { FocusRequester() }
+
     val placeholderHints = listOf(
-        "<expense> <amount> <account>",
-        "coffee <amount> <cash/bank>",
-        "monthly salary <amount> <bank> start <DD/MM/YYYY>",
-        "every month rent <amount> from <account> on <day>",
-        "weekly sip <amount> <bank> start <DD/MM/YYYY>",
-        "transfer <amount> from <source_account> to <target_account>",
-        "lent <amount> to <person_name>",
-        "borrowed <amount> from <person_name>",
-        "settle <payer> to <receiver> <amount>",
-        "new bank <account_name>",
-        "new card <card_name> limit <credit_limit>",
-        "new goal <pot_name> target <target_amount>",
-        "burn <daily_spending_ceiling>"
+        "coffee 120 BANK",
+        "groceries 850 cash",
+        "salary 45k into BANK",
+        "dinner 450 BANK monthly",
+        "repay 4k to NAME from BANK",
+        "collect 2000 from NAME",
+        "lent 1500 to NAME",
+        "borrow 3000 from NAME",
+        "trf 5000 from BANK to BANK",
+        "new bank BANK",
+        "new card BANK limit 50k",
+        "new goal Emergency 100k",
+        "burn 500"
     )
     var currentHintIndex by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
@@ -233,9 +243,9 @@ fun DashboardScreen(db: AppDatabase) {
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
 
-    val liveSuggestions by remember(naturalLanguageInput, rawPockets) {
+    val liveSuggestions by remember(naturalLanguageInput.text, rawPockets) {
         derivedStateOf {
-            QuickBarSuggester.evaluate(naturalLanguageInput, rawPockets)
+            QuickBarSuggester.evaluate(naturalLanguageInput.text, rawPockets)
         }
     }
 
@@ -296,54 +306,54 @@ fun DashboardScreen(db: AppDatabase) {
                 autoSplitEnabled = true
                 prefs.edit().putBoolean("auto_split_debit", true).apply()
                 alertManager.showAlert("Cross-Account Auto-Split: ENABLED", AlertType.SUCCESS)
-                naturalLanguageInput = ""
+                naturalLanguageInput = TextFieldValue("")
                 return
             }
             lower in listOf("autosplit off", "disable autosplit", "autosplit 0") -> {
                 autoSplitEnabled = false
                 prefs.edit().putBoolean("auto_split_debit", false).apply()
                 alertManager.showAlert("Cross-Account Auto-Split: DISABLED", AlertType.INFO)
-                naturalLanguageInput = ""
+                naturalLanguageInput = TextFieldValue("")
                 return
             }
             lower in listOf("autosplit toggle", "/autosplit") -> {
                 autoSplitEnabled = !autoSplitEnabled
                 prefs.edit().putBoolean("auto_split_debit", autoSplitEnabled).apply()
                 alertManager.showAlert("Auto-Split: ${if (autoSplitEnabled) "ENABLED" else "DISABLED"}", AlertType.SUCCESS)
-                naturalLanguageInput = ""
+                naturalLanguageInput = TextFieldValue("")
                 return
             }
             lower in listOf("phantom lock on", "phantom on", "lock cc on") -> {
                 phantomLockEnabled = true
                 prefs.edit().putBoolean("phantom_lock_enabled", true).apply()
                 alertManager.showAlert("Credit Card Phantom Lock: ACTIVE", AlertType.SUCCESS)
-                naturalLanguageInput = ""
+                naturalLanguageInput = TextFieldValue("")
                 return
             }
             lower in listOf("phantom lock off", "phantom off") -> {
                 phantomLockEnabled = false
                 prefs.edit().putBoolean("phantom_lock_enabled", false).apply()
                 alertManager.showAlert("Credit Card Phantom Lock: OFF", AlertType.INFO)
-                naturalLanguageInput = ""
+                naturalLanguageInput = TextFieldValue("")
                 return
             }
             lower in listOf("phantom lock toggle", "/phantom") -> {
                 phantomLockEnabled = !phantomLockEnabled
                 prefs.edit().putBoolean("phantom_lock_enabled", phantomLockEnabled).apply()
                 alertManager.showAlert("Phantom Lock: ${if (phantomLockEnabled) "ACTIVE" else "OFF"}", AlertType.SUCCESS)
-                naturalLanguageInput = ""
+                naturalLanguageInput = TextFieldValue("")
                 return
             }
             lower in listOf("privacy on", "hide balances", "mask") -> {
                 isPrivacyMode = true
                 alertManager.showAlert("Privacy Mode: Masked", AlertType.INFO)
-                naturalLanguageInput = ""
+                naturalLanguageInput = TextFieldValue("")
                 return
             }
             lower in listOf("privacy off", "show balances", "unmask") -> {
                 isPrivacyMode = false
                 alertManager.showAlert("Privacy Mode: Visible", AlertType.INFO)
-                naturalLanguageInput = ""
+                naturalLanguageInput = TextFieldValue("")
                 return
             }
             lower.startsWith("theme ") -> {
@@ -356,12 +366,12 @@ fun DashboardScreen(db: AppDatabase) {
                 activeThemeMode = targetMode
                 prefs.edit().putString("selected_theme", targetMode.name).apply()
                 alertManager.showAlert("Applied theme: ${targetMode.name.replace("_", " ")}", AlertType.SUCCESS)
-                naturalLanguageInput = ""
+                naturalLanguageInput = TextFieldValue("")
                 return
             }
             lower in listOf("export pdf", "/export pdf") -> {
                 scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords) }
-                naturalLanguageInput = ""
+                naturalLanguageInput = TextFieldValue("")
                 return
             }
             lower in listOf("export csv", "/export csv") -> {
@@ -387,12 +397,12 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
                 CsvExporter.exportAndShareTransactions(context, compatList)
-                naturalLanguageInput = ""
+                naturalLanguageInput = TextFieldValue("")
                 return
             }
             lower in listOf("backup now", "/backup") -> {
                 backupExportLauncher.launch("inout_vault_backup_${System.currentTimeMillis()}.vault")
-                naturalLanguageInput = ""
+                naturalLanguageInput = TextFieldValue("")
                 return
             }
         }
@@ -406,34 +416,51 @@ fun DashboardScreen(db: AppDatabase) {
         scope.launch {
             when (parsed) {
                 is ParsedIntent.CreateAccount -> {
-                    prefilledCreatePocketName = parsed.name
-                    prefilledCreatePocketType = parsed.type
+                    db.stateFlowDao().insertPocket(
+                        VaultPocket(
+                            name = parsed.name,
+                            pocketType = parsed.type,
+                            subType = parsed.type.name,
+                            creditLimit = 0.0,
+                            targetAmount = 0.0,
+                            targetDateEpoch = 0L
+                        )
+                    )
+                    alertManager.showAlert("Account '${parsed.name}' created", AlertType.SUCCESS)
+                    naturalLanguageInput = TextFieldValue("")
+                }
+                is ParsedIntent.MissingAccountError -> {
+                    prefilledCreatePocketName = parsed.missingAccountName
+                    prefilledCreatePocketType = PocketType.LIQUID
                     showCreatePocketDialog = true
-                    alertManager.showAlert("Account '${parsed.name}' does not exist. Please confirm creation.", AlertType.INFO)
+                    alertManager.showAlert("Account '${parsed.missingAccountName}' does not exist. Please confirm creation.", AlertType.WARNING)
+                }
+                is ParsedIntent.PeerNotFoundError -> {
+                    alertManager.showAlert("Cannot ${parsed.action}: No contact named '${parsed.peerName}' found", AlertType.ERROR)
                 }
                 is ParsedIntent.SetDailyBurn -> {
                     dailyBurnCeiling = parsed.newRate
                     prefs.edit().putFloat("daily_burn_ceiling", parsed.newRate.toFloat()).apply()
                     alertManager.showAlert("Daily Burn set to ₹${parsed.newRate.toInt()}/day", AlertType.SUCCESS)
-                    naturalLanguageInput = ""
+                    naturalLanguageInput = TextFieldValue("")
                 }
                 is ParsedIntent.SaveMacroAlias -> {
                     val macroPrefs = context.getSharedPreferences("vault_macros", Context.MODE_PRIVATE)
                     macroPrefs.edit().putString(parsed.alias, parsed.fullCommand).apply()
                     alertManager.showAlert("Macro '${parsed.alias}' mapped", AlertType.SUCCESS)
-                    naturalLanguageInput = ""
+                    naturalLanguageInput = TextFieldValue("")
                 }
                 is ParsedIntent.StageDesire -> {
                     db.stateFlowDao().insertStagedDesire(StagedDesire(name = parsed.name, amount = parsed.amount))
                     alertManager.showAlert("Staged '${parsed.name}' in cool-off quarantine", AlertType.INFO)
-                    naturalLanguageInput = ""
+                    naturalLanguageInput = TextFieldValue("")
                 }
                 is ParsedIntent.TriangularSettle -> {
                     when (val res = ledgerEngine.triangularPeerSettle(parsed.debtor, parsed.creditor, parsed.amount)) {
                         is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
                         is VaultExecutionResult.Success -> {
                             alertManager.showAlert(res.summary, AlertType.SUCCESS)
-                            naturalLanguageInput = ""
+                            naturalLanguageInput = TextFieldValue("")
                         }
                     }
                 }
@@ -453,7 +480,7 @@ fun DashboardScreen(db: AppDatabase) {
                         }
                         db.stateFlowDao().updatePocket(goal.copy(isArchived = true))
                         alertManager.showAlert("Pot '${goal.name}' broken. Returned ₹${bal.toInt()}", AlertType.SUCCESS)
-                        naturalLanguageInput = ""
+                        naturalLanguageInput = TextFieldValue("")
                     }
                 }
                 is ParsedIntent.CompoundTransactions -> {
@@ -474,7 +501,7 @@ fun DashboardScreen(db: AppDatabase) {
                                 if (res is VaultExecutionResult.Success) successCount++
                             }
                             alertManager.showAlert("Recorded $successCount compound transactions", AlertType.SUCCESS)
-                            naturalLanguageInput = ""
+                            naturalLanguageInput = TextFieldValue("")
                         }
                     }
                 }
@@ -551,7 +578,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     val dateStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(parsed.timestamp))
                                     alertManager.showAlert("Scheduled ${parsed.frequency.lowercase()} rule starting $dateStr", AlertType.SUCCESS)
                                 }
-                                naturalLanguageInput = ""
+                                naturalLanguageInput = TextFieldValue("")
                                 return@launch
                             }
 
@@ -570,13 +597,12 @@ fun DashboardScreen(db: AppDatabase) {
                                 is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
                                 is VaultExecutionResult.Success -> {
                                     alertManager.showAlert(res.summary, AlertType.SUCCESS)
-                                    naturalLanguageInput = ""
+                                    naturalLanguageInput = TextFieldValue("")
                                 }
                             }
                         }
                     }
                 }
-                else -> {}
             }
         }
     }
@@ -870,7 +896,7 @@ fun DashboardScreen(db: AppDatabase) {
                                                 Spacer(Modifier.width(10.dp))
 
                                                 Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                                                    if (naturalLanguageInput.isEmpty()) {
+                                                    if (naturalLanguageInput.text.isEmpty()) {
                                                         Text(
                                                             text = placeholderHints[currentHintIndex],
                                                             color = theme.textMuted.copy(alpha = 0.7f),
@@ -885,13 +911,43 @@ fun DashboardScreen(db: AppDatabase) {
                                                         textStyle = TextStyle(color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Medium),
                                                         cursorBrush = SolidColor(theme.accent),
                                                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                                        keyboardActions = KeyboardActions(onDone = { executeQuickBarCommand(naturalLanguageInput) }),
-                                                        modifier = Modifier.fillMaxWidth()
+                                                        keyboardActions = KeyboardActions(onDone = { executeQuickBarCommand(naturalLanguageInput.text) }),
+                                                        onTextLayout = { textLayoutResult = it },
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .focusRequester(focusRequester)
+                                                            .pointerInput(Unit) {
+                                                                detectTapGestures(
+                                                                    onTap = { offset ->
+                                                                        focusRequester.requestFocus()
+                                                                        val layout = textLayoutResult ?: return@detectTapGestures
+                                                                        val tapPosition = layout.getOffsetForPosition(offset)
+                                                                        val text = naturalLanguageInput.text
+                                                                        if (text.isNotEmpty() && tapPosition in text.indices) {
+                                                                            var start = tapPosition
+                                                                            while (start > 0 && !text[start - 1].isWhitespace()) {
+                                                                                start--
+                                                                            }
+                                                                            var end = tapPosition
+                                                                            while (end < text.length && !text[end].isWhitespace()) {
+                                                                                end++
+                                                                            }
+                                                                            naturalLanguageInput = naturalLanguageInput.copy(selection = TextRange(start, end))
+                                                                        }
+                                                                    },
+                                                                    onDoubleTap = { offset ->
+                                                                        focusRequester.requestFocus()
+                                                                        val layout = textLayoutResult ?: return@detectTapGestures
+                                                                        val tapPosition = layout.getOffsetForPosition(offset)
+                                                                        naturalLanguageInput = naturalLanguageInput.copy(selection = TextRange(tapPosition, tapPosition))
+                                                                    }
+                                                                )
+                                                            }
                                                     )
                                                 }
 
-                                                if (naturalLanguageInput.isNotBlank()) {
-                                                    IconButton(onClick = { executeQuickBarCommand(naturalLanguageInput) }) {
+                                                if (naturalLanguageInput.text.isNotBlank()) {
+                                                    IconButton(onClick = { executeQuickBarCommand(naturalLanguageInput.text) }) {
                                                         Icon(Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
                                                     }
                                                 }
@@ -908,7 +964,19 @@ fun DashboardScreen(db: AppDatabase) {
                                                             modifier = Modifier
                                                                 .clip(RoundedCornerShape(6.dp))
                                                                 .background(theme.surfaceAlt)
-                                                                .clickable { naturalLanguageInput = suggestion.template }
+                                                                .clickable {
+                                                                    val t = suggestion.template
+                                                                    val varToken = listOf("<amount>", "<bank>", "<person>", "BANK", "NAME")
+                                                                        .firstOrNull { t.contains(it) }
+                                                                    if (varToken != null) {
+                                                                        val start = t.indexOf(varToken)
+                                                                        val end = start + varToken.length
+                                                                        naturalLanguageInput = TextFieldValue(t, selection = TextRange(start, end))
+                                                                    } else {
+                                                                        naturalLanguageInput = TextFieldValue(t, selection = TextRange(t.length))
+                                                                    }
+                                                                    focusRequester.requestFocus()
+                                                                }
                                                                 .padding(horizontal = 8.dp, vertical = 5.dp),
                                                             verticalAlignment = Alignment.CenterVertically,
                                                             horizontalArrangement = Arrangement.spacedBy(5.dp)
