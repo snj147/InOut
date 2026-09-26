@@ -286,7 +286,7 @@ fun DashboardScreen(db: AppDatabase) {
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
 
-    val quickBarCommandPills = remember(naturalLanguageInput.text, rawPockets) {
+    val quickBarCommandPills by remember(naturalLanguageInput.text, rawPockets) {
         derivedStateOf {
             val q = naturalLanguageInput.text.trim().lowercase()
             when {
@@ -1102,100 +1102,101 @@ fun DashboardScreen(db: AppDatabase) {
                                 }
                             }
                         }
+                    }
 
-                        1 -> AccountPocketsView(
-                            pocketBalances = pocketBalances,
-                            rawPockets = rawPockets,
-                            recurringSchedules = recurringTemplates,
-                            isPrivacyMode = isPrivacyMode,
-                            onTransactPocket = { pocket ->
-                                selectedPocketIdForHud = pocket.id
-                                ocrPrefilledNote = ""
-                                ocrPrefilledAmount = null
-                                hudInDialogError = null
-                                showCommandHud = true
-                            },
-                            onEditPocket = { editingPocket = it },
-                            onDeletePocketSafe = { pocket, balance ->
-                                val bal = balance ?: 0.0
-                                if (bal != 0.0) {
-                                    alertManager.showAlert("Cannot delete account with active balance of ₹${bal.toInt()}", AlertType.WARNING)
-                                } else {
-                                    scope.launch {
-                                        db.stateFlowDao().updatePocket(pocket.copy(isArchived = true))
-                                        alertManager.showAlert("${pocket.name} removed", AlertType.SUCCESS)
-                                    }
-                                }
-                            },
-                            onTogglePauseRecurring = { schedule ->
+                    1 -> AccountPocketsView(
+                        pocketBalances = pocketBalances,
+                        rawPockets = rawPockets,
+                        recurringSchedules = recurringTemplates,
+                        isPrivacyMode = isPrivacyMode,
+                        onTransactPocket = { pocket ->
+                            selectedPocketIdForHud = pocket.id
+                            ocrPrefilledNote = ""
+                            ocrPrefilledAmount = null
+                            hudInDialogError = null
+                            showCommandHud = true
+                        },
+                        onEditPocket = { editingPocket = it },
+                        onDeletePocketSafe = { pocket, balance ->
+                            val bal = balance ?: 0.0
+                            if (bal != 0.0) {
+                                alertManager.showAlert("Cannot delete account with active balance of ₹${bal.toInt()}", AlertType.WARNING)
+                            } else {
                                 scope.launch {
-                                    db.stateFlowDao().setRecurringPausedState(schedule.id, !schedule.isPaused)
-                                    alertManager.showAlert(if (schedule.isPaused) "Resumed rule" else "Paused rule", AlertType.SUCCESS)
-                                }
-                            },
-                            onEditRecurring = { schedule -> editingRecurringRule = schedule },
-                            onDeleteRecurringSafe = { schedule ->
-                                scope.launch {
-                                    db.stateFlowDao().deleteFlowRecordById(schedule.id)
-                                    alertManager.showAlert("Recurring schedule deleted", AlertType.SUCCESS)
-                                }
-                            },
-                            onRecordCardSettlement = { cardId, liquidId, amt ->
-                                scope.launch {
-                                    when (val res = ledgerEngine.recordMovement(
-                                        nature = MovementNature.CARD_PAYMENT,
-                                        sourcePocketId = liquidId,
-                                        targetPocketId = cardId,
-                                        amount = amt ?: 0.0,
-                                        category = "Bill Payment",
-                                        note = "Card Dues Clearance",
-                                        autoSplitEnabled = autoSplitEnabled
-                                    )) {
-                                        is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
-                                        is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
-                                    }
-                                }
-                            },
-                            onPeerAction = { nature, peerId, liquidId, amt ->
-                                scope.launch {
-                                    val (src, tgt) = if (nature in listOf(MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) liquidId to peerId else peerId to liquidId
-                                    when (val res = ledgerEngine.recordMovement(
-                                        nature = nature,
-                                        sourcePocketId = src,
-                                        targetPocketId = tgt,
-                                        amount = amt ?: 0.0,
-                                        category = "Peer Transfer",
-                                        note = nature.name,
-                                        autoSplitEnabled = autoSplitEnabled
-                                    )) {
-                                        is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
-                                        is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
-                                    }
+                                    db.stateFlowDao().updatePocket(pocket.copy(isArchived = true))
+                                    alertManager.showAlert("${pocket.name} removed", AlertType.SUCCESS)
                                 }
                             }
-                        )
+                        },
+                        onTogglePauseRecurring = { schedule ->
+                            scope.launch {
+                                db.stateFlowDao().setRecurringPausedState(schedule.id, !schedule.isPaused)
+                                alertManager.showAlert(if (schedule.isPaused) "Resumed rule" else "Paused rule", AlertType.SUCCESS)
+                            }
+                        },
+                        onEditRecurring = { schedule -> editingRecurringRule = schedule },
+                        onDeleteRecurringSafe = { schedule ->
+                            scope.launch {
+                                db.stateFlowDao().deleteFlowRecordById(schedule.id)
+                                alertManager.showAlert("Recurring schedule deleted", AlertType.SUCCESS)
+                            }
+                        },
+                        onRecordCardSettlement = { cardId, liquidId, amt ->
+                            scope.launch {
+                                when (val res = ledgerEngine.recordMovement(
+                                    nature = MovementNature.CARD_PAYMENT,
+                                    sourcePocketId = liquidId,
+                                    targetPocketId = cardId,
+                                    amount = amt ?: 0.0,
+                                    category = "Bill Payment",
+                                    note = "Card Dues Clearance",
+                                    autoSplitEnabled = autoSplitEnabled
+                                )) {
+                                    is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
+                                    is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
+                                }
+                            }
+                        },
+                        onPeerAction = { nature, peerId, liquidId, amt ->
+                            scope.launch {
+                                val (src, tgt) = if (nature in listOf(MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) liquidId to peerId else peerId to liquidId
+                                when (val res = ledgerEngine.recordMovement(
+                                    nature = nature,
+                                    sourcePocketId = src,
+                                    targetPocketId = tgt,
+                                    amount = amt ?: 0.0,
+                                    category = "Peer Transfer",
+                                    note = nature.name,
+                                    autoSplitEnabled = autoSplitEnabled
+                                )) {
+                                    is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
+                                    is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
+                                }
+                            }
+                        }
+                    )
 
-                        2 -> IntelligenceScreen(
-                            pocketBalances = pocketBalances,
-                            flowRecords = flowRecords,
-                            recurringSchedules = recurringTemplates,
-                            stagedDesires = stagedDesires,
-                            dailyBurnCeiling = dailyBurnCeiling,
-                            trueSafeLiquid = trueSafeLiquid,
-                            isPrivacyMode = isPrivacyMode,
-                            theme = theme
-                        )
+                    2 -> IntelligenceScreen(
+                        pocketBalances = pocketBalances,
+                        flowRecords = flowRecords,
+                        recurringSchedules = recurringTemplates,
+                        stagedDesires = stagedDesires,
+                        dailyBurnCeiling = dailyBurnCeiling,
+                        trueSafeLiquid = trueSafeLiquid,
+                        isPrivacyMode = isPrivacyMode,
+                        theme = theme
+                    )
 
-                        3 -> {
-                            Column(
+                    3 -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(horizontal = 16.dp)
+                        ) {
+                            Box(
                                 modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(horizontal = 16.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(top = 16.dp, bottom = 12.dp)
+                                    .fillMaxWidth()
+                                    .padding(top = 16.dp, bottom = 12.dp)
                                 ) {
                                     Text(
                                         text = "Settings & Vault Controls",
