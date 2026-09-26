@@ -30,6 +30,7 @@ fun AllTransactionsSearchSheet(
     flowRecords: List<FlowRecord>,
     isPrivacyMode: Boolean,
     isProUser: Boolean,
+    sheetState: SheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     onDismiss: () -> Unit,
     onEditRecord: (FlowRecord) -> Unit,
     onExportCsv: () -> Unit,
@@ -57,6 +58,7 @@ fun AllTransactionsSearchSheet(
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = theme.surface,
         tonalElevation = 8.dp
     ) {
