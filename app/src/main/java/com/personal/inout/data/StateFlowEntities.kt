@@ -24,6 +24,13 @@ enum class MovementNature {
     PEER_REPAY
 }
 
+enum class CadenceType {
+    DAILY,
+    WEEKLY,
+    MONTHLY,
+    CUSTOM
+}
+
 @Entity(tableName = "vault_pockets")
 data class VaultPocket(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
@@ -51,7 +58,6 @@ data class FlowRecord(
     val recurringCadence: String = "NONE",
     val isPaused: Boolean = false
 ) {
-    // Read-only alias so files calling .nature compile without ambiguity
     val nature: MovementNature get() = movementNature
 }
 
