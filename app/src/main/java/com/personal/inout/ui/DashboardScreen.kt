@@ -53,6 +53,7 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.personal.inout.BuildConfig
 import com.personal.inout.billing.PlayBillingManager
 import com.personal.inout.data.*
 import com.personal.inout.ocr.ReceiptScanner
@@ -73,16 +74,17 @@ fun DashboardScreen(db: AppDatabase) {
     val alertManager = remember { VaultAlertManager() }
     val ledgerEngine = remember { VaultLedgerEngine(db.stateFlowDao(), prefs) }
 
+    val currentInstalledSha = remember {
+        val buildSha = BuildConfig.GIT_SHA
+        if (buildSha.isNotBlank() && buildSha != "localdev") buildSha else "1dcb750"
+    }
+
     val packageInfo = remember {
         try {
             context.packageManager.getPackageInfo(context.packageName, 0)
         } catch (e: Exception) {
             null
         }
-    }
-    val currentInstalledSha = remember(packageInfo) {
-        val vName = packageInfo?.versionName ?: "1dcb750"
-        if (vName.startsWith("InOut-alpha-")) vName.removePrefix("InOut-alpha-").removeSuffix(".apk") else vName
     }
     val lastInstalledTimeFormatted = remember(packageInfo) {
         val t = packageInfo?.lastUpdateTime ?: System.currentTimeMillis()
@@ -240,6 +242,9 @@ fun DashboardScreen(db: AppDatabase) {
     var showBurnEditDialog by remember { mutableStateOf(false) }
     var showClearLedgerConfirmation by remember { mutableStateOf(false) }
     var showNoticesSheet by remember { mutableStateOf(false) }
+
+    val allTransactionsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val noticesSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     var pendingActionAfterAccountCreation by remember { mutableStateOf<((Long) -> Unit)?>(null) }
 
@@ -616,9 +621,20 @@ fun DashboardScreen(db: AppDatabase) {
                                     )
                                 )
 
-                                val caughtUp = ledgerEngine.catchUpRecurringRules()
-                                if (caughtUp > 0) {
-                                    alertManager.showAlert("Scheduled rule saved and initial transaction recorded!", AlertType.SUCCESS)
+                                if (parsed.timestamp <= System.currentTimeMillis() + 60_000L) {
+                                    ledgerEngine.recordMovement(
+                                        nature = parsed.nature,
+                                        sourcePocketId = sourceId,
+                                        targetPocketId = targetId,
+                                        amount = parsed.amount,
+                                        category = parsed.category,
+                                        note = parsed.merchant,
+                                        timestamp = parsed.timestamp,
+                                        autoSplitEnabled = autoSplitEnabled,
+                                        isRecurring = false,
+                                        frequency = parsed.frequency
+                                    )
+                                    alertManager.showAlert("Recorded today's entry & scheduled ${parsed.frequency.lowercase()} cycle", AlertType.SUCCESS)
                                 } else {
                                     val dateStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(parsed.timestamp))
                                     alertManager.showAlert("Scheduled ${parsed.frequency.lowercase()} rule starting $dateStr", AlertType.SUCCESS)
@@ -1350,6 +1366,7 @@ fun DashboardScreen(db: AppDatabase) {
                 if (showNoticesSheet) {
                     ModalBottomSheet(
                         onDismissRequest = { showNoticesSheet = false },
+                        sheetState = noticesSheetState,
                         containerColor = theme.surface,
                         tonalElevation = 8.dp
                     ) {
@@ -1550,14 +1567,26 @@ fun DashboardScreen(db: AppDatabase) {
                                             )
                                         )
 
-                                        val caughtUp = ledgerEngine.catchUpRecurringRules()
-                                        hudInDialogError = null
-                                        showCommandHud = false
-                                        if (caughtUp > 0) {
-                                            alertManager.showAlert("Recurring schedule saved and initial transaction recorded!", AlertType.SUCCESS)
+                                        if (date <= System.currentTimeMillis() + 60_000L) {
+                                            ledgerEngine.recordMovement(
+                                                nature = nature,
+                                                sourcePocketId = effectiveSrc,
+                                                targetPocketId = effectiveTgt,
+                                                amount = amt,
+                                                category = cat,
+                                                note = note,
+                                                timestamp = date,
+                                                autoSplitEnabled = autoSplitEnabled,
+                                                isRecurring = false,
+                                                frequency = freq
+                                            )
+                                            alertManager.showAlert("Recorded initial entry & scheduled $freq recurrence", AlertType.SUCCESS)
                                         } else {
                                             alertManager.showAlert("Recurring schedule saved", AlertType.SUCCESS)
                                         }
+
+                                        hudInDialogError = null
+                                        showCommandHud = false
                                         return@launch
                                     }
 
@@ -1659,6 +1688,7 @@ fun DashboardScreen(db: AppDatabase) {
                         flowRecords = completedTransactions,
                         isPrivacyMode = isPrivacyMode,
                         isProUser = isProUnlocked,
+                        sheetState = allTransactionsSheetState,
                         onDismiss = { showAllRecordsSheet = false },
                         onEditRecord = { flow -> editingFlowRecord = flow },
                         onExportCsv = {
