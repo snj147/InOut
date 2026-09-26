@@ -1,48 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
-    <uses-permission android:name="com.android.vending.BILLING" />
 
     <application
+        android:name=".InOutApp"
         android:allowBackup="true"
         android:icon="@drawable/ic_launcher"
         android:label="InOut"
         android:roundIcon="@drawable/ic_launcher"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.Material.NoActionBar">
+        android:theme="@style/Theme.InOut"
+        tools:replace="android:appComponentFactory">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:windowSoftInputMode="adjustResize">
+            android:theme="@style/Theme.InOut">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- Fast Natural Language Overlay for Widget -->
         <activity
             android:name=".widget.WidgetCommandActivity"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar"
-            android:exported="true"
-            android:windowSoftInputMode="stateVisible|adjustResize" />
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <receiver
-            android:name=".widget.SpeedDialWidgetProvider"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/widget_speed_dial_info" />
-        </receiver>
-
-        <receiver
-            android:name=".widget.HorizonGlanceWidgetProvider"
+            android:name=".widget.VaultWidgetProvider"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
@@ -50,17 +39,6 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/widget_horizon_glance_info" />
-        </receiver>
-
-        <receiver
-            android:name=".widget.MicroLeakWidgetProvider"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/widget_micro_leak_info" />
         </receiver>
 
         <provider
