@@ -45,10 +45,11 @@ fun AllTransactionsSearchSheet(
 
     val filteredRecords = remember(flowRecords, searchQuery, selectedCategoryFilter) {
         flowRecords.filter { f ->
+            val amtStr = (f.amount ?: 0.0).toString()
             val matchQuery = searchQuery.isBlank() ||
                     f.note.contains(searchQuery, ignoreCase = true) ||
                     f.category.contains(searchQuery, ignoreCase = true) ||
-                    (f.amount ?: 0.0).toString().contains(searchQuery)
+                    amtStr.contains(searchQuery)
             val matchCat = selectedCategoryFilter == null || f.category.equals(selectedCategoryFilter, ignoreCase = true)
             matchQuery && matchCat
         }
