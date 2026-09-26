@@ -6,93 +6,77 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import com.personal.inout.data.PocketType
 import com.personal.inout.data.VaultPocket
 
-data class LiveSuggestion(
+data class QuickBarSuggestion(
     val title: String,
     val template: String,
-    val icon: ImageVector,
-    val tag: String
+    val icon: ImageVector
 )
 
 object QuickBarSuggester {
-    fun evaluate(query: String, activePockets: List<VaultPocket>): List<LiveSuggestion> {
-        val q = query.trim().lowercase()
 
-        // 1. Zero-Query / Empty Focus State: Surface high-frequency accelerators
-        if (q.isBlank()) {
-            val p1 = activePockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.name ?: "SBI"
-            val p2 = activePockets.filter { it.pocketType == PocketType.LIQUID }.getOrNull(1)?.name ?: "IDFC"
+    fun evaluate(currentInput: String, activePockets: List<VaultPocket>): List<QuickBarSuggestion> {
+        val q = currentInput.trim().lowercase()
+        val liquidPockets = activePockets.filter { it.pocketType == PocketType.LIQUID }
+        val primaryBankName = liquidPockets.firstOrNull()?.name ?: "BANK"
+
+        // State 0: Empty Input -> Show Primary Intents
+        if (q.isEmpty()) {
             return listOf(
-                LiveSuggestion("Transfer", "transf 2000 from $p1 to $p2", Icons.Default.SyncAlt, "TRANSFER"),
-                LiveSuggestion("+ Bank Account", "new bank HDFC", Icons.Default.AccountBalance, "CREATE"),
-                LiveSuggestion("+ Credit Card", "new card Axis limit 50000", Icons.Default.CreditCard, "CREATE"),
-                LiveSuggestion("Recurring SIP/Bill", "sip 5000 $p1 monthly from 5th", Icons.Default.Autorenew, "RECURRING"),
-                LiveSuggestion("Toggle Auto-Split", "autosplit toggle", Icons.Default.Bolt, "SYSTEM")
+                QuickBarSuggestion("Spent", "coffee 120 $primaryBankName", Icons.Filled.ShoppingBag),
+                QuickBarSuggestion("Salary In", "salary 50k into $primaryBankName", Icons.Filled.ArrowDownward),
+                QuickBarSuggestion("Transfer", "trf 5000 from $primaryBankName to ", Icons.Filled.SwapHoriz),
+                QuickBarSuggestion("Card Bill", "pay card 8000 from $primaryBankName", Icons.Filled.CreditCard),
+                QuickBarSuggestion("Lent", "lent 1000 to NAME", Icons.Filled.PersonAdd),
+                QuickBarSuggestion("Recurring", "rent 15k $primaryBankName monthly from today", Icons.Filled.CalendarMonth)
             )
         }
 
-        val results = mutableListOf<LiveSuggestion>()
-
-        // 2. Slash command palette
-        if (q.startsWith("/")) {
-            val sub = q.removePrefix("/")
-            val baseCatalog = listOf(
-                LiveSuggestion("Create Bank", "new bank SBI", Icons.Default.AccountBalance, "BANK"),
-                LiveSuggestion("Create Card", "new card Axis limit 50000", Icons.Default.CreditCard, "CARD"),
-                LiveSuggestion("Transfer", "transf 2000 from SBI to IDFC", Icons.Default.SyncAlt, "TRANSFER"),
-                LiveSuggestion("Auto-Split", "autosplit toggle", Icons.Default.Bolt, "TOGGLE"),
-                LiveSuggestion("Phantom Lock", "phantom lock toggle", Icons.Default.Lock, "SECURITY"),
-                LiveSuggestion("Goal Pot", "new goal Laptop 60000 by dec", Icons.Default.Flag, "GOAL"),
-                LiveSuggestion("Theme", "theme olive", Icons.Default.Palette, "THEME"),
-                LiveSuggestion("Backup", "backup now", Icons.Default.Shield, "BACKUP"),
-                LiveSuggestion("Export PDF", "export pdf", Icons.Default.PictureAsPdf, "EXPORT")
+        // State 1: Recurrence Cadence Triggered -> Provide Smart Starting Date Options
+        if (q.contains("monthly") || q.contains("weekly") || q.contains("daily")) {
+            val base = currentInput.trim()
+            return listOf(
+                QuickBarSuggestion("from Today", "$base from today", Icons.Filled.Today),
+                QuickBarSuggestion("from 1st", "$base on 1st", Icons.Filled.CalendarMonth),
+                QuickBarSuggestion("from 5th", "$base on 5th", Icons.Filled.CalendarMonth),
+                QuickBarSuggestion("from 10th", "$base on 10th", Icons.Filled.CalendarMonth)
             )
-            return baseCatalog.filter { it.title.lowercase().contains(sub) || it.template.lowercase().contains(sub) }
         }
 
-        // 3. Account creation prediction
-        if (q.startsWith("new") || q.startsWith("cre") || q.startsWith("add") || q.startsWith("ban") || q.startsWith("car")) {
-            results.add(LiveSuggestion("New Bank Account", "new bank SBI", Icons.Default.AccountBalance, "CREATE"))
-            results.add(LiveSuggestion("New Credit Card", "new card HDFC limit 75000", Icons.Default.CreditCard, "CREATE"))
-            results.add(LiveSuggestion("New Goal Pot", "new goal Emergency 100000 by nov", Icons.Default.Flag, "CREATE"))
-            results.add(LiveSuggestion("New Peer Profile", "new peer Rahul", Icons.Default.Person, "CREATE"))
+        // State 2: Account Insertion Pipeline
+        // If user has typed amount/note but hasn't designated an account, provide one-tap account chips
+        val hasPocketAttached = activePockets.any { q.contains(it.name.lowercase()) }
+        if (!hasPocketAttached && q.any { it.isDigit() }) {
+            val suggestions = mutableListOf<QuickBarSuggestion>()
+            for (pocket in activePockets.take(4)) {
+                val icon = when (pocket.pocketType) {
+                    PocketType.LIQUID -> Icons.Filled.AccountBalance
+                    PocketType.CREDIT_LINE -> Icons.Filled.CreditCard
+                    PocketType.SAVING_GOAL -> Icons.Filled.Savings
+                    PocketType.COUNTERPARTY -> Icons.Filled.Person
+                }
+                suggestions.add(
+                    QuickBarSuggestion(pocket.name, "${currentInput.trim()} ${pocket.name}", icon)
+                )
+            }
+            suggestions.add(QuickBarSuggestion("+ Monthly", "${currentInput.trim()} monthly from today", Icons.Filled.Repeat))
+            return suggestions
         }
 
-        // 4. Transfer prediction
-        if (q.startsWith("tr") || q.startsWith("xf") || q.startsWith("mov") || q.startsWith("sh")) {
-            val p1 = activePockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.name ?: "SBI"
-            val p2 = activePockets.filter { it.pocketType == PocketType.LIQUID }.getOrNull(1)?.name ?: "IDFC"
-            results.add(LiveSuggestion("Transfer Between Banks", "transf 2000 from $p1 to $p2", Icons.Default.SyncAlt, "TRANSFER"))
+        // State 3: Account Creation Mode
+        if (q.startsWith("new") || q.startsWith("create") || q.startsWith("add")) {
+            return listOf(
+                QuickBarSuggestion("Bank", "new bank ", Icons.Filled.AccountBalance),
+                QuickBarSuggestion("Credit Card", "new card Limit 50k", Icons.Filled.CreditCard),
+                QuickBarSuggestion("Goal Pot", "new goal Vacation 60k", Icons.Filled.Savings),
+                QuickBarSuggestion("Person", "new person ", Icons.Filled.Person)
+            )
         }
 
-        // 5. Recurring rules prediction
-        if (q.startsWith("rec") || q.startsWith("mon") || q.startsWith("sip") || q.startsWith("sal") || q.startsWith("sub")) {
-            val p1 = activePockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.name ?: "SBI"
-            results.add(LiveSuggestion("Monthly Salary", "salary 50000 $p1 monthly from 1st", Icons.Default.Autorenew, "RECURRING"))
-            results.add(LiveSuggestion("Monthly SIP", "sip 5000 $p1 monthly from 10th", Icons.Default.Autorenew, "RECURRING"))
-            results.add(LiveSuggestion("Monthly Subscription", "netflix 649 $p1 monthly", Icons.Default.Autorenew, "RECURRING"))
-        }
-
-        // 6. Peer borrow/lend prediction
-        if (q.startsWith("lo") || q.startsWith("le") || q.startsWith("bo") || q.startsWith("co") || q.startsWith("re")) {
-            results.add(LiveSuggestion("Lend to Friend", "loan to Rahul 1500", Icons.Default.ArrowUpward, "PEER"))
-            results.add(LiveSuggestion("Borrow from Friend", "loan from Rahul 2000", Icons.Default.ArrowDownward, "PEER"))
-            results.add(LiveSuggestion("Collect Peer Debt", "collect 1500 from Rahul", Icons.Default.CheckCircle, "PEER"))
-            results.add(LiveSuggestion("Repay Peer Debt", "repay 2000 to Rahul", Icons.Default.AssignmentReturn, "PEER"))
-        }
-
-        // 7. System toggles prediction
-        if (q.startsWith("au") || q.startsWith("spl")) {
-            results.add(LiveSuggestion("Toggle Auto-Split", "autosplit toggle", Icons.Default.Bolt, "SYSTEM"))
-        }
-        if (q.startsWith("ph") || q.startsWith("loc")) {
-            results.add(LiveSuggestion("Toggle Phantom Lock", "phantom lock toggle", Icons.Default.Lock, "SYSTEM"))
-        }
-        if (q.startsWith("th") || q.startsWith("col")) {
-            results.add(LiveSuggestion("Amber Theme", "theme amber", Icons.Default.Palette, "THEME"))
-            results.add(LiveSuggestion("Olive Matcha Theme", "theme olive", Icons.Default.Palette, "THEME"))
-            results.add(LiveSuggestion("Nordic Slate Theme", "theme nordic", Icons.Default.Palette, "THEME"))
-        }
-
-        return results.distinctBy { it.template }
+        // State 4: Default Fallback contextual completions
+        return listOf(
+            QuickBarSuggestion("Today", "${currentInput.trim()} today", Icons.Filled.Today),
+            QuickBarSuggestion("Monthly", "${currentInput.trim()} monthly", Icons.Filled.Repeat),
+            QuickBarSuggestion("Cash", "${currentInput.trim()} Cash", Icons.Filled.Money)
+        )
     }
 }
