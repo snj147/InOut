@@ -28,7 +28,7 @@ enum class CadenceType {
     DAILY,
     WEEKLY,
     MONTHLY,
-    CUSTOM
+    NONE
 }
 
 @Entity(tableName = "vault_pockets")
