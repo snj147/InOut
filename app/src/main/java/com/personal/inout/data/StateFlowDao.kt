@@ -35,6 +35,26 @@ interface StateFlowDao {
     @Query("UPDATE flow_records SET isPaused = :isPaused WHERE id = :id")
     suspend fun setRecurringPausedState(id: Long, isPaused: Boolean)
 
+    @Query("SELECT * FROM flow_records WHERE isRecurring = 1 AND isPaused = 0")
+    suspend fun getActiveRecurringSchedulesSync(): List<FlowRecord>
+
+    @Query("""
+        SELECT COUNT(*) FROM flow_records 
+        WHERE (sourcePocketId = :sourcePocketId OR (sourcePocketId IS NULL AND :sourcePocketId IS NULL))
+          AND (targetPocketId = :targetPocketId OR (targetPocketId IS NULL AND :targetPocketId IS NULL))
+          AND amount = :amount
+          AND note = :note
+          AND timestamp BETWEEN :startTimestamp AND :endTimestamp
+    """)
+    suspend fun countRecordsWithFingerprint(
+        sourcePocketId: Long?,
+        targetPocketId: Long?,
+        amount: Double,
+        note: String,
+        startTimestamp: Long,
+        endTimestamp: Long
+    ): Int
+
     @Query("SELECT * FROM staged_desires WHERE isFulfilled = 0 ORDER BY createdAtEpoch DESC")
     fun observeActiveStagedDesires(): Flow<List<StagedDesire>>
 
