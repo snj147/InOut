@@ -19,7 +19,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -44,9 +43,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -70,6 +68,7 @@ fun DashboardScreen(db: AppDatabase) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val prefs = remember { context.getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE) }
+    val focusManager = LocalFocusManager.current
 
     val alertManager = remember { VaultAlertManager() }
     val ledgerEngine = remember { VaultLedgerEngine(db.stateFlowDao(), prefs) }
@@ -257,7 +256,6 @@ fun DashboardScreen(db: AppDatabase) {
     }
 
     var naturalLanguageInput by remember { mutableStateOf(TextFieldValue("")) }
-    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
     val quickBarFocusRequester = remember { FocusRequester() }
 
     val placeholderHints = listOf(
@@ -317,7 +315,7 @@ fun DashboardScreen(db: AppDatabase) {
 
     val groupedRecords = remember(completedTransactions) {
         val calNow = Calendar.getInstance()
-        completedTransactions.take(20).groupBy { flow ->
+        completedTransactions.take(30).groupBy { flow ->
             val calRecord = Calendar.getInstance().apply { timeInMillis = flow.timestamp }
             when {
                 calNow.get(Calendar.YEAR) == calRecord.get(Calendar.YEAR) &&
@@ -366,6 +364,7 @@ fun DashboardScreen(db: AppDatabase) {
         val trimmed = text.trim()
         if (trimmed.isBlank()) return
 
+        focusManager.clearFocus()
         val lower = trimmed.lowercase()
         when {
             lower in listOf("autosplit on", "enable autosplit", "autosplit 1") -> {
@@ -728,7 +727,9 @@ fun DashboardScreen(db: AppDatabase) {
                     NavigationBar(
                         containerColor = theme.surface,
                         tonalElevation = 6.dp,
-                        modifier = Modifier.navigationBarsPadding().clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                        modifier = Modifier
+                            .navigationBarsPadding()
+                            .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                     ) {
                         listOf(
                             Triple(0, "Vault", Icons.Filled.MenuBook),
@@ -743,7 +744,13 @@ fun DashboardScreen(db: AppDatabase) {
                                     isFabExpanded = false
                                 },
                                 icon = { Icon(imageVector = icon, contentDescription = title) },
-                                label = { Text(text = title, fontSize = 11.sp, fontWeight = if (selectedTab == idx) FontWeight.Bold else FontWeight.Normal) },
+                                label = {
+                                    Text(
+                                        text = title,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (selectedTab == idx) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                },
                                 colors = NavigationBarItemDefaults.colors(
                                     selectedIconColor = theme.accent,
                                     selectedTextColor = theme.accent,
@@ -773,7 +780,10 @@ fun DashboardScreen(db: AppDatabase) {
                                 enter = fadeIn() + slideInVertically { it / 2 },
                                 exit = fadeOut() + slideOutVertically { it / 2 }
                             ) {
-                                Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Column(
+                                    horizontalAlignment = Alignment.End,
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
                                     FloatingActionButton(
                                         onClick = {
                                             isFabExpanded = false
@@ -840,24 +850,32 @@ fun DashboardScreen(db: AppDatabase) {
                                 Icon(
                                     imageVector = if (selectedTab == 1) Icons.Default.AddCard else Icons.Default.Add,
                                     contentDescription = "Action",
-                                    modifier = Modifier.size(24.dp).rotate(if (selectedTab == 0) rotation else 0f)
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .rotate(if (selectedTab == 0) rotation else 0f)
                                 )
                             }
                         }
                     }
                 }
             ) { padding ->
-                Box(modifier = Modifier.fillMaxSize().padding(padding).background(theme.bg)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .background(theme.bg)
+                ) {
                     when (selectedTab) {
                         0 -> {
-                            Column(
-                                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 16.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                                contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp)
                             ) {
-                                Column(
-                                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                                    modifier = Modifier.padding(top = 8.dp, bottom = 6.dp)
-                                ) {
-                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                item {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         HorizontalPager(
                                             state = pagerState,
                                             modifier = Modifier.fillMaxWidth()
@@ -923,35 +941,52 @@ fun DashboardScreen(db: AppDatabase) {
                                             }
                                         }
                                     }
+                                }
 
+                                item {
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .shadow(8.dp, RoundedCornerShape(14.dp), spotColor = theme.accent.copy(alpha = 0.45f))
+                                            .shadow(6.dp, RoundedCornerShape(14.dp), spotColor = theme.accent.copy(alpha = 0.35f))
                                             .clip(RoundedCornerShape(14.dp))
                                             .background(theme.surface)
-                                            .border(1.5.dp, theme.accent.copy(alpha = 0.85f), RoundedCornerShape(14.dp))
+                                            .border(1.2.dp, theme.accent.copy(alpha = 0.75f), RoundedCornerShape(14.dp))
                                     ) {
                                         Column {
                                             Row(
-                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 11.dp),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 12.dp, vertical = 10.dp),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
                                                 Box(
-                                                    modifier = Modifier.clip(CircleShape).background(theme.accent.copy(alpha = 0.2f)).padding(6.dp),
+                                                    modifier = Modifier
+                                                        .clip(CircleShape)
+                                                        .background(theme.accent.copy(alpha = 0.18f))
+                                                        .padding(6.dp),
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    Icon(imageVector = Icons.Default.Bolt, contentDescription = null, tint = theme.accent, modifier = Modifier.size(18.dp))
+                                                    Icon(
+                                                        imageVector = Icons.Default.Bolt,
+                                                        contentDescription = null,
+                                                        tint = theme.accent,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
                                                 }
 
                                                 Spacer(Modifier.width(10.dp))
 
-                                                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .clickable { quickBarFocusRequester.requestFocus() },
+                                                    contentAlignment = Alignment.CenterStart
+                                                ) {
                                                     if (naturalLanguageInput.text.isEmpty()) {
                                                         Text(
                                                             text = placeholderHints[currentHintIndex],
                                                             color = theme.textMuted.copy(alpha = 0.7f),
-                                                            fontSize = 12.5.sp,
+                                                            fontSize = 13.sp,
                                                             maxLines = 1
                                                         )
                                                     }
@@ -959,55 +994,45 @@ fun DashboardScreen(db: AppDatabase) {
                                                         value = naturalLanguageInput,
                                                         onValueChange = { naturalLanguageInput = it },
                                                         singleLine = true,
-                                                        textStyle = TextStyle(color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Medium),
+                                                        textStyle = TextStyle(
+                                                            color = theme.textBright,
+                                                            fontSize = 13.5.sp,
+                                                            fontWeight = FontWeight.Medium
+                                                        ),
                                                         cursorBrush = SolidColor(theme.accent),
                                                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                                                        keyboardActions = KeyboardActions(onDone = { executeQuickBarCommand(naturalLanguageInput.text) }),
-                                                        onTextLayout = { textLayoutResult = it },
+                                                        keyboardActions = KeyboardActions(onDone = {
+                                                            executeQuickBarCommand(naturalLanguageInput.text)
+                                                        }),
                                                         modifier = Modifier
                                                             .fillMaxWidth()
                                                             .focusRequester(quickBarFocusRequester)
-                                                            .pointerInput(naturalLanguageInput.text) {
-                                                                detectTapGestures(
-                                                                    onTap = { offset ->
-                                                                        quickBarFocusRequester.requestFocus()
-                                                                        val layout = textLayoutResult ?: return@detectTapGestures
-                                                                        val tapPosition = layout.getOffsetForPosition(offset)
-                                                                        val text = naturalLanguageInput.text
-                                                                        if (text.isNotEmpty() && tapPosition in text.indices) {
-                                                                            var start = tapPosition
-                                                                            while (start > 0 && !text[start - 1].isWhitespace()) {
-                                                                                start--
-                                                                            }
-                                                                            var end = tapPosition
-                                                                            while (end < text.length && !text[end].isWhitespace()) {
-                                                                                end++
-                                                                            }
-                                                                            naturalLanguageInput = naturalLanguageInput.copy(selection = TextRange(start, end))
-                                                                        }
-                                                                    },
-                                                                    onDoubleTap = { offset ->
-                                                                        quickBarFocusRequester.requestFocus()
-                                                                        val layout = textLayoutResult ?: return@detectTapGestures
-                                                                        val tapPosition = layout.getOffsetForPosition(offset)
-                                                                        naturalLanguageInput = naturalLanguageInput.copy(selection = TextRange(tapPosition, tapPosition))
-                                                                    }
-                                                                )
-                                                            }
                                                     )
                                                 }
 
                                                 if (naturalLanguageInput.text.isNotBlank()) {
-                                                    IconButton(onClick = { executeQuickBarCommand(naturalLanguageInput.text) }) {
-                                                        Icon(imageVector = Icons.Default.Send, contentDescription = "Commit", tint = theme.accent, modifier = Modifier.size(20.dp))
+                                                    IconButton(onClick = {
+                                                        executeQuickBarCommand(naturalLanguageInput.text)
+                                                    }) {
+                                                        Icon(
+                                                            imageVector = Icons.Default.Send,
+                                                            contentDescription = "Commit",
+                                                            tint = theme.accent,
+                                                            modifier = Modifier.size(20.dp)
+                                                        )
                                                     }
                                                 }
                                             }
 
                                             if (quickBarCommandPills.isNotEmpty()) {
-                                                HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.6f), thickness = 0.8.dp)
+                                                HorizontalDivider(
+                                                    color = theme.surfaceAlt.copy(alpha = 0.6f),
+                                                    thickness = 0.8.dp
+                                                )
                                                 LazyRow(
-                                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .padding(horizontal = 8.dp, vertical = 6.dp),
                                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                                 ) {
                                                     items(quickBarCommandPills) { (pillTitle, pillTemplate, pillIcon) ->
@@ -1033,8 +1058,18 @@ fun DashboardScreen(db: AppDatabase) {
                                                             verticalAlignment = Alignment.CenterVertically,
                                                             horizontalArrangement = Arrangement.spacedBy(5.dp)
                                                         ) {
-                                                            Icon(imageVector = pillIcon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(13.dp))
-                                                            Text(text = pillTitle, color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                            Icon(
+                                                                imageVector = pillIcon,
+                                                                contentDescription = null,
+                                                                tint = theme.accent,
+                                                                modifier = Modifier.size(13.dp)
+                                                            )
+                                                            Text(
+                                                                text = pillTitle,
+                                                                color = theme.textBright,
+                                                                fontSize = 11.sp,
+                                                                fontWeight = FontWeight.Bold
+                                                            )
                                                         }
                                                     }
                                                 }
@@ -1043,36 +1078,45 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(text = "Recent Flow", color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                    if (completedTransactions.isNotEmpty()) {
+                                item {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 6.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
                                         Text(
-                                            text = "View All (${completedTransactions.size}) →",
-                                            color = theme.accent,
-                                            fontSize = 11.5.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.clickable { showAllRecordsSheet = true }
+                                            text = "Recent Flow",
+                                            color = theme.textBright,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold
                                         )
+                                        if (completedTransactions.isNotEmpty()) {
+                                            Text(
+                                                text = "View All (${completedTransactions.size}) →",
+                                                color = theme.accent,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.clickable { showAllRecordsSheet = true }
+                                            )
+                                        }
                                     }
                                 }
-                            }
 
-                            LazyColumn(
-                                modifier = Modifier.fillMaxSize(),
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
-                                contentPadding = PaddingValues(bottom = 96.dp)
-                            ) {
                                 if (completedTransactions.isEmpty()) {
                                     item {
                                         Box(
-                                            modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 32.dp),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Text(text = "No records yet. Type above or tap '+' to commit flow.", color = theme.textMuted, fontSize = 12.sp)
+                                            Text(
+                                                text = "No records yet. Type above or tap '+' to record flow.",
+                                                color = theme.textMuted,
+                                                fontSize = 12.sp
+                                            )
                                         }
                                     }
                                 } else {
@@ -1095,7 +1139,10 @@ fun DashboardScreen(db: AppDatabase) {
                                                 theme = theme,
                                                 onLongClick = { editingFlowRecord = flow }
                                             )
-                                            HorizontalDivider(color = theme.surfaceAlt.copy(alpha = 0.4f), thickness = 0.5.dp)
+                                            HorizontalDivider(
+                                                color = theme.surfaceAlt.copy(alpha = 0.4f),
+                                                thickness = 0.5.dp
+                                            )
                                         }
                                     }
                                 }
@@ -1317,7 +1364,12 @@ fun DashboardScreen(db: AppDatabase) {
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(text = "System & Ledger Notices", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = "System & Ledger Notices",
+                                    color = theme.textBright,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                                 if (systemNotices.isNotEmpty()) {
                                     TextButton(onClick = {
                                         scope.launch { db.stateFlowDao().clearAllNotices() }
@@ -1338,7 +1390,9 @@ fun DashboardScreen(db: AppDatabase) {
                                 }
                             } else {
                                 LazyColumn(
-                                    modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 400.dp),
                                     verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
                                     items(systemNotices, key = { it.id }) { notice ->
@@ -1347,7 +1401,10 @@ fun DashboardScreen(db: AppDatabase) {
                                             colors = CardDefaults.cardColors(containerColor = theme.surfaceAlt),
                                             modifier = Modifier.fillMaxWidth()
                                         ) {
-                                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Column(
+                                                modifier = Modifier.padding(12.dp),
+                                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
                                                 Row(
                                                     modifier = Modifier.fillMaxWidth(),
                                                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -1718,7 +1775,9 @@ private fun MetricCarouselCard(
     Card(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = theme.surface),
-        modifier = Modifier.fillMaxWidth().clickable { onCardClick() }
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCardClick() }
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(
@@ -1810,7 +1869,10 @@ private fun CleanVaultHeader(
     onOpenNotices: () -> Unit
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
