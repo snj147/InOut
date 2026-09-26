@@ -124,5 +124,5 @@ interface StateFlowDao {
         GROUP BY p.id
         ORDER BY p.id ASC
     """)
-    suspend fun getPocketBalancesSync(epoch: Long = System.currentTimeMillis()): List<PocketBalanceSummary>
+    suspend fun getPocketBalancesSync(): List<PocketBalanceSummary>
 }
