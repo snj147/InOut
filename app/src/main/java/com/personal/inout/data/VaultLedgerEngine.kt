@@ -1,311 +1,156 @@
 package com.personal.inout.data
 
 import android.content.SharedPreferences
-import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 sealed class VaultExecutionResult {
-    data class Success(
-        val recordId: Long = 0L,
-        val summary: String = "Transaction recorded successfully",
-        val spikePacingMessage: String? = null
-    ) : VaultExecutionResult()
-
-    open class OverdraftError(
-        open val message: String
-    ) : VaultExecutionResult()
-
-    data class Error(
-        override val message: String
-    ) : OverdraftError(message)
+    data class Success(val summary: String) : VaultExecutionResult()
+    data class OverdraftError(val message: String) : VaultExecutionResult()
 }
 
 class VaultLedgerEngine(
-    private val flowRecordDao: StateFlowDao,
-    private val prefs: SharedPreferences? = null
+    private val dao: StateFlowDao,
+    private val prefs: SharedPreferences
 ) {
 
     suspend fun recordMovement(
         nature: MovementNature,
-        sourcePocketId: Long? = null,
-        targetPocketId: Long? = null,
+        sourcePocketId: Long?,
+        targetPocketId: Long?,
         amount: Double,
         category: String,
-        note: String = "",
+        note: String,
         timestamp: Long = System.currentTimeMillis(),
         autoSplitEnabled: Boolean = false,
         isRecurring: Boolean = false,
         frequency: String = "NONE"
     ): VaultExecutionResult {
-        return try {
-            if (amount <= 0.0) {
-                return VaultExecutionResult.OverdraftError("Amount must be greater than zero")
-            }
+        val balances = dao.getPocketBalancesSync()
 
-            val balances = flowRecordDao.getPocketBalancesSync(timestamp)
-            val pockets = flowRecordDao.getActivePocketsSync()
+        if (nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.CARD_PAYMENT, MovementNature.TRANSFER)) {
+            val sourceBalance = balances.firstOrNull { it.pocketId == sourcePocketId?.toString() }
+            val currentAvail = sourceBalance?.computedBalance ?: 0.0
 
-            // 1. INFLOW ACCOUNTING
-            if (nature == MovementNature.INFLOW) {
-                val effectiveTarget = targetPocketId ?: sourcePocketId
-                if (effectiveTarget == null || effectiveTarget == 0L) {
-                    return VaultExecutionResult.OverdraftError("Please specify a target account to deposit inflow")
-                }
-
-                val entity = FlowRecord(
-                    sourcePocketId = null,
-                    targetPocketId = effectiveTarget,
-                    amount = amount,
-                    movementNature = MovementNature.INFLOW,
-                    category = category.ifBlank { "Salary" },
-                    note = note.ifBlank { "Income Deposit" },
-                    timestamp = timestamp,
-                    isRecurring = isRecurring,
-                    recurringCadence = frequency,
-                    frequency = frequency
-                )
-                val id = flowRecordDao.insertFlowRecord(entity)
-                return VaultExecutionResult.Success(
-                    recordId = id,
-                    summary = "Deposited ₹${amount.toInt()} into ${pockets.firstOrNull { it.id == effectiveTarget }?.name ?: "Account"}"
+            if (currentAvail < amount && !autoSplitEnabled) {
+                val accName = sourceBalance?.pocketName ?: "Source Account"
+                return VaultExecutionResult.OverdraftError(
+                    "Insufficient balance in '$accName' (Available: ₹${currentAvail.toInt()}). Enable Auto-Split or choose another account."
                 )
             }
+        }
 
-            // 2. OUTFLOW ACCOUNTING
-            if (nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
-                if (sourcePocketId == null || sourcePocketId == 0L) {
-                    return VaultExecutionResult.OverdraftError("Please specify a source account")
-                }
-
-                val primaryPocket = pockets.firstOrNull { it.id == sourcePocketId }
-                    ?: return VaultExecutionResult.OverdraftError("Source account not found")
-
-                val primaryBal = balances.firstOrNull { it.pocketId == sourcePocketId.toString() }?.computedBalance ?: 0.0
-
-                if (primaryPocket.pocketType == PocketType.LIQUID && !isRecurring) {
-                    if (primaryBal < amount) {
-                        if (!autoSplitEnabled) {
-                            return VaultExecutionResult.OverdraftError(
-                                "Insufficient funds in ${primaryPocket.name}. Balance: ₹${primaryBal.toInt()}, Required: ₹${amount.toInt()}"
-                            )
-                        }
-
-                        val otherLiquids = balances.filter {
-                            it.pocketType == PocketType.LIQUID && it.pocketId != sourcePocketId.toString() && it.computedBalance > 0.0
-                        }.sortedByDescending { it.computedBalance }
-
-                        val totalAvailable = primaryBal.coerceAtLeast(0.0) + otherLiquids.sumOf { it.computedBalance }
-                        if (totalAvailable < amount) {
-                            return VaultExecutionResult.OverdraftError(
-                                "Total liquid balance across all accounts is only ₹${totalAvailable.toInt()}. Cannot cover ₹${amount.toInt()}"
-                            )
-                        }
-
-                        var remainderNeeded = amount
-                        val splitSummary = StringBuilder("Auto-Split: ")
-
-                        if (primaryBal > 0.0) {
-                            val chunk = primaryBal
-                            flowRecordDao.insertFlowRecord(
-                                FlowRecord(
-                                    sourcePocketId = sourcePocketId,
-                                    targetPocketId = targetPocketId,
-                                    amount = chunk,
-                                    movementNature = nature,
-                                    category = category.ifBlank { "General" },
-                                    note = "${note.ifBlank { category }} (Leg 1)",
-                                    timestamp = timestamp,
-                                    isRecurring = false,
-                                    frequency = "NONE"
-                                )
-                            )
-                            remainderNeeded -= chunk
-                            splitSummary.append("${primaryPocket.name}: ₹${chunk.toInt()} ")
-                        }
-
-                        for (secondary in otherLiquids) {
-                            if (remainderNeeded <= 0.0) break
-                            val chunk = minOf(secondary.computedBalance, remainderNeeded)
-                            flowRecordDao.insertFlowRecord(
-                                FlowRecord(
-                                    sourcePocketId = secondary.pocketId.toLong(),
-                                    targetPocketId = targetPocketId,
-                                    amount = chunk,
-                                    movementNature = nature,
-                                    category = category.ifBlank { "General" },
-                                    note = "${note.ifBlank { category }} (Split Cover)",
-                                    timestamp = timestamp,
-                                    isRecurring = false,
-                                    frequency = "NONE"
-                                )
-                            )
-                            remainderNeeded -= chunk
-                            splitSummary.append("+ ${secondary.name}: ₹${chunk.toInt()} ")
-                        }
-
-                        return VaultExecutionResult.Success(
-                            recordId = 0L,
-                            summary = splitSummary.toString().trim()
-                        )
-                    }
-                }
-            }
-
-            // 3. INTERNAL TRANSFERS
-            if (nature == MovementNature.TRANSFER) {
-                if (sourcePocketId == null || targetPocketId == null || sourcePocketId == targetPocketId) {
-                    return VaultExecutionResult.OverdraftError("Invalid transfer source or destination")
-                }
-                val srcBal = balances.firstOrNull { it.pocketId == sourcePocketId.toString() }?.computedBalance ?: 0.0
-                val srcPocket = pockets.firstOrNull { it.id == sourcePocketId }
-                if (srcPocket?.pocketType == PocketType.LIQUID && srcBal < amount && !isRecurring) {
-                    return VaultExecutionResult.OverdraftError("Cannot transfer ₹${amount.toInt()} from ${srcPocket.name}. Available: ₹${srcBal.toInt()}")
-                }
-            }
-
-            // 4. CREDIT CARD BILL PAYMENT
-            if (nature == MovementNature.CARD_PAYMENT) {
-                if (sourcePocketId == null || targetPocketId == null) {
-                    return VaultExecutionResult.OverdraftError("Source bank account and card target required for card payment")
-                }
-            }
-
-            val entity = FlowRecord(
+        dao.insertFlowRecord(
+            FlowRecord(
+                id = 0L,
                 sourcePocketId = sourcePocketId,
                 targetPocketId = targetPocketId,
                 amount = amount,
                 movementNature = nature,
-                category = category.ifBlank { "General" },
+                category = category,
                 note = note,
                 timestamp = timestamp,
                 isRecurring = isRecurring,
+                frequency = frequency,
                 recurringCadence = frequency,
-                frequency = frequency
+                isPaused = false
             )
+        )
 
-            val id = flowRecordDao.insertFlowRecord(entity)
-
-            val dailyBurn = prefs?.getFloat("daily_burn_ceiling", 450f)?.toDouble() ?: 450.0
-            val spikeMessage = if (nature == MovementNature.OUTFLOW && amount > (dailyBurn * 1.5)) {
-                val excess = amount - dailyBurn
-                val recoveryDaily = ((dailyBurn * 5 - excess) / 5).coerceAtLeast(100.0)
-                "Over daily target by ₹${excess.toInt()}. Spend ₹${recoveryDaily.toInt()}/day for 5 days to recover runway."
-            } else null
-
-            VaultExecutionResult.Success(
-                recordId = id,
-                summary = "₹${amount.toInt()} logged for ${entity.note.ifBlank { entity.category }}",
-                spikePacingMessage = spikeMessage
-            )
-        } catch (e: Exception) {
-            VaultExecutionResult.OverdraftError(e.message ?: "Failed to record transaction")
+        val actionVerb = when (nature) {
+            MovementNature.INFLOW -> "Received"
+            MovementNature.OUTFLOW -> "Spent"
+            MovementNature.TRANSFER -> "Transferred"
+            MovementNature.CARD_PAYMENT -> "Cleared card dues"
+            MovementNature.PEER_LEND -> "Lent"
+            MovementNature.PEER_BORROW -> "Borrowed"
+            MovementNature.PEER_COLLECT -> "Collected"
+            MovementNature.PEER_REPAY -> "Repaid"
         }
+
+        return VaultExecutionResult.Success("$actionVerb ₹${amount.toInt()} ($note)")
     }
 
-    suspend fun triangularPeerSettle(debtorName: String, creditorName: String, amount: Double? = null): VaultExecutionResult {
-        return try {
-            val activePockets = flowRecordDao.getActivePocketsSync()
-            val debtor = activePockets.firstOrNull { it.pocketType == PocketType.COUNTERPARTY && it.name.equals(debtorName, ignoreCase = true) }
-                ?: return VaultExecutionResult.OverdraftError("Counterparty '$debtorName' not found")
-            val creditor = activePockets.firstOrNull { it.pocketType == PocketType.COUNTERPARTY && it.name.equals(creditorName, ignoreCase = true) }
-                ?: return VaultExecutionResult.OverdraftError("Counterparty '$creditorName' not found")
+    suspend fun triangularPeerSettle(debtorName: String, creditorName: String, amount: Double): VaultExecutionResult {
+        val activePockets = dao.getActivePocketsSync()
+        val debtor = activePockets.firstOrNull { it.pocketType == PocketType.COUNTERPARTY && it.name.equals(debtorName, ignoreCase = true) }
+        val creditor = activePockets.firstOrNull { it.pocketType == PocketType.COUNTERPARTY && it.name.equals(creditorName, ignoreCase = true) }
 
-            val balances = flowRecordDao.getPocketBalancesSync()
-            val debtorBal = balances.firstOrNull { it.pocketId == debtor.id.toString() }?.computedBalance ?: 0.0
-            val creditorBal = balances.firstOrNull { it.pocketId == creditor.id.toString() }?.computedBalance ?: 0.0
-
-            val settleAmount = amount ?: minOf(Math.abs(debtorBal), Math.abs(creditorBal))
-            if (settleAmount <= 0.0) {
-                return VaultExecutionResult.OverdraftError("No overlapping debt balance found to settle between $debtorName and $creditorName")
-            }
-
-            flowRecordDao.insertFlowRecord(
-                FlowRecord(
-                    sourcePocketId = debtor.id,
-                    targetPocketId = creditor.id,
-                    amount = settleAmount,
-                    movementNature = MovementNature.TRANSFER,
-                    category = "Peer Transfer",
-                    note = "Triangular Debt Settle ($debtorName -> $creditorName)"
-                )
-            )
-
-            VaultExecutionResult.Success(
-                summary = "Settled ₹${settleAmount.toInt()} directly between $debtorName and $creditorName"
-            )
-        } catch (e: Exception) {
-            VaultExecutionResult.OverdraftError("Triangular settle failed: ${e.message}")
+        if (debtor == null || creditor == null) {
+            return VaultExecutionResult.OverdraftError("Could not locate contacts '$debtorName' or '$creditorName'")
         }
+
+        dao.insertFlowRecord(
+            FlowRecord(
+                id = 0L,
+                sourcePocketId = debtor.id,
+                targetPocketId = creditor.id,
+                amount = amount,
+                movementNature = MovementNature.TRANSFER,
+                category = "Triangular Settle",
+                note = "Settlement: $debtorName -> $creditorName",
+                timestamp = System.currentTimeMillis()
+            )
+        )
+
+        return VaultExecutionResult.Success("Triangular settlement of ₹${amount.toInt()} recorded.")
     }
 
-    // STRICT IDEMPOTENT RECURRING ENGINE:
-    // 1. Checks execution fingerprint before inserting
-    // 2. Advances schedule timestamp forward so it never runs twice
     suspend fun catchUpRecurringRules(): Int {
-        val now = System.currentTimeMillis()
-        val activeSchedules = flowRecordDao.getActiveRecurringSchedulesSync()
-        var generatedCount = 0
+        val activeRules = dao.getActiveRecurringSchedulesSync()
+        var catchUpCount = 0
 
-        for (schedule in activeSchedules) {
-            val cadenceStr = if (schedule.frequency != "NONE") schedule.frequency else schedule.recurringCadence
-            val cadence = try {
-                CadenceType.valueOf(cadenceStr)
-            } catch (_: Exception) {
-                CadenceType.NONE
+        for (rule in activeRules) {
+            val cadence = when (rule.recurringCadence.uppercase()) {
+                "DAILY" -> CadenceType.DAILY
+                "WEEKLY" -> CadenceType.WEEKLY
+                "MONTHLY" -> CadenceType.MONTHLY
+                else -> CadenceType.NONE
             }
+
             if (cadence == CadenceType.NONE) continue
 
-            var cursor = schedule.timestamp
-            var updatedScheduleTimestamp = schedule.timestamp
+            val cal = Calendar.getInstance().apply { timeInMillis = rule.timestamp }
+            val now = Calendar.getInstance()
 
-            // If the start date is already past or today, step forward through due cycles
-            while (cursor <= now) {
-                val cycleKey = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date(cursor))
-                val fingerprint = "%[REC#${schedule.id}#$cycleKey]%"
+            while (cal.timeInMillis < now.timeInMillis) {
+                val startWindow = cal.timeInMillis - (12 * 3600 * 1000L)
+                val endWindow = cal.timeInMillis + (12 * 3600 * 1000L)
 
-                val alreadyExecuted = flowRecordDao.countRecordsWithFingerprint(fingerprint) > 0
-                if (!alreadyExecuted) {
-                    val executionNote = if (schedule.note.isNotBlank()) {
-                        "${schedule.note} [REC#${schedule.id}#$cycleKey]"
-                    } else {
-                        "${schedule.category} [REC#${schedule.id}#$cycleKey]"
-                    }
+                val count = dao.countRecordsWithFingerprint(
+                    rule.note,
+                    rule.amount ?: 0.0,
+                    startWindow,
+                    endWindow
+                )
 
-                    val execution = schedule.copy(
-                        id = 0L,
-                        note = executionNote,
-                        timestamp = cursor,
-                        isRecurring = false,
-                        isPaused = false
+                if (count == 0) {
+                    dao.insertFlowRecord(
+                        FlowRecord(
+                            id = 0L,
+                            sourcePocketId = rule.sourcePocketId,
+                            targetPocketId = rule.targetPocketId,
+                            amount = rule.amount,
+                            movementNature = rule.movementNature,
+                            category = rule.category,
+                            note = rule.note,
+                            timestamp = cal.timeInMillis,
+                            isRecurring = false,
+                            frequency = rule.frequency,
+                            recurringCadence = rule.recurringCadence,
+                            isPaused = false
+                        )
                     )
-                    flowRecordDao.insertFlowRecord(execution)
-                    generatedCount++
+                    catchUpCount++
                 }
 
-                cursor = calculateNextOccurrence(cursor, cadence)
-                updatedScheduleTimestamp = cursor
-            }
-
-            // Advance the blueprint's due date into the future so it never re-processes past dates
-            if (updatedScheduleTimestamp != schedule.timestamp) {
-                flowRecordDao.updateFlowRecord(
-                    schedule.copy(timestamp = updatedScheduleTimestamp)
-                )
+                when (cadence) {
+                    CadenceType.DAILY -> cal.add(Calendar.DAY_OF_YEAR, 1)
+                    CadenceType.WEEKLY -> cal.add(Calendar.WEEK_OF_YEAR, 1)
+                    CadenceType.MONTHLY -> cal.add(Calendar.MONTH, 1)
+                    CadenceType.NONE -> break
+                }
             }
         }
-        return generatedCount
-    }
-
-    fun calculateNextOccurrence(currentTimestamp: Long, cadence: CadenceType): Long {
-        val cal = Calendar.getInstance().apply { timeInMillis = currentTimestamp }
-        when (cadence) {
-            CadenceType.DAILY -> cal.add(Calendar.DAY_OF_YEAR, 1)
-            CadenceType.WEEKLY -> cal.add(Calendar.WEEK_OF_YEAR, 1)
-            CadenceType.MONTHLY -> cal.add(Calendar.MONTH, 1)
-            CadenceType.NONE -> {}
-        }
-        return cal.timeInMillis
+        return catchUpCount
     }
 }
