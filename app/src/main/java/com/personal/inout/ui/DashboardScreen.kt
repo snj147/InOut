@@ -19,6 +19,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -43,8 +44,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -112,7 +115,7 @@ fun DashboardScreen(db: AppDatabase) {
         if (generated > 0) {
             db.stateFlowDao().insertNotice(
                 SystemNotice(
-                    title = "Recurring Ledger Catch-Up",
+                    title = "Recurring Catch-Up",
                     message = "Auto-executed $generated recurring schedule(s) successfully.",
                     type = "RECURRING_TRIGGER",
                     timestamp = System.currentTimeMillis(),
@@ -201,24 +204,18 @@ fun DashboardScreen(db: AppDatabase) {
 
     val totalInflowLifetime = remember(completedTransactions) {
         completedTransactions.filter {
-            it.nature in listOf(
-                MovementNature.INFLOW,
-                MovementNature.PEER_COLLECT
-            )
+            it.nature in listOf(MovementNature.INFLOW, MovementNature.PEER_COLLECT)
         }.sumOf { it.amount ?: 0.0 }
     }
 
     val totalOutflowLifetime = remember(completedTransactions) {
         completedTransactions.filter {
-            it.nature in listOf(
-                MovementNature.OUTFLOW,
-                MovementNature.PEER_LEND
-            )
+            it.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND)
         }.sumOf { it.amount ?: 0.0 }
     }
 
     val peerNet = remember(pocketBalances) {
-        pocketBalances.filter { it.pocketType == PocketType.COUNTERPARTY || it.pocketType == PocketType.PEER || it.subType == "PEER" }
+        pocketBalances.filter { it.pocketType == PocketType.COUNTERPARTY || it.subType == "PEER" }
             .sumOf { it.computedBalance }
     }
 
@@ -262,26 +259,22 @@ fun DashboardScreen(db: AppDatabase) {
 
     var naturalLanguageInput by remember { mutableStateOf(TextFieldValue("")) }
     val quickBarFocusRequester = remember { FocusRequester() }
+    var textLayoutResultState by remember { mutableStateOf<TextLayoutResult?>(null) }
 
     val placeholderHints = listOf(
-        "coffee 120 BANK",
+        "coffee 120 SBI",
+        "salary 50k into SBI",
+        "rent 18k SBI monthly from today",
         "groceries 850 cash",
-        "salary 45k into BANK",
-        "dinner 450 BANK monthly",
-        "repay 4k to NAME from BANK",
-        "collect 2000 from NAME",
-        "lent 1500 to NAME",
-        "borrow 3000 from NAME",
-        "trf 5000 from BANK to BANK",
-        "new bank BANK",
-        "new card BANK limit 50k",
-        "new goal Emergency 100k",
+        "lent 1500 to Bob",
+        "repay 4k to Alice from SBI",
+        "save 5000 in Emergency",
         "burn 500"
     )
     var currentHintIndex by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) {
-            delay(3600)
+            delay(3400)
             currentHintIndex = (currentHintIndex + 1) % placeholderHints.size
         }
     }
@@ -291,30 +284,7 @@ fun DashboardScreen(db: AppDatabase) {
 
     val quickBarCommandPills by remember(naturalLanguageInput.text, rawPockets) {
         derivedStateOf {
-            val q = naturalLanguageInput.text.trim().lowercase()
-            when {
-                q.isEmpty() -> listOf(
-                    Triple("+ Bank", "create bank BANK", Icons.Filled.AccountBalance),
-                    Triple("+ Borrower", "new borrower NAME", Icons.Filled.PersonAdd),
-                    Triple("+ Card", "new card BANK limit 50k", Icons.Filled.CreditCard),
-                    Triple("Transfer", "trf 5000 from BANK to BANK", Icons.Filled.SwapHoriz)
-                )
-                q.startsWith("create") || q.startsWith("new") || q.startsWith("add") -> listOf(
-                    Triple("Bank Account", "$q bank ", Icons.Filled.AccountBalance),
-                    Triple("Borrower (Person)", "$q borrower ", Icons.Filled.Person),
-                    Triple("Lender (Person)", "$q lender ", Icons.Filled.PersonOutline),
-                    Triple("Credit Card", "$q card ", Icons.Filled.CreditCard),
-                    Triple("Goal Pot", "$q goal ", Icons.Filled.Savings)
-                )
-                q.contains("monthly") || q.contains("weekly") || q.contains("every") -> listOf(
-                    Triple("From 5th", "${naturalLanguageInput.text.trim()} from 5th", Icons.Filled.CalendarMonth),
-                    Triple("From 1st", "${naturalLanguageInput.text.trim()} from 1st", Icons.Filled.CalendarMonth),
-                    Triple("From 10th", "${naturalLanguageInput.text.trim()} from 10th", Icons.Filled.CalendarMonth)
-                )
-                else -> QuickBarSuggester.evaluate(naturalLanguageInput.text, rawPockets).map {
-                    Triple(it.title, it.template, it.icon)
-                }
-            }
+            QuickBarSuggester.evaluate(naturalLanguageInput.text, rawPockets)
         }
     }
 
@@ -371,115 +341,10 @@ fun DashboardScreen(db: AppDatabase) {
 
         focusManager.clearFocus()
         val lower = trimmed.lowercase()
-        when {
-            lower in listOf("autosplit on", "enable autosplit", "autosplit 1") -> {
-                autoSplitEnabled = true
-                prefs.edit().putBoolean("auto_split_debit", true).apply()
-                alertManager.showAlert("Cross-Account Auto-Split: ENABLED", AlertType.SUCCESS)
-                naturalLanguageInput = TextFieldValue("")
-                return
-            }
-            lower in listOf("autosplit off", "disable autosplit", "autosplit 0") -> {
-                autoSplitEnabled = false
-                prefs.edit().putBoolean("auto_split_debit", false).apply()
-                alertManager.showAlert("Cross-Account Auto-Split: DISABLED", AlertType.INFO)
-                naturalLanguageInput = TextFieldValue("")
-                return
-            }
-            lower in listOf("autosplit toggle", "/autosplit") -> {
-                autoSplitEnabled = !autoSplitEnabled
-                prefs.edit().putBoolean("auto_split_debit", autoSplitEnabled).apply()
-                alertManager.showAlert("Auto-Split: ${if (autoSplitEnabled) "ENABLED" else "DISABLED"}", AlertType.SUCCESS)
-                naturalLanguageInput = TextFieldValue("")
-                return
-            }
-            lower in listOf("phantom lock on", "phantom on", "lock cc on") -> {
-                phantomLockEnabled = true
-                prefs.edit().putBoolean("phantom_lock_enabled", true).apply()
-                alertManager.showAlert("Credit Card Phantom Lock: ACTIVE", AlertType.SUCCESS)
-                naturalLanguageInput = TextFieldValue("")
-                return
-            }
-            lower in listOf("phantom lock off", "phantom off") -> {
-                phantomLockEnabled = false
-                prefs.edit().putBoolean("phantom_lock_enabled", false).apply()
-                alertManager.showAlert("Credit Card Phantom Lock: OFF", AlertType.INFO)
-                naturalLanguageInput = TextFieldValue("")
-                return
-            }
-            lower in listOf("phantom lock toggle", "/phantom") -> {
-                phantomLockEnabled = !phantomLockEnabled
-                prefs.edit().putBoolean("phantom_lock_enabled", phantomLockEnabled).apply()
-                alertManager.showAlert("Phantom Lock: ${if (phantomLockEnabled) "ACTIVE" else "OFF"}", AlertType.SUCCESS)
-                naturalLanguageInput = TextFieldValue("")
-                return
-            }
-            lower in listOf("privacy on", "hide balances", "mask") -> {
-                isPrivacyMode = true
-                alertManager.showAlert("Privacy Mode: Masked", AlertType.INFO)
-                naturalLanguageInput = TextFieldValue("")
-                return
-            }
-            lower in listOf("privacy off", "show balances", "unmask") -> {
-                isPrivacyMode = false
-                alertManager.showAlert("Privacy Mode: Visible", AlertType.INFO)
-                naturalLanguageInput = TextFieldValue("")
-                return
-            }
-            lower.startsWith("theme ") -> {
-                val themeName = lower.removePrefix("theme ").trim()
-                val targetMode = when {
-                    themeName.contains("olive") || themeName.contains("matcha") -> AppThemeMode.OLIVE_MATCHA
-                    themeName.contains("nordic") || themeName.contains("slate") -> AppThemeMode.NORDIC_SLATE
-                    else -> AppThemeMode.AMBER_OCHRE
-                }
-                activeThemeMode = targetMode
-                prefs.edit().putString("selected_theme", targetMode.name).apply()
-                alertManager.showAlert("Applied theme: ${targetMode.name.replace("_", " ")}", AlertType.SUCCESS)
-                naturalLanguageInput = TextFieldValue("")
-                return
-            }
-            lower in listOf("export pdf", "/export pdf") -> {
-                scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, flowRecords) }
-                naturalLanguageInput = TextFieldValue("")
-                return
-            }
-            lower in listOf("export csv", "/export csv") -> {
-                val compatList = completedTransactions.map { flowRecord ->
-                    val sourceId = flowRecord.sourcePocketId ?: flowRecord.targetPocketId ?: 0L
-                    val isExpense = flowRecord.nature in listOf(
-                        MovementNature.OUTFLOW,
-                        MovementNature.PEER_LEND,
-                        MovementNature.PEER_REPAY,
-                        MovementNature.CARD_PAYMENT
-                    )
-                    Transaction(
-                        id = flowRecord.id,
-                        accountId = sourceId,
-                        flowType = if (isExpense) "OUT" else "IN",
-                        type = flowRecord.nature.name,
-                        category = flowRecord.category,
-                        amount = flowRecord.amount ?: 0.0,
-                        timestamp = flowRecord.timestamp,
-                        note = flowRecord.note,
-                        isRecurring = flowRecord.isRecurring,
-                        frequency = flowRecord.frequency
-                    )
-                }
-                CsvExporter.exportAndShareTransactions(context, compatList)
-                naturalLanguageInput = TextFieldValue("")
-                return
-            }
-            lower in listOf("backup now", "/backup") -> {
-                backupExportLauncher.launch("inout_vault_backup_${System.currentTimeMillis()}.vault")
-                naturalLanguageInput = TextFieldValue("")
-                return
-            }
-        }
 
         val parsed = NaturalLanguageParser.parse(trimmed, rawPockets, context)
         if (parsed == null) {
-            alertManager.showAlert("Syntax not recognized. Type / for commands.", AlertType.WARNING)
+            alertManager.showAlert("Syntax not recognized. Tap chips below for templates.", AlertType.WARNING)
             return
         }
 
@@ -496,14 +361,6 @@ fun DashboardScreen(db: AppDatabase) {
                             targetDateEpoch = 0L
                         )
                     )
-                    db.stateFlowDao().insertNotice(
-                        SystemNotice(
-                            title = "Account Created",
-                            message = "Created new ${parsed.type.name.lowercase()} ledger: '${parsed.name}'",
-                            type = "LEDGER_SYSTEM",
-                            timestamp = System.currentTimeMillis()
-                        )
-                    )
                     alertManager.showAlert("Account '${parsed.name}' created", AlertType.SUCCESS)
                     naturalLanguageInput = TextFieldValue("")
                 }
@@ -511,10 +368,10 @@ fun DashboardScreen(db: AppDatabase) {
                     prefilledCreatePocketName = parsed.missingAccountName
                     prefilledCreatePocketType = PocketType.LIQUID
                     showCreatePocketDialog = true
-                    alertManager.showAlert("Account '${parsed.missingAccountName}' does not exist. Please confirm creation.", AlertType.WARNING)
+                    alertManager.showAlert("Account '${parsed.missingAccountName}' does not exist.", AlertType.WARNING)
                 }
                 is ParsedIntent.PeerNotFoundError -> {
-                    alertManager.showAlert("Cannot ${parsed.action}: No contact named '${parsed.peerName}' found", AlertType.ERROR)
+                    alertManager.showAlert("Contact '${parsed.peerName}' not found", AlertType.ERROR)
                 }
                 is ParsedIntent.SetDailyBurn -> {
                     dailyBurnCeiling = parsed.newRate
@@ -551,7 +408,7 @@ fun DashboardScreen(db: AppDatabase) {
                             )
                         }
                         db.stateFlowDao().updatePocket(goal.copy(isArchived = true))
-                        alertManager.showAlert("Pot '${goal.name}' broken. Returned ₹${bal.toInt()}", AlertType.SUCCESS)
+                        alertManager.showAlert("Pot '${goal.name}' returned ₹${bal.toInt()}", AlertType.SUCCESS)
                         naturalLanguageInput = TextFieldValue("")
                     }
                 }
@@ -603,6 +460,17 @@ fun DashboardScreen(db: AppDatabase) {
                                 }
                             }
 
+                            // Overdraft Protection Validation for Outflows
+                            if (parsed.nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
+                                val sId = sourceId ?: validLiquidId
+                                val bal = pocketBalances.firstOrNull { it.pocketId == sId.toString() }?.computedBalance ?: 0.0
+                                if (bal < parsed.amount && !autoSplitEnabled) {
+                                    val pocketName = rawPockets.firstOrNull { it.id == sId }?.name ?: "Account"
+                                    alertManager.showAlert("Insufficient balance in '$pocketName' (Available: ₹${bal.toInt()})", AlertType.ERROR)
+                                    return@launch
+                                }
+                            }
+
                             if (parsed.isRecurring) {
                                 db.stateFlowDao().insertFlowRecord(
                                     FlowRecord(
@@ -634,7 +502,7 @@ fun DashboardScreen(db: AppDatabase) {
                                         isRecurring = false,
                                         frequency = parsed.frequency
                                     )
-                                    alertManager.showAlert("Recorded today's entry & scheduled ${parsed.frequency.lowercase()} cycle", AlertType.SUCCESS)
+                                    alertManager.showAlert("Recorded initial entry & scheduled ${parsed.frequency.lowercase()} cycle", AlertType.SUCCESS)
                                 } else {
                                     val dateStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(parsed.timestamp))
                                     alertManager.showAlert("Scheduled ${parsed.frequency.lowercase()} rule starting $dateStr", AlertType.SUCCESS)
@@ -663,55 +531,6 @@ fun DashboardScreen(db: AppDatabase) {
                             }
                         }
                     }
-                }
-            }
-        }
-    }
-
-    fun processReceiptResult(bitmap: Bitmap) {
-        scope.launch {
-            try {
-                val useCloud = prefs.getBoolean("use_cloud_vision", false)
-                val cloudKey = prefs.getString("cloud_vision_api_key", "") ?: ""
-                val parsed = ReceiptScanner.processReceiptBitmap(bitmap, useCloud, cloudKey)
-
-                ocrPrefilledNote = parsed.merchant
-                ocrPrefilledAmount = parsed.total
-                hudInDialogError = null
-                selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
-                showCommandHud = true
-                alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
-            } catch (e: Exception) {
-                alertManager.showAlert("Receipt OCR Error: ${e.localizedMessage}", AlertType.ERROR)
-            }
-        }
-    }
-
-    val cameraSnapLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap: Bitmap? ->
-        if (bitmap != null) processReceiptResult(bitmap)
-    }
-
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) cameraSnapLauncher.launch(null)
-        else alertManager.showAlert("Camera permission needed for receipt scanning", AlertType.WARNING)
-    }
-
-    val photoPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
-        if (uri != null) {
-            scope.launch {
-                try {
-                    val useCloud = prefs.getBoolean("use_cloud_vision", false)
-                    val cloudKey = prefs.getString("cloud_vision_api_key", "") ?: ""
-                    val parsed = ReceiptScanner.processReceipt(context, uri, useCloud, cloudKey)
-
-                    ocrPrefilledNote = parsed.merchant
-                    ocrPrefilledAmount = parsed.total
-                    hudInDialogError = null
-                    selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
-                    showCommandHud = true
-                    alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
-                } catch (e: Exception) {
-                    alertManager.showAlert("Receipt Parse Error: ${e.localizedMessage}", AlertType.ERROR)
                 }
             }
         }
@@ -779,99 +598,28 @@ fun DashboardScreen(db: AppDatabase) {
                     }
                 },
                 floatingActionButton = {
-                    if (selectedTab == 0 || selectedTab == 1) {
-                        val rotation by animateFloatAsState(
-                            targetValue = if (isFabExpanded) 45f else 0f,
-                            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                            label = "fabRotation"
+                    FloatingActionButton(
+                        onClick = {
+                            if (selectedTab == 1) {
+                                prefilledCreatePocketName = ""
+                                prefilledCreatePocketType = PocketType.LIQUID
+                                showCreatePocketDialog = true
+                            } else {
+                                ocrPrefilledNote = ""
+                                ocrPrefilledAmount = null
+                                hudInDialogError = null
+                                selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
+                                showCommandHud = true
+                            }
+                        },
+                        containerColor = theme.accent,
+                        contentColor = theme.bg,
+                        shape = CircleShape
+                    ) {
+                        Icon(
+                            imageVector = if (selectedTab == 1) Icons.Default.AddCard else Icons.Default.Add,
+                            contentDescription = "New Flow"
                         )
-
-                        Column(
-                            horizontalAlignment = Alignment.End,
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier.navigationBarsPadding()
-                        ) {
-                            AnimatedVisibility(
-                                visible = isFabExpanded,
-                                enter = fadeIn() + slideInVertically { it / 2 },
-                                exit = fadeOut() + slideOutVertically { it / 2 }
-                            ) {
-                                Column(
-                                    horizontalAlignment = Alignment.End,
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    FloatingActionButton(
-                                        onClick = {
-                                            isFabExpanded = false
-                                            ocrPrefilledNote = ""
-                                            ocrPrefilledAmount = null
-                                            hudInDialogError = null
-                                            selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
-                                            showCommandHud = true
-                                        },
-                                        modifier = Modifier.size(46.dp),
-                                        containerColor = theme.accent,
-                                        contentColor = theme.bg,
-                                        shape = CircleShape
-                                    ) {
-                                        Icon(imageVector = Icons.Default.EditNote, contentDescription = "Manual Entry", modifier = Modifier.size(22.dp))
-                                    }
-
-                                    FloatingActionButton(
-                                        onClick = {
-                                            isFabExpanded = false
-                                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                                                cameraSnapLauncher.launch(null)
-                                            } else {
-                                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                                            }
-                                        },
-                                        modifier = Modifier.size(46.dp),
-                                        containerColor = theme.accent,
-                                        contentColor = theme.bg,
-                                        shape = CircleShape
-                                    ) {
-                                        Icon(imageVector = Icons.Default.PhotoCamera, contentDescription = "Camera OCR", modifier = Modifier.size(20.dp))
-                                    }
-
-                                    FloatingActionButton(
-                                        onClick = {
-                                            isFabExpanded = false
-                                            photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                                        },
-                                        modifier = Modifier.size(46.dp),
-                                        containerColor = theme.accent,
-                                        contentColor = theme.bg,
-                                        shape = CircleShape
-                                    ) {
-                                        Icon(imageVector = Icons.Default.Image, contentDescription = "Gallery OCR", modifier = Modifier.size(20.dp))
-                                    }
-                                }
-                            }
-
-                            FloatingActionButton(
-                                onClick = {
-                                    if (selectedTab == 1) {
-                                        prefilledCreatePocketName = ""
-                                        prefilledCreatePocketType = PocketType.LIQUID
-                                        showCreatePocketDialog = true
-                                    } else {
-                                        isFabExpanded = !isFabExpanded
-                                    }
-                                },
-                                containerColor = theme.accent,
-                                contentColor = theme.bg,
-                                shape = CircleShape
-                            ) {
-                                Icon(
-                                    imageVector = if (selectedTab == 1) Icons.Default.AddCard else Icons.Default.Add,
-                                    contentDescription = "Action",
-                                    modifier = Modifier
-                                        .size(24.dp)
-                                        .rotate(if (selectedTab == 0) rotation else 0f)
-                                )
-                            }
-                        }
                     }
                 }
             ) { padding ->
@@ -932,7 +680,7 @@ fun DashboardScreen(db: AppDatabase) {
                                                     status = if (peerNet >= 0.0) "Receivable" else "Payable",
                                                     isPositive = peerNet >= 0.0,
                                                     heroText = if (isPrivacyMode) "₹ •••" else "${if (peerNet >= 0.0) "+" else "-"}₹${String.format("%,.0f", Math.abs(peerNet))}",
-                                                    leftSub = if (peerNet >= 0.0) "You are net lender" else "You are net borrower",
+                                                    leftSub = if (peerNet >= 0.0) "Net lender" else "Net borrower",
                                                     rightSub = "Across all contacts",
                                                     theme = theme,
                                                     onCardClick = {}
@@ -959,6 +707,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
+                                // Interactive Quick Bar with 1-Tap Word Selection
                                 item {
                                     Box(
                                         modifier = Modifier
@@ -995,7 +744,27 @@ fun DashboardScreen(db: AppDatabase) {
                                                 Box(
                                                     modifier = Modifier
                                                         .weight(1f)
-                                                        .clickable { quickBarFocusRequester.requestFocus() },
+                                                        .pointerInput(naturalLanguageInput.text) {
+                                                            detectTapGestures { offset ->
+                                                                val layout = textLayoutResultState
+                                                                if (layout != null && naturalLanguageInput.text.isNotEmpty()) {
+                                                                    val charOffset = layout.getOffsetForPosition(offset)
+                                                                    val boundary = layout.getWordBoundary(charOffset)
+                                                                    if (boundary.start < boundary.end) {
+                                                                        naturalLanguageInput = TextFieldValue(
+                                                                            text = naturalLanguageInput.text,
+                                                                            selection = TextRange(boundary.start, boundary.end)
+                                                                        )
+                                                                    } else {
+                                                                        naturalLanguageInput = TextFieldValue(
+                                                                            text = naturalLanguageInput.text,
+                                                                            selection = TextRange(charOffset)
+                                                                        )
+                                                                    }
+                                                                }
+                                                                quickBarFocusRequester.requestFocus()
+                                                            }
+                                                        },
                                                     contentAlignment = Alignment.CenterStart
                                                 ) {
                                                     if (naturalLanguageInput.text.isEmpty()) {
@@ -1009,6 +778,7 @@ fun DashboardScreen(db: AppDatabase) {
                                                     BasicTextField(
                                                         value = naturalLanguageInput,
                                                         onValueChange = { naturalLanguageInput = it },
+                                                        onTextLayout = { textLayoutResultState = it },
                                                         singleLine = true,
                                                         textStyle = TextStyle(
                                                             color = theme.textBright,
@@ -1051,14 +821,14 @@ fun DashboardScreen(db: AppDatabase) {
                                                         .padding(horizontal = 8.dp, vertical = 6.dp),
                                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                                 ) {
-                                                    items(quickBarCommandPills) { (pillTitle, pillTemplate, pillIcon) ->
+                                                    items(quickBarCommandPills) { pill ->
                                                         Row(
                                                             modifier = Modifier
                                                                 .clip(RoundedCornerShape(6.dp))
                                                                 .background(theme.surfaceAlt)
                                                                 .clickable {
-                                                                    val t = pillTemplate
-                                                                    val placeholderTarget = listOf("BANK", "NAME", "<amount>", "<bank>", "<person>")
+                                                                    val t = pill.template
+                                                                    val placeholderTarget = listOf("BANK", "NAME", "<amount>", "<person>")
                                                                         .firstOrNull { t.contains(it) }
 
                                                                     if (placeholderTarget != null) {
@@ -1075,13 +845,13 @@ fun DashboardScreen(db: AppDatabase) {
                                                             horizontalArrangement = Arrangement.spacedBy(5.dp)
                                                         ) {
                                                             Icon(
-                                                                imageVector = pillIcon,
+                                                                imageVector = pill.icon,
                                                                 contentDescription = null,
                                                                 tint = theme.accent,
                                                                 modifier = Modifier.size(13.dp)
                                                             )
                                                             Text(
-                                                                text = pillTitle,
+                                                                text = pill.title,
                                                                 color = theme.textBright,
                                                                 fontSize = 11.sp,
                                                                 fontWeight = FontWeight.Bold
@@ -1354,15 +1124,7 @@ fun DashboardScreen(db: AppDatabase) {
                     }
                 }
 
-                if (isFabExpanded) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.35f))
-                            .clickable { isFabExpanded = false }
-                    )
-                }
-
+                // Full-Height Notification Sheet
                 if (showNoticesSheet) {
                     ModalBottomSheet(
                         onDismissRequest = { showNoticesSheet = false },
@@ -1372,7 +1134,7 @@ fun DashboardScreen(db: AppDatabase) {
                     ) {
                         Column(
                             modifier = Modifier
-                                .fillMaxWidth()
+                                .fillMaxSize()
                                 .padding(horizontal = 20.dp, vertical = 12.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
@@ -1384,7 +1146,7 @@ fun DashboardScreen(db: AppDatabase) {
                                 Text(
                                     text = "System & Ledger Notices",
                                     color = theme.textBright,
-                                    fontSize = 16.sp,
+                                    fontSize = 18.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                                 if (systemNotices.isNotEmpty()) {
@@ -1399,18 +1161,17 @@ fun DashboardScreen(db: AppDatabase) {
                             if (systemNotices.isEmpty()) {
                                 Box(
                                     modifier = Modifier
-                                        .fillMaxWidth()
+                                        .fillMaxSize()
                                         .padding(vertical = 32.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(text = "No system notifications logged.", color = theme.textMuted, fontSize = 12.5.sp)
+                                    Text(text = "No system notifications logged.", color = theme.textMuted, fontSize = 13.sp)
                                 }
                             } else {
                                 LazyColumn(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(max = 400.dp),
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    modifier = Modifier.fillMaxSize(),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                                    contentPadding = PaddingValues(bottom = 32.dp)
                                 ) {
                                     items(systemNotices, key = { it.id }) { notice ->
                                         Card(
@@ -1419,25 +1180,24 @@ fun DashboardScreen(db: AppDatabase) {
                                             modifier = Modifier.fillMaxWidth()
                                         ) {
                                             Column(
-                                                modifier = Modifier.padding(12.dp),
-                                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                                                modifier = Modifier.padding(14.dp),
+                                                verticalArrangement = Arrangement.spacedBy(6.dp)
                                             ) {
                                                 Row(
                                                     modifier = Modifier.fillMaxWidth(),
                                                     horizontalArrangement = Arrangement.SpaceBetween,
                                                     verticalAlignment = Alignment.CenterVertically
                                                 ) {
-                                                    Text(text = notice.title, color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                    Text(text = notice.title, color = theme.accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                                     val timeStr = SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(notice.timestamp))
-                                                    Text(text = timeStr, color = theme.textMuted, fontSize = 10.sp)
+                                                    Text(text = timeStr, color = theme.textMuted, fontSize = 10.5.sp)
                                                 }
-                                                Text(text = notice.message, color = theme.textBright, fontSize = 11.5.sp)
+                                                Text(text = notice.message, color = theme.textBright, fontSize = 12.5.sp)
                                             }
                                         }
                                     }
                                 }
                             }
-                            Spacer(Modifier.height(16.dp))
                         }
                     }
                 }
@@ -2091,7 +1851,7 @@ private fun SettingsCardsList(
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(text = "Cross-Account Auto-Split", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            Text(text = "Auto-debit secondary bank accounts if primary account lacks liquid funds.", color = theme.textMuted, fontSize = 10.5.sp)
+                            Text(text = "Auto-debit secondary accounts if primary lacks liquid funds.", color = theme.textMuted, fontSize = 10.5.sp)
                         }
                         Switch(
                             checked = autoSplitEnabled,
