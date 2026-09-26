@@ -25,22 +25,40 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      - name: Make gradlew executable
-        run: chmod +x gradlew
+      - name: Ensure gradlew exists and is executable
+        run: |
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+          elif [ -f "./InOut-main/gradlew" ]; then
+            cd InOut-main && chmod +x ./gradlew
+          else
+            echo "gradlew not found in root or subfolder; generating wrapper..."
+            gradle wrapper
+            chmod +x ./gradlew
+          fi
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug -PGIT_SHA=${{ github.sha }}
+        run: |
+          if [ -f "./gradlew" ]; then
+            ./gradlew assembleDebug -PGIT_SHA=${{ github.sha }}
+          else
+            cd InOut-main && ./gradlew assembleDebug -PGIT_SHA=${{ github.sha }}
+          fi
 
       - name: Rename APK with Commit SHA
         run: |
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/InOut-alpha-${SHORT_SHA}.apk
+          APK_PATH=$(find . -name "app-debug.apk" | head -n 1)
+          if [ -n "$APK_PATH" ]; then
+            DIR=$(dirname "$APK_PATH")
+            mv "$APK_PATH" "$DIR/InOut-alpha-${SHORT_SHA}.apk"
+          fi
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: InOut-Debug-APK
-          path: app/build/outputs/apk/debug/InOut-alpha-*.apk
+          path: "**/InOut-alpha-*.apk"
 
       - name: Publish Rolling Alpha Release
         uses: softprops/action-gh-release@v2
@@ -49,7 +67,8 @@ jobs:
           tag_name: rolling-alpha
           name: "InOut Alpha Rolling (${{ github.sha }})"
           body: |
-            Automated rolling alpha build from commit `${{ github.sha }}`.
-          files: app/build/outputs/apk/debug/InOut-alpha-*.apk
+            Automated continuous alpha build from commit `${{ github.sha }}`.
+          files: "**/InOut-alpha-*.apk"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
