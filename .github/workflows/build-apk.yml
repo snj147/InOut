@@ -22,28 +22,13 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Gradle
+      - name: Setup Gradle 8.8
         uses: gradle/actions/setup-gradle@v3
-
-      - name: Ensure gradlew exists and is executable
-        run: |
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-          elif [ -f "./InOut-main/gradlew" ]; then
-            cd InOut-main && chmod +x ./gradlew
-          else
-            echo "gradlew not found in root or subfolder; generating wrapper..."
-            gradle wrapper
-            chmod +x ./gradlew
-          fi
+        with:
+          gradle-version: '8.8'
 
       - name: Build Debug APK
-        run: |
-          if [ -f "./gradlew" ]; then
-            ./gradlew assembleDebug -PGIT_SHA=${{ github.sha }}
-          else
-            cd InOut-main && ./gradlew assembleDebug -PGIT_SHA=${{ github.sha }}
-          fi
+        run: gradle assembleDebug -PGIT_SHA=${{ github.sha }}
 
       - name: Rename APK with Commit SHA
         run: |
@@ -71,4 +56,3 @@ jobs:
           files: "**/InOut-alpha-*.apk"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
