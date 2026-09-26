@@ -4,23 +4,21 @@ import android.content.Context
 import com.personal.inout.data.MovementNature
 import com.personal.inout.data.PocketType
 import com.personal.inout.data.VaultPocket
-import java.text.SimpleDateFormat
 import java.util.Calendar
-import java.util.Locale
 import java.util.regex.Pattern
 
 sealed class ParsedIntent {
     data class Transaction(
-        val amount: Double,
         val nature: MovementNature,
+        val amount: Double,
         val matchedPocketId: Long?,
-        val targetPocketId: Long?,
+        val targetPocketId: Long? = null,
+        val targetPersonName: String? = null,
         val category: String,
         val merchant: String,
         val timestamp: Long,
-        val isRecurring: Boolean,
-        val frequency: String,
-        val targetPersonName: String?
+        val isRecurring: Boolean = false,
+        val frequency: String = "NONE"
     ) : ParsedIntent()
 
     data class CreateAccount(
@@ -28,317 +26,261 @@ sealed class ParsedIntent {
         val type: PocketType
     ) : ParsedIntent()
 
-    data class SetDailyBurn(val newRate: Double) : ParsedIntent()
-    data class StageDesire(val name: String, val amount: Double) : ParsedIntent()
-    data class TriangularSettle(val debtor: String, val creditor: String, val amount: Double) : ParsedIntent()
-    data class BreakGoalPot(val potName: String, val destinationPocketId: Long?) : ParsedIntent()
-    data class MissingAccountError(val missingAccountName: String) : ParsedIntent()
-    data class PeerNotFoundError(val peerName: String, val action: String) : ParsedIntent()
+    data class SetDailyBurn(
+        val newRate: Double
+    ) : ParsedIntent()
+
+    data class StageDesire(
+        val name: String,
+        val amount: Double
+    ) : ParsedIntent()
+
+    data class TriangularSettle(
+        val debtor: String,
+        val creditor: String,
+        val amount: Double
+    ) : ParsedIntent()
+
+    data class BreakGoalPot(
+        val potName: String,
+        val destinationPocketId: Long?
+    ) : ParsedIntent()
+
+    data class MissingAccountError(
+        val missingAccountName: String
+    ) : ParsedIntent()
+
+    data class PeerNotFoundError(
+        val action: String,
+        val peerName: String
+    ) : ParsedIntent()
 }
 
 object NaturalLanguageParser {
 
-    private val CREATION_VERBS = setOf("create", "new", "add", "open", "make", "register")
-    private val LIQUID_SYNONYMS = setOf("bank", "account", "acc", "ledger", "cash", "wallet")
-    private val PEER_SYNONYMS = setOf("borrower", "lender", "person", "peer", "contact", "friend", "party", "client")
-    private val CARD_SYNONYMS = setOf("card", "cc", "creditcard")
-    private val GOAL_SYNONYMS = setOf("goal", "pot", "saving", "savings", "piggy")
-
-    private val REPAY_KEYWORDS = setOf("repay", "repaid", "paidback", "payback", "settle", "cleared", "clear")
-    private val COLLECT_KEYWORDS = setOf("collect", "collected", "col", "rec", "received", "got", "recovered")
-    private val LEND_KEYWORDS = setOf("lent", "lend", "gave", "give", "lended")
-    private val BORROW_KEYWORDS = setOf("borrowed", "borrow", "bor", "took")
-    private val TRANSFER_KEYWORDS = setOf("transfer", "trf", "xfer", "tfr", "move", "shift")
-
-    fun parse(input: String, rawPockets: List<VaultPocket>, context: Context): ParsedIntent? {
-        val trimmed = input.trim()
+    fun parse(rawText: String, activePockets: List<VaultPocket>, context: Context? = null): ParsedIntent? {
+        val trimmed = rawText.trim()
         if (trimmed.isBlank()) return null
+        val lower = trimmed.lowercase()
 
-        // 1. Burn Ceiling Command
-        val burnMatcher = Pattern.compile("^(?:set\\s+)?burn(?:\\s+target|\\s+ceiling)?\\s+(\\d+(?:\\.\\d+)?)$", Pattern.CASE_INSENSITIVE).matcher(trimmed)
+        // 1. Account Creation Commands
+        if (lower.startsWith("new ") || lower.startsWith("create ") || lower.startsWith("add ")) {
+            val tokens = trimmed.split("\\s+".toRegex())
+            if (tokens.size >= 3) {
+                val kind = tokens[1].lowercase()
+                val name = tokens.drop(2).joinToString(" ").replace("limit.*".toRegex(), "").trim()
+                val type = when (kind) {
+                    "bank", "account", "savings" -> PocketType.LIQUID
+                    "card", "credit" -> PocketType.CREDIT_LINE
+                    "goal", "pot" -> PocketType.SAVING_GOAL
+                    "person", "borrower", "lender", "contact" -> PocketType.COUNTERPARTY
+                    else -> PocketType.LIQUID
+                }
+                return ParsedIntent.CreateAccount(name = name, type = type)
+            }
+        }
+
+        // 2. Daily Burn Settings
+        val burnMatcher = Pattern.compile("""(?i)^(?:burn|daily\s*burn|set\s*burn)\s*(?:limit|target)?\s*[:=]?\s*[₹rs\.]*\s*(\d+(?:\.\d+)?)$""").matcher(trimmed)
         if (burnMatcher.find()) {
-            val amt = burnMatcher.group(1)?.toDoubleOrNull() ?: return null
-            return ParsedIntent.SetDailyBurn(amt)
+            val rate = burnMatcher.group(1)?.toDoubleOrNull() ?: 450.0
+            return ParsedIntent.SetDailyBurn(rate)
         }
 
-        // 2. Comprehensive Entity/Account Creation Parser (e.g., "Create bank Jupiter", "new borrower ABC")
-        val createPattern = Pattern.compile("^(?:create|new|add|open|make|register)\\s+([a-zA-Z]+)(?:\\s+card)?\\s+(.+)$", Pattern.CASE_INSENSITIVE)
-        val createMatcher = createPattern.matcher(trimmed)
-        if (createMatcher.find()) {
-            val typeToken = createMatcher.group(1)?.lowercase() ?: ""
-            val entityName = createMatcher.group(2)?.trim() ?: ""
-
-            val pocketType = when {
-                typeToken in LIQUID_SYNONYMS -> PocketType.LIQUID
-                typeToken in PEER_SYNONYMS -> PocketType.COUNTERPARTY
-                typeToken in CARD_SYNONYMS || typeToken == "credit" -> PocketType.CREDIT_LINE
-                typeToken in GOAL_SYNONYMS -> PocketType.SAVING_GOAL
-                else -> null
-            }
-
-            if (pocketType != null && entityName.isNotBlank()) {
-                return ParsedIntent.CreateAccount(entityName, pocketType)
-            }
+        // 3. Staged Desires / Impulse Quarantine
+        val desireMatcher = Pattern.compile("""(?i)^(?:wish|desire|quarantine|cooloff|stage)\s+(.+?)\s+[₹rs\.]*\s*(\d+(?:\.\d+)?)$""").matcher(trimmed)
+        if (desireMatcher.find()) {
+            val name = desireMatcher.group(1)?.trim() ?: "Item"
+            val amt = desireMatcher.group(2)?.toDoubleOrNull() ?: 0.0
+            return ParsedIntent.StageDesire(name, amt)
         }
 
-        // 3. Stage Desires
-        val stageMatcher = Pattern.compile("^stage\\s+(.+?)\\s+(\\d+(?:\\.\\d+)?)$", Pattern.CASE_INSENSITIVE).matcher(trimmed)
-        if (stageMatcher.find()) {
-            val desireName = stageMatcher.group(1)?.trim() ?: "Item"
-            val amt = stageMatcher.group(2)?.toDoubleOrNull() ?: 0.0
-            return ParsedIntent.StageDesire(desireName, amt)
+        // 4. Triangular Peer Settlement (e.g. "settle Alice to Bob 1500")
+        val triMatcher = Pattern.compile("""(?i)^settle\s+(.+?)\s+(?:to|->)\s+(.+?)\s+[₹rs\.]*\s*(\d+(?:\.\d+)?)$""").matcher(trimmed)
+        if (triMatcher.find()) {
+            val debtor = triMatcher.group(1)?.trim() ?: ""
+            val creditor = triMatcher.group(2)?.trim() ?: ""
+            val amt = triMatcher.group(3)?.toDoubleOrNull() ?: 0.0
+            return ParsedIntent.TriangularSettle(debtor, creditor, amt)
         }
 
-        // 4. Temporal & Recurrence Slot Harvesting (Absorbs dates completely so they never pollute notes)
-        var workingText = trimmed
-        var targetTimestamp = System.currentTimeMillis()
-        var isRecurring = false
-        var cadence = "NONE"
-
-        // Check for Recurrence Cadence
-        val lowerText = workingText.lowercase()
-        when {
-            lowerText.contains("every month") || lowerText.contains("monthly") -> {
-                isRecurring = true
-                cadence = "MONTHLY"
-                workingText = workingText.replace("(?i)every\\s+month".toRegex(), "").replace("(?i)monthly".toRegex(), "")
-            }
-            lowerText.contains("every week") || lowerText.contains("weekly") -> {
-                isRecurring = true
-                cadence = "WEEKLY"
-                workingText = workingText.replace("(?i)every\\s+week".toRegex(), "").replace("(?i)weekly".toRegex(), "")
-            }
-            lowerText.contains("every day") || lowerText.contains("daily") -> {
-                isRecurring = true
-                cadence = "DAILY"
-                workingText = workingText.replace("(?i)every\\s+day".toRegex(), "").replace("(?i)daily".toRegex(), "")
-            }
+        // 5. Pot Break / Return
+        val breakMatcher = Pattern.compile("""(?i)^break\s+pot\s+(.+?)(?:\s+into\s+(.+))?$""").matcher(trimmed)
+        if (breakMatcher.find()) {
+            val potName = breakMatcher.group(1)?.trim() ?: ""
+            val destName = breakMatcher.group(2)?.trim()
+            val destPocket = if (destName != null) activePockets.firstOrNull { it.name.equals(destName, ignoreCase = true) } else activePockets.firstOrNull { it.pocketType == PocketType.LIQUID }
+            return ParsedIntent.BreakGoalPot(potName, destPocket?.id)
         }
 
-        // Extract Explicit Dates: "start DD/MM/YYYY", "from DD-MM-YYYY", or "DD/MM/YYYY"
-        val fullDateRegex = Pattern.compile("(?:(?:start|starting|from|on)\\s+)?(\\d{1,2}[/-]\\d{1,2}[/-]\\d{4})", Pattern.CASE_INSENSITIVE)
-        val fullDateMatcher = fullDateRegex.matcher(workingText)
-        if (fullDateMatcher.find()) {
-            val dateStr = fullDateMatcher.group(1)
-            val parsedTime = parseDateString(dateStr)
-            if (parsedTime != null) {
-                targetTimestamp = parsedTime
-                workingText = fullDateMatcher.replaceFirst("").trim()
-            }
-        } else {
-            // Extract Day of Month Dates: "from 5th", "on 10th", "start 1st", "on the 25th"
-            val dayRegex = Pattern.compile("(?:(?:start|starting|from|on|on\\s+the)\\s+)?(\\d{1,2})(?:st|nd|rd|th)?\\b", Pattern.CASE_INSENSITIVE)
-            val dayMatcher = dayRegex.matcher(workingText)
-            if (dayMatcher.find()) {
-                val dayNum = dayMatcher.group(1)?.toIntOrNull()
-                if (dayNum != null && dayNum in 1..31) {
-                    val cal = Calendar.getInstance().apply {
-                        set(Calendar.DAY_OF_MONTH, dayNum)
-                        if (timeInMillis < System.currentTimeMillis()) {
-                            add(Calendar.MONTH, 1)
-                        }
-                    }
-                    targetTimestamp = cal.timeInMillis
-                    workingText = dayMatcher.replaceFirst("").trim()
-                }
-            }
-        }
+        // 6. Extraction for Financial Movements (Inflow, Outflow, Transfer, Card Payment, Peer)
+        val amountPattern = Pattern.compile("""(?i)(?:^|\s)[₹rs\.]*(\d+(?:\.\d+)?)(?:k|l)?(?:\s|$)""")
+        val numMatcher = amountPattern.matcher(trimmed)
+        var parsedAmount: Double? = null
 
-        // 5. Amount Harvesting (4000, 4k, ₹4,000)
-        val rawTokens = workingText.split("\\s+".toRegex()).filter { it.isNotBlank() }
-        var amount: Double? = null
-        var amountTokenIdx = -1
-
-        for (i in rawTokens.indices) {
-            val clean = rawTokens[i].replace("₹", "").replace(",", "")
-            if (clean.endsWith("k", ignoreCase = true)) {
-                val numPart = clean.dropLast(1).toDoubleOrNull()
-                if (numPart != null && numPart > 0) {
-                    amount = numPart * 1000.0
-                    amountTokenIdx = i
-                    break
-                }
-            } else {
-                val numPart = clean.toDoubleOrNull()
-                if (numPart != null && numPart > 0) {
-                    amount = numPart
-                    amountTokenIdx = i
-                    break
-                }
-            }
-        }
-
-        if (amount == null || amountTokenIdx == -1) return null
-
-        val tokens = rawTokens.filterIndexed { index, _ -> index != amountTokenIdx }
-        val firstWord = rawTokens[0].lowercase()
-
-        // 6. Transfer Intent (Entity Linked)
-        if (firstWord in TRANSFER_KEYWORDS || tokens.any { it.lowercase() in TRANSFER_KEYWORDS }) {
-            val fromIdx = rawTokens.indexOfFirst { it.equals("from", ignoreCase = true) }
-            val toIdx = rawTokens.indexOfFirst { it.equals("to", ignoreCase = true) }
-
-            if (fromIdx != -1 && toIdx != -1) {
-                val (srcSegment, tgtSegment) = if (fromIdx < toIdx) {
-                    val s = rawTokens.subList(fromIdx + 1, toIdx).joinToString(" ").trim()
-                    val t = rawTokens.subList(toIdx + 1, rawTokens.size).filterIndexed { idx, _ -> (toIdx + 1 + idx) != amountTokenIdx }.joinToString(" ").trim()
-                    s to t
-                } else {
-                    val t = rawTokens.subList(toIdx + 1, fromIdx).joinToString(" ").trim()
-                    val s = rawTokens.subList(fromIdx + 1, rawTokens.size).filterIndexed { idx, _ -> (fromIdx + 1 + idx) != amountTokenIdx }.joinToString(" ").trim()
-                    s to t
-                }
-
-                val srcPocket = rawPockets.firstOrNull { it.name.equals(srcSegment, ignoreCase = true) }
-                val tgtPocket = rawPockets.firstOrNull { it.name.equals(tgtSegment, ignoreCase = true) }
-
-                if (srcPocket == null) return ParsedIntent.MissingAccountError(srcSegment)
-                if (tgtPocket == null) return ParsedIntent.MissingAccountError(tgtSegment)
-
-                return ParsedIntent.Transaction(
-                    amount = amount,
-                    nature = MovementNature.TRANSFER,
-                    matchedPocketId = srcPocket.id,
-                    targetPocketId = tgtPocket.id,
-                    category = "Account Transfer",
-                    merchant = "Transfer ${srcPocket.name} → ${tgtPocket.name}",
-                    timestamp = targetTimestamp,
-                    isRecurring = false,
-                    frequency = "NONE",
-                    targetPersonName = null
-                )
-            }
-        }
-
-        // 7. Peer Intent Disambiguation (Slot-Filling)
-        val hasRepayWord = tokens.any { it.lowercase() in REPAY_KEYWORDS }
-        val hasCollectWord = tokens.any { it.lowercase() in COLLECT_KEYWORDS }
-        val hasLendWord = tokens.any { it.lowercase() in LEND_KEYWORDS }
-        val hasBorrowWord = tokens.any { it.lowercase() in BORROW_KEYWORDS }
-
-        if (hasRepayWord || hasCollectWord || hasLendWord || hasBorrowWord) {
-            val actionTokens = REPAY_KEYWORDS + COLLECT_KEYWORDS + LEND_KEYWORDS + BORROW_KEYWORDS
-
-            val filteredTokens = tokens.filter {
-                it.lowercase() !in actionTokens &&
-                !it.equals("to", ignoreCase = true) &&
-                !it.equals("from", ignoreCase = true) &&
-                !it.equals("via", ignoreCase = true) &&
-                !it.equals("with", ignoreCase = true) &&
-                !it.equals("in", ignoreCase = true)
-            }
-
-            val matchedAccount = rawPockets.firstOrNull { p ->
-                p.pocketType != PocketType.COUNTERPARTY && filteredTokens.any { it.equals(p.name, ignoreCase = true) }
-            }
-
-            val peerCandidate = filteredTokens.filter {
-                matchedAccount == null || !it.equals(matchedAccount.name, ignoreCase = true)
-            }.joinToString(" ").trim()
-
-            val existingPeer = rawPockets.firstOrNull {
-                it.pocketType == PocketType.COUNTERPARTY && it.name.equals(peerCandidate, ignoreCase = true)
-            }
-
-            if (hasRepayWord || hasCollectWord) {
-                if (existingPeer == null) {
-                    val actionName = if (hasRepayWord) "repay" else "collect from"
-                    return ParsedIntent.PeerNotFoundError(peerCandidate.ifBlank { "unknown" }, actionName)
-                }
-
-                val nature = if (hasRepayWord) MovementNature.PEER_REPAY else MovementNature.PEER_COLLECT
-                return ParsedIntent.Transaction(
-                    amount = amount,
-                    nature = nature,
-                    matchedPocketId = matchedAccount?.id,
-                    targetPocketId = existingPeer.id,
-                    category = if (hasRepayWord) "Peer Settlement" else "Peer Collection",
-                    merchant = if (hasRepayWord) "Repaid to ${existingPeer.name}" else "Collected from ${existingPeer.name}",
-                    timestamp = targetTimestamp,
-                    isRecurring = false,
-                    frequency = "NONE",
-                    targetPersonName = existingPeer.name
-                )
-            }
-
-            val nature = if (hasLendWord) MovementNature.PEER_LEND else MovementNature.PEER_BORROW
-            val effectivePeerName = existingPeer?.name ?: peerCandidate.ifBlank { "Contact" }
-
-            return ParsedIntent.Transaction(
-                amount = amount,
-                nature = nature,
-                matchedPocketId = matchedAccount?.id,
-                targetPocketId = existingPeer?.id,
-                category = if (hasLendWord) "Peer Transfer" else "Peer Borrowing",
-                merchant = if (hasLendWord) "Lent to $effectivePeerName" else "Borrowed from $effectivePeerName",
-                timestamp = targetTimestamp,
-                isRecurring = false,
-                frequency = "NONE",
-                targetPersonName = effectivePeerName
-            )
-        }
-
-        // 8. General Transactions & Inflow/Outflow Disambiguation
-        var matchedPocket: VaultPocket? = null
-        for (pocket in rawPockets) {
-            if (tokens.any { it.equals(pocket.name, ignoreCase = true) }) {
-                matchedPocket = pocket
+        val amountTokens = trimmed.split("\\s+".toRegex())
+        for (tok in amountTokens) {
+            val cleanTok = tok.replace("[₹rs\$,]".toRegex(), "").lowercase()
+            if (cleanTok.endsWith("k") && cleanTok.dropLast(1).toDoubleOrNull() != null) {
+                parsedAmount = cleanTok.dropLast(1).toDouble() * 1000.0
+                break
+            } else if (cleanTok.endsWith("l") && cleanTok.dropLast(1).toDoubleOrNull() != null) {
+                parsedAmount = cleanTok.dropLast(1).toDouble() * 100000.0
+                break
+            } else if (cleanTok.toDoubleOrNull() != null && !cleanTok.contains("-") && cleanTok.toDouble() > 0) {
+                parsedAmount = cleanTok.toDouble()
                 break
             }
         }
 
-        val isInflow = firstWord in listOf("salary", "income", "deposit", "credit", "cashback")
-        val nature = if (isInflow) MovementNature.INFLOW else MovementNature.OUTFLOW
+        if (parsedAmount == null && numMatcher.find()) {
+            parsedAmount = numMatcher.group(1)?.toDoubleOrNull()
+        }
+        if (parsedAmount == null) return null
 
-        // Clean tokens of prepositions and entities to preserve pure description
-        val descTokens = tokens.filter { token ->
-            matchedPocket == null || !token.equals(matchedPocket.name, ignoreCase = true)
-        }.filter { token ->
-            !token.equals("from", ignoreCase = true) &&
-            !token.equals("to", ignoreCase = true) &&
-            !token.equals("in", ignoreCase = true) &&
-            !token.equals("into", ignoreCase = true) &&
-            !token.equals("start", ignoreCase = true) &&
-            !token.equals("starting", ignoreCase = true) &&
-            !token.equals("on", ignoreCase = true)
+        // Recurrence Extraction
+        var isRecurring = false
+        var frequency = "NONE"
+        when {
+            lower.contains("monthly") || lower.contains("every month") -> {
+                isRecurring = true
+                frequency = "MONTHLY"
+            }
+            lower.contains("weekly") || lower.contains("every week") -> {
+                isRecurring = true
+                frequency = "WEEKLY"
+            }
+            lower.contains("daily") || lower.contains("every day") -> {
+                isRecurring = true
+                frequency = "DAILY"
+            }
         }
 
-        val cleanedDesc = descTokens.joinToString(" ").trim().ifBlank {
-            if (isInflow) "Salary" else "Expense"
+        // Date Timing Extraction
+        var transactionEpoch = System.currentTimeMillis()
+        val dayMatcher = Pattern.compile("""(?i)(?:from|on|due)\s+(\d{1,2})(?:st|nd|rd|th)?""").matcher(trimmed)
+        if (dayMatcher.find()) {
+            val dayNum = dayMatcher.group(1)?.toIntOrNull()
+            if (dayNum != null && dayNum in 1..31) {
+                val cal = Calendar.getInstance()
+                cal.set(Calendar.DAY_OF_MONTH, dayNum)
+                transactionEpoch = cal.timeInMillis
+            }
+        } else if (lower.contains("yesterday")) {
+            val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
+            transactionEpoch = cal.timeInMillis
         }
 
-        val category = when {
-            cleanedDesc.contains("coffee", true) || cleanedDesc.contains("food", true) || cleanedDesc.contains("dinner", true) -> "Food & Dining"
-            cleanedDesc.contains("shoe", true) || cleanedDesc.contains("cloth", true) || cleanedDesc.contains("shopping", true) -> "Shopping"
-            cleanedDesc.contains("rent", true) || cleanedDesc.contains("bill", true) || cleanedDesc.contains("sip", true) -> "Bills"
-            cleanedDesc.contains("salary", true) -> "Salary"
-            else -> if (isInflow) "Salary" else "General"
+        // Determine Nature and Parties
+        var nature = MovementNature.OUTFLOW
+        var category = "General"
+        var targetPerson: String? = null
+        var sourcePocket: VaultPocket? = null
+        var targetPocket: VaultPocket? = null
+
+        // Match accounts from user's active pockets
+        for (pocket in activePockets) {
+            val pattern = Pattern.compile("(?i)\\b${Pattern.quote(pocket.name)}\\b")
+            if (pattern.matcher(trimmed).find()) {
+                if (pocket.pocketType == PocketType.COUNTERPARTY) {
+                    targetPerson = pocket.name
+                } else if (sourcePocket == null) {
+                    sourcePocket = pocket
+                } else {
+                    targetPocket = pocket
+                }
+            }
         }
+
+        when {
+            // Salary / Inflow Patterns
+            lower.contains("salary") || lower.contains("received") || lower.contains("into") || lower.contains("credit into") || lower.contains("got paid") -> {
+                nature = MovementNature.INFLOW
+                category = if (lower.contains("salary")) "Salary" else "Income"
+            }
+            // Card Payment Patterns
+            lower.contains("card bill") || lower.contains("clear card") || lower.contains("pay card") || lower.contains("pay cc") -> {
+                nature = MovementNature.CARD_PAYMENT
+                category = "Bill Payment"
+                targetPocket = activePockets.firstOrNull { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }
+            }
+            // Transfer Patterns
+            lower.startsWith("trf") || lower.startsWith("transfer") || lower.contains(" transfer ") || (lower.contains("from ") && lower.contains("to ")) -> {
+                nature = MovementNature.TRANSFER
+                category = "Transfer"
+            }
+            // Lending to Peer
+            lower.contains("lent ") || lower.contains("lend ") || lower.contains("gave ") -> {
+                nature = MovementNature.PEER_LEND
+                category = "Peer Transfer"
+                val pMatcher = Pattern.compile("""(?i)(?:to|lent|gave)\s+([A-Za-z]+)""").matcher(trimmed)
+                if (pMatcher.find() && targetPerson == null) {
+                    targetPerson = pMatcher.group(1)?.replace("from", "")?.trim()
+                }
+            }
+            // Borrowing from Peer
+            lower.contains("borrow") || lower.contains("borrowed") -> {
+                nature = MovementNature.PEER_BORROW
+                category = "Peer Transfer"
+                val pMatcher = Pattern.compile("""(?i)(?:from|borrowed)\s+([A-Za-z]+)""").matcher(trimmed)
+                if (pMatcher.find() && targetPerson == null) {
+                    targetPerson = pMatcher.group(1)?.trim()
+                }
+            }
+            // Collecting Peer Dues
+            lower.contains("collect") || lower.contains("collected") || lower.contains("received from") -> {
+                nature = MovementNature.PEER_COLLECT
+                category = "Peer Transfer"
+            }
+            // Repaying Peer Dues
+            lower.contains("repay") || lower.contains("repaid") || lower.contains("returned to") -> {
+                nature = MovementNature.PEER_REPAY
+                category = "Peer Transfer"
+            }
+            // Goal Deposit
+            lower.contains("save ") || lower.contains("pot ") || lower.contains("goal ") -> {
+                val goal = activePockets.firstOrNull { it.pocketType == PocketType.SAVING_GOAL && lower.contains(it.name.lowercase()) }
+                if (goal != null) {
+                    nature = MovementNature.TRANSFER
+                    targetPocket = goal
+                    category = "Savings Pot"
+                }
+            }
+            // Standard Outflow
+            else -> {
+                nature = MovementNature.OUTFLOW
+                category = when {
+                    lower.contains("coffee") || lower.contains("dinner") || lower.contains("lunch") || lower.contains("burger") || lower.contains("food") || lower.contains("tea") -> "Food & Dining"
+                    lower.contains("groceries") || lower.contains("supermarket") || lower.contains("milk") || lower.contains("vegetables") -> "Groceries"
+                    lower.contains("uber") || lower.contains("ola") || lower.contains("petrol") || lower.contains("fuel") || lower.contains("metro") -> "Transport"
+                    lower.contains("rent") || lower.contains("wifi") || lower.contains("electricity") || lower.contains("bill") -> "Bills"
+                    lower.contains("gym") || lower.contains("doctor") || lower.contains("medicine") -> "Health"
+                    else -> "General"
+                }
+            }
+        }
+
+        // Clean Description / Merchant Note
+        val cleanedNote = trimmed
+            .replace("(?i)\\b(?:from|into|to|via|monthly|weekly|daily|today|yesterday|every|on|due|spend|spent|paid|received|repay|lent|borrowed|save|new|pot|goal)\\b".toRegex(), "")
+            .replace("[₹rs\$,]".toRegex(), "")
+            .replace("\\b\\d+(?:\\.\\d+)?(?:k|l)?\\b".toRegex(), "")
+            .replace("\\s+".toRegex(), " ")
+            .trim()
+
+        val finalMerchant = cleanedNote.ifBlank { category }
 
         return ParsedIntent.Transaction(
-            amount = amount,
             nature = nature,
-            matchedPocketId = if (isInflow) null else matchedPocket?.id,
-            targetPocketId = if (isInflow) matchedPocket?.id else null,
+            amount = parsedAmount,
+            matchedPocketId = sourcePocket?.id,
+            targetPocketId = targetPocket?.id,
+            targetPersonName = targetPerson,
             category = category,
-            merchant = cleanedDesc,
-            timestamp = targetTimestamp,
+            merchant = finalMerchant,
+            timestamp = transactionEpoch,
             isRecurring = isRecurring,
-            frequency = cadence,
-            targetPersonName = null
+            frequency = frequency
         )
-    }
-
-    private fun parseDateString(str: String?): Long? {
-        if (str.isNullOrBlank()) return null
-        val delimiters = listOf("dd/MM/yyyy", "dd-MM-yyyy")
-        for (format in delimiters) {
-            try {
-                val sdf = SimpleDateFormat(format, Locale.getDefault()).apply { isLenient = false }
-                val parsed = sdf.parse(str.trim())
-                if (parsed != null) return parsed.time
-            } catch (ignored: Exception) {}
-        }
-        return null
     }
 }
