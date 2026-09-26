@@ -40,17 +40,13 @@ interface StateFlowDao {
 
     @Query("""
         SELECT COUNT(*) FROM flow_records 
-        WHERE (sourcePocketId = :sourcePocketId OR (sourcePocketId IS NULL AND :sourcePocketId IS NULL))
-          AND (targetPocketId = :targetPocketId OR (targetPocketId IS NULL AND :targetPocketId IS NULL))
-          AND amount = :amount
-          AND note = :note
+        WHERE note = :note 
+          AND amount = :amount 
           AND timestamp BETWEEN :startTimestamp AND :endTimestamp
     """)
     suspend fun countRecordsWithFingerprint(
-        sourcePocketId: Long?,
-        targetPocketId: Long?,
-        amount: Double,
         note: String,
+        amount: Double,
         startTimestamp: Long,
         endTimestamp: Long
     ): Int
@@ -128,5 +124,5 @@ interface StateFlowDao {
         GROUP BY p.id
         ORDER BY p.id ASC
     """)
-    suspend fun getPocketBalancesSync(): List<PocketBalanceSummary>
+    suspend fun getPocketBalancesSync(epoch: Long = System.currentTimeMillis()): List<PocketBalanceSummary>
 }
