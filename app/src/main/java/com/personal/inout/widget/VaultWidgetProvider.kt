@@ -10,7 +10,6 @@ import android.widget.RemoteViews
 import com.personal.inout.MainActivity
 import com.personal.inout.R
 import com.personal.inout.data.AppDatabase
-import com.personal.inout.data.MovementNature
 import com.personal.inout.data.PocketType
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,23 +19,30 @@ class VaultWidgetProvider : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
         val db = AppDatabase.getInstance(context)
+        val prefs = context.getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE)
+        val burnRate = prefs.getFloat("daily_burn_ceiling", 450f).toDouble()
+
         CoroutineScope(Dispatchers.IO).launch {
             val pockets = db.stateFlowDao().getPocketBalancesSync()
-            val recentFlows = db.stateFlowDao().getActiveRecurringSchedulesSync()
-
             val totalLiquid = pockets.filter { it.pocketType == PocketType.LIQUID }
                 .sumOf { it.currentBalance }
                 .coerceAtLeast(0.0)
 
+            val unpaidCardDues = pockets.filter { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE }
+                .filter { it.computedBalance < 0.0 }
+                .sumOf { Math.abs(it.computedBalance) }
+
+            val safeLiquid = (totalLiquid - unpaidCardDues).coerceAtLeast(0.0)
+            val runwayDays = if (burnRate > 0) (safeLiquid / burnRate).toInt() else 0
+
             for (widgetId in appWidgetIds) {
                 val views = RemoteViews(context.packageName, R.layout.widget_horizon_glance)
 
-                views.setTextViewText(R.id.widget_safe_liquid_value, "₹${String.format("%,.0f", totalLiquid)}")
+                views.setTextViewText(R.id.widget_safe_liquid_value, "₹${String.format("%,.0f", safeLiquid)}")
+                views.setTextViewText(R.id.widget_runway_days_value, "$runwayDays Days Safe")
 
-                // 1-Tap Home Screen Quick Launch Intent directly into quick bar entry
                 val launchIntent = Intent(context, MainActivity::class.java).apply {
                     flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                    putExtra("FOCUS_QUICK_BAR", true)
                 }
                 val pendingIntent = PendingIntent.getActivity(
                     context,
