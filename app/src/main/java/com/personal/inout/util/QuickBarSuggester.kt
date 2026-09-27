@@ -19,7 +19,7 @@ object QuickBarSuggester {
         val liquidPockets = activePockets.filter { it.pocketType == PocketType.LIQUID }
         val primaryBankName = liquidPockets.firstOrNull()?.name ?: "BANK"
 
-        // State 0: Empty Input -> Show Primary Intents
+        // State 0: Empty Input -> Show Primary Quick-Action Shortcuts
         if (q.isEmpty()) {
             return listOf(
                 QuickBarSuggestion("Spent", "coffee 120 $primaryBankName", Icons.Filled.ShoppingBag),
@@ -43,16 +43,17 @@ object QuickBarSuggester {
         }
 
         // State 2: Account Insertion Pipeline
-        // If user has typed amount/note but hasn't designated an account, provide one-tap account chips
+        // If user typed a number/note but no recognized account yet, show one-tap account chips
         val hasPocketAttached = activePockets.any { q.contains(it.name.lowercase()) }
         if (!hasPocketAttached && q.any { it.isDigit() }) {
             val suggestions = mutableListOf<QuickBarSuggestion>()
             for (pocket in activePockets.take(4)) {
                 val icon = when (pocket.pocketType) {
                     PocketType.LIQUID -> Icons.Filled.AccountBalance
-                    PocketType.CREDIT_LINE -> Icons.Filled.CreditCard
+                    PocketType.CREDIT_LINE, PocketType.CREDIT -> Icons.Filled.CreditCard
                     PocketType.SAVING_GOAL -> Icons.Filled.Savings
-                    PocketType.COUNTERPARTY -> Icons.Filled.Person
+                    PocketType.COUNTERPARTY, PocketType.PEER -> Icons.Filled.Person
+                    else -> Icons.Filled.AccountBalanceWallet
                 }
                 suggestions.add(
                     QuickBarSuggestion(pocket.name, "${currentInput.trim()} ${pocket.name}", icon)
@@ -72,7 +73,7 @@ object QuickBarSuggester {
             )
         }
 
-        // State 4: Default Fallback contextual completions
+        // State 4: Default Fallbacks
         return listOf(
             QuickBarSuggestion("Today", "${currentInput.trim()} today", Icons.Filled.Today),
             QuickBarSuggestion("Monthly", "${currentInput.trim()} monthly", Icons.Filled.Repeat),
