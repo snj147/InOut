@@ -44,6 +44,7 @@ jobs:
         with:
           name: InOut-Debug-APK
           path: "**/InOut-alpha-*.apk"
+          retention-days: 1
 
       - name: Publish Rolling Alpha Release
         uses: softprops/action-gh-release@v2
@@ -56,3 +57,4 @@ jobs:
           files: "**/InOut-alpha-*.apk"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
