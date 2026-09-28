@@ -1393,7 +1393,7 @@ fun ActionPillButton(
 fun GuidedActionWizardDialog(
     type: WizardType,
     rawPockets: List<VaultPocket>,
-    pocketBalances: List<VaultPocketBalance>,
+    pocketBalances: List<PocketBalanceSummary>,
     theme: ThemeColors,
     onDismiss: () -> Unit,
     onRequestNewAccount: (PocketType) -> Unit,
