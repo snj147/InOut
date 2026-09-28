@@ -73,7 +73,7 @@ fun DashboardScreen(db: AppDatabase) {
 
     val currentInstalledSha = remember {
         val buildSha = BuildConfig.GIT_SHA
-        if (buildSha.isNotBlank() && buildSha != "localdev") buildSha else "73eab29"
+        if (buildSha.isNotBlank() && buildSha != "localdev") buildSha else "7b87bf3"
     }
 
     val packageInfo = remember {
@@ -1393,7 +1393,7 @@ fun ActionPillButton(
 fun GuidedActionWizardDialog(
     type: WizardType,
     rawPockets: List<VaultPocket>,
-    pocketBalances: List<PocketBalanceEntity>,
+    pocketBalances: List<VaultPocketBalance>,
     theme: ThemeColors,
     onDismiss: () -> Unit,
     onRequestNewAccount: (PocketType) -> Unit,
