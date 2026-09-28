@@ -33,7 +33,7 @@ class WidgetCommandActivity : Activity() {
         val ledgerEngine = VaultLedgerEngine(db.stateFlowDao(), prefs)
 
         CoroutineScope(Dispatchers.IO).launch {
-            val liquidAccounts = db.stateFlowDao().getAllActivePocketsSync().filter { it.pocketType == PocketType.LIQUID }
+            val liquidAccounts = db.stateFlowDao().getAllActivePocketsList().filter { it.pocketType == PocketType.LIQUID }
             val primaryLiquid = liquidAccounts.firstOrNull()
 
             if (primaryLiquid == null) {
