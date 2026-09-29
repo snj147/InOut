@@ -1341,7 +1341,11 @@ fun GuidedActionWizardDialog(
     var peerModeIsLend by remember { mutableStateOf(true) }
     var isRecurring by remember { mutableStateOf(false) }
     var frequency by remember { mutableStateOf("MONTHLY") }
+
+    // Interactive Date Selection State
     var selectedDateEpoch by remember { mutableStateOf(System.currentTimeMillis()) }
+    var selectedDatePreset by remember { mutableStateOf("TODAY") } // "TODAY", "YESTERDAY", "CUSTOM"
+    var showDatePickerDialog by remember { mutableStateOf(false) }
 
     val computedAmount = remember(rawAmount) { MathEvaluator.evaluate(rawAmount) }
 
@@ -1351,6 +1355,18 @@ fun GuidedActionWizardDialog(
         WizardType.TRANSFER -> listOf("Internal Transfer", "Savings Pot")
         WizardType.CARD_BILL -> listOf("Card Payment", "Bill Payment")
         WizardType.PEER_LEND_BORROW -> listOf("Peer Debt", "Personal Loan")
+    }
+
+    if (showDatePickerDialog) {
+        CustomCalendarDialog(
+            initialDateMillis = selectedDateEpoch,
+            onDismiss = { showDatePickerDialog = false },
+            onDateSelected = { pickedMillis ->
+                selectedDateEpoch = pickedMillis
+                selectedDatePreset = "CUSTOM"
+                showDatePickerDialog = false
+            }
+        )
     }
 
     AlertDialog(
@@ -1375,6 +1391,7 @@ fun GuidedActionWizardDialog(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                // Peer Direction Toggle
                 if (type == WizardType.PEER_LEND_BORROW) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Box(
@@ -1402,6 +1419,7 @@ fun GuidedActionWizardDialog(
                     }
                 }
 
+                // Amount Input
                 Column {
                     CompactInputField(
                         value = rawAmount,
@@ -1413,6 +1431,60 @@ fun GuidedActionWizardDialog(
                     }
                 }
 
+                // Interactive Transaction Date Selector
+                Text("Transaction Date", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(theme.surfaceAlt)
+                        .padding(2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    val dateFormatted = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(selectedDateEpoch))
+                    listOf(
+                        "TODAY" to "Today",
+                        "YESTERDAY" to "Yesterday",
+                        "CUSTOM" to if (selectedDatePreset == "CUSTOM") dateFormatted else "Pick Date"
+                    ).forEach { (presetKey, presetLabel) ->
+                        val isSel = selectedDatePreset == presetKey
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSel) theme.accent else Color.Transparent)
+                                .clickable {
+                                    when (presetKey) {
+                                        "TODAY" -> {
+                                            selectedDatePreset = "TODAY"
+                                            selectedDateEpoch = System.currentTimeMillis()
+                                        }
+                                        "YESTERDAY" -> {
+                                            selectedDatePreset = "YESTERDAY"
+                                            val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
+                                            selectedDateEpoch = cal.timeInMillis
+                                        }
+                                        "CUSTOM" -> {
+                                            showDatePickerDialog = true
+                                        }
+                                    }
+                                }
+                                .padding(vertical = 7.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = presetLabel,
+                                color = if (isSel) theme.bg else theme.textBright,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+
+                // Source Account Card
                 if (type in listOf(WizardType.EXPENSE, WizardType.TRANSFER, WizardType.CARD_BILL) || (type == WizardType.PEER_LEND_BORROW && peerModeIsLend)) {
                     Text("Pay From (Liquid Account)", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
                     val activeSrc = liquidPockets.firstOrNull { it.id == selectedSourceId } ?: liquidPockets.firstOrNull()
@@ -1427,6 +1499,25 @@ fun GuidedActionWizardDialog(
                             Triple(p.id, p.name, "₹${String.format("%,.0f", b.coerceAtLeast(0.0))}")
                         },
                         onSelect = { selectedSourceId = it },
+                        onAdd = { onRequestNewAccount(PocketType.LIQUID) }
+                    )
+                }
+
+                // Income Destination Account Card
+                if (type == WizardType.INCOME) {
+                    Text("Deposit Into (Bank/Wallet)", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                    val activeTgt = liquidPockets.firstOrNull { it.id == selectedTargetId } ?: liquidPockets.firstOrNull()
+                    val tgtBal = pocketBalances.firstOrNull { it.pocketId == (activeTgt?.id?.toString() ?: "") }?.computedBalance ?: 0.0
+
+                    AccountCardSelector(
+                        title = activeTgt?.name ?: "Select Bank Account",
+                        sub = "Current: ₹${String.format("%,.0f", tgtBal)}",
+                        theme = theme,
+                        accounts = liquidPockets.map { p ->
+                            val b = pocketBalances.firstOrNull { it.pocketId == p.id.toString() }?.computedBalance ?: 0.0
+                            Triple(p.id, p.name, "₹${String.format("%,.0f", b)}")
+                        },
+                        onSelect = { selectedTargetId = it },
                         onAdd = { onRequestNewAccount(PocketType.LIQUID) }
                     )
                 }
