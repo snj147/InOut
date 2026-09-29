@@ -41,6 +41,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -73,13 +74,13 @@ fun DashboardScreen(db: AppDatabase) {
 
     val currentInstalledSha = remember {
         val buildSha = BuildConfig.GIT_SHA
-        if (buildSha.isNotBlank() && buildSha != "localdev") buildSha else "7b87bf3"
+        if (buildSha.isNotBlank() && buildSha != "localdev") buildSha else "92b6e02"
     }
 
     val packageInfo = remember {
         try {
             context.packageManager.getPackageInfo(context.packageName, 0)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -117,7 +118,6 @@ fun DashboardScreen(db: AppDatabase) {
     val pocketBalances by db.stateFlowDao().observePocketBalances().collectAsState(initial = emptyList())
     val rawPockets by db.stateFlowDao().observeAllActivePockets().collectAsState(initial = emptyList())
     val flowRecords by db.stateFlowDao().observeAllFlowRecords().collectAsState(initial = emptyList())
-    val stagedDesires by db.stateFlowDao().observeActiveStagedDesires().collectAsState(initial = emptyList())
     val unreadNoticeCount by db.stateFlowDao().observeUnreadNoticeCount().collectAsState(initial = 0)
     val systemNotices by db.stateFlowDao().observeAllNotices().collectAsState(initial = emptyList())
 
@@ -132,7 +132,7 @@ fun DashboardScreen(db: AppDatabase) {
 
     val totalLiquid = remember(pocketBalances) {
         pocketBalances.filter { it.pocketType == PocketType.LIQUID }
-            .sumOf { it.currentBalance }
+            .sumOf { it.computedBalance }
             .coerceAtLeast(0.0)
     }
 
@@ -206,7 +206,6 @@ fun DashboardScreen(db: AppDatabase) {
     val allTransactionsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val noticesSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    var pendingActionAfterAccountCreation by remember { mutableStateOf<((Long) -> Unit)?>(null) }
     var availableUpdateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var isCheckingForUpdate by remember { mutableStateOf(false) }
     var showFeedbackDialog by remember { mutableStateOf(false) }
@@ -260,7 +259,7 @@ fun DashboardScreen(db: AppDatabase) {
                 hudInDialogError = null
                 selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
                 showCommandHud = true
-                alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
+                alertManager.showAlert("Scanned: ${parsed.merchant} (₹${String.format("%,.0f", parsed.total ?: 0.0)})", AlertType.INFO)
             } catch (e: Exception) {
                 alertManager.showAlert("Receipt OCR Error: ${e.localizedMessage}", AlertType.ERROR)
             }
@@ -286,7 +285,7 @@ fun DashboardScreen(db: AppDatabase) {
                     hudInDialogError = null
                     selectedPocketIdForHud = rawPockets.firstOrNull { it.pocketType == PocketType.LIQUID }?.id
                     showCommandHud = true
-                    alertManager.showAlert("Scanned: ${parsed.merchant} (₹${parsed.total ?: 0.0})", AlertType.INFO)
+                    alertManager.showAlert("Scanned: ${parsed.merchant} (₹${String.format("%,.0f", parsed.total ?: 0.0)})", AlertType.INFO)
                 } catch (e: Exception) {
                     alertManager.showAlert("Receipt OCR Error: ${e.localizedMessage}", AlertType.ERROR)
                 }
@@ -536,6 +535,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
+                                // Symmetrical Action Cockpit
                                 item {
                                     Card(
                                         shape = RoundedCornerShape(16.dp),
@@ -544,7 +544,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     ) {
                                         Column(
                                             modifier = Modifier.padding(12.dp),
-                                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                                            verticalArrangement = Arrangement.spacedBy(10.dp)
                                         ) {
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
@@ -559,7 +559,7 @@ fun DashboardScreen(db: AppDatabase) {
                                                     letterSpacing = 1.sp
                                                 )
                                                 Text(
-                                                    text = "1-Tap Guided Flow",
+                                                    text = "Guided Flow",
                                                     color = theme.accent,
                                                     fontSize = 10.sp,
                                                     fontWeight = FontWeight.Bold
@@ -762,7 +762,7 @@ fun DashboardScreen(db: AppDatabase) {
                             pocketBalances = pocketBalances,
                             flowRecords = flowRecords,
                             recurringSchedules = recurringTemplates,
-                            stagedDesires = stagedDesires,
+                            stagedDesires = emptyList(),
                             dailyBurnCeiling = dailyBurnCeiling,
                             trueSafeLiquid = trueSafeLiquid,
                             isPrivacyMode = isPrivacyMode,
@@ -863,6 +863,7 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
 
+                // Symmetrical Guided Action Wizard Dialog
                 activeWizard?.let { wizard ->
                     GuidedActionWizardDialog(
                         type = wizard,
@@ -877,53 +878,6 @@ fun DashboardScreen(db: AppDatabase) {
                         },
                         onCommit = { nature, srcId, tgtId, amt, cat, note, date, isRec, freq ->
                             scope.launch {
-                                if (nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.PEER_REPAY, MovementNature.TRANSFER)) {
-                                    val balance = pocketBalances.firstOrNull { it.pocketId == srcId.toString() }?.computedBalance ?: 0.0
-                                    if (balance < amt && !autoSplitEnabled) {
-                                        val pName = rawPockets.firstOrNull { it.id == srcId }?.name ?: "Account"
-                                        alertManager.showAlert("Insufficient balance in '$pName' (Available: ₹${balance.toInt()})", AlertType.ERROR)
-                                        return@launch
-                                    }
-                                }
-
-                                if (isRec) {
-                                    db.stateFlowDao().insertFlowRecord(
-                                        FlowRecord(
-                                            id = 0L,
-                                            sourcePocketId = srcId,
-                                            targetPocketId = tgtId,
-                                            amount = amt,
-                                            movementNature = nature,
-                                            category = cat,
-                                            note = note,
-                                            timestamp = date,
-                                            isRecurring = true,
-                                            frequency = freq,
-                                            recurringCadence = freq,
-                                            isPaused = false
-                                        )
-                                    )
-                                    if (date <= System.currentTimeMillis() + 60_000L) {
-                                        ledgerEngine.recordMovement(
-                                            nature = nature,
-                                            sourcePocketId = srcId,
-                                            targetPocketId = tgtId,
-                                            amount = amt,
-                                            category = cat,
-                                            note = note,
-                                            timestamp = date,
-                                            autoSplitEnabled = autoSplitEnabled,
-                                            isRecurring = false,
-                                            frequency = freq
-                                        )
-                                        alertManager.showAlert("Recorded initial entry & scheduled ${freq.lowercase()} recurrence", AlertType.SUCCESS)
-                                    } else {
-                                        alertManager.showAlert("Scheduled recurring rule", AlertType.SUCCESS)
-                                    }
-                                    activeWizard = null
-                                    return@launch
-                                }
-
                                 when (val res = ledgerEngine.recordMovement(
                                     nature = nature,
                                     sourcePocketId = srcId,
@@ -933,7 +887,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     note = note,
                                     timestamp = date,
                                     autoSplitEnabled = autoSplitEnabled,
-                                    isRecurring = false,
+                                    isRecurring = isRec,
                                     frequency = freq
                                 )) {
                                     is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
@@ -1032,11 +986,10 @@ fun DashboardScreen(db: AppDatabase) {
                         onDismiss = {
                             showCreatePocketDialog = false
                             prefilledCreatePocketName = ""
-                            pendingActionAfterAccountCreation = null
                         },
                         onSave = { name, type, limit, targetAmt, targetDateEpoch ->
                             scope.launch {
-                                val newId = db.stateFlowDao().insertPocket(
+                                db.stateFlowDao().insertPocket(
                                     VaultPocket(
                                         name = name,
                                         pocketType = type,
@@ -1049,9 +1002,6 @@ fun DashboardScreen(db: AppDatabase) {
                                 showCreatePocketDialog = false
                                 prefilledCreatePocketName = ""
                                 alertManager.showAlert("Created account '$name'", AlertType.SUCCESS)
-
-                                pendingActionAfterAccountCreation?.invoke(newId)
-                                pendingActionAfterAccountCreation = null
                             }
                         }
                     )
@@ -1182,45 +1132,6 @@ fun DashboardScreen(db: AppDatabase) {
                         },
                         onSubmit = { nature, srcId, tgtId, amt, cat, note, date, isRec, freq ->
                             scope.launch {
-                                if (isRec) {
-                                    db.stateFlowDao().insertFlowRecord(
-                                        FlowRecord(
-                                            id = 0L,
-                                            sourcePocketId = srcId,
-                                            targetPocketId = tgtId,
-                                            amount = amt,
-                                            movementNature = nature,
-                                            category = cat,
-                                            note = note,
-                                            timestamp = date,
-                                            isRecurring = true,
-                                            frequency = freq,
-                                            recurringCadence = freq,
-                                            isPaused = false
-                                        )
-                                    )
-                                    if (date <= System.currentTimeMillis() + 60_000L) {
-                                        ledgerEngine.recordMovement(
-                                            nature = nature,
-                                            sourcePocketId = srcId,
-                                            targetPocketId = tgtId,
-                                            amount = amt,
-                                            category = cat,
-                                            note = note,
-                                            timestamp = date,
-                                            autoSplitEnabled = autoSplitEnabled,
-                                            isRecurring = false,
-                                            frequency = freq
-                                        )
-                                        alertManager.showAlert("Recorded initial entry & scheduled $freq recurrence", AlertType.SUCCESS)
-                                    } else {
-                                        alertManager.showAlert("Recurring schedule saved", AlertType.SUCCESS)
-                                    }
-                                    hudInDialogError = null
-                                    showCommandHud = false
-                                    return@launch
-                                }
-
                                 when (val res = ledgerEngine.recordMovement(
                                     nature = nature,
                                     sourcePocketId = srcId,
@@ -1230,7 +1141,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     note = note,
                                     timestamp = date,
                                     autoSplitEnabled = autoSplitEnabled,
-                                    isRecurring = false,
+                                    isRecurring = isRec,
                                     frequency = freq
                                 )) {
                                     is VaultExecutionResult.OverdraftError -> {
@@ -1420,10 +1331,12 @@ fun GuidedActionWizardDialog(
     var selectedSourceId by remember { mutableStateOf(liquidPockets.firstOrNull()?.id) }
     var selectedTargetId by remember {
         mutableStateOf(
-            if (type == WizardType.TRANSFER) liquidPockets.getOrNull(1)?.id ?: rawPockets.firstOrNull { it.id != liquidPockets.firstOrNull()?.id }?.id
-            else if (type == WizardType.CARD_BILL) cardPockets.firstOrNull()?.id
-            else if (type == WizardType.PEER_LEND_BORROW) peerPockets.firstOrNull()?.id
-            else null
+            when (type) {
+                WizardType.TRANSFER -> rawPockets.firstOrNull { it.id != (liquidPockets.firstOrNull()?.id ?: -1L) }?.id
+                WizardType.CARD_BILL -> cardPockets.firstOrNull()?.id
+                WizardType.PEER_LEND_BORROW -> peerPockets.firstOrNull()?.id
+                else -> null
+            }
         )
     }
 
@@ -1450,7 +1363,7 @@ fun GuidedActionWizardDialog(
                 text = when (type) {
                     WizardType.EXPENSE -> "Record Expense Outflow"
                     WizardType.INCOME -> "Record Income Inflow"
-                    WizardType.TRANSFER -> "Zero-Sum Account Transfer"
+                    WizardType.TRANSFER -> "Account Transfer"
                     WizardType.CARD_BILL -> "Pay Credit Card Liability"
                     WizardType.PEER_LEND_BORROW -> if (peerModeIsLend) "Lend Money to Contact" else "Borrow Money from Contact"
                 },
@@ -1464,15 +1377,16 @@ fun GuidedActionWizardDialog(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                // Peer Direction Toggle
                 if (type == WizardType.PEER_LEND_BORROW) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Box(
                             modifier = Modifier
                                 .weight(1f)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(if (peerModeIsLend) theme.accent else theme.surfaceAlt)
                                 .clickable { peerModeIsLend = true }
-                                .padding(vertical = 8.dp),
+                                .padding(vertical = 9.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text("I Gave (Lent)", color = if (peerModeIsLend) theme.bg else theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
@@ -1483,161 +1397,99 @@ fun GuidedActionWizardDialog(
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(if (!peerModeIsLend) theme.accent else theme.surfaceAlt)
                                 .clickable { peerModeIsLend = false }
-                                .padding(vertical = 8.dp),
+                                .padding(vertical = 9.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("I Received (Borrowed)", color = if (!peerModeIsLend) theme.bg else theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                            Text("I Took (Borrowed)", color = if (!peerModeIsLend) theme.bg else theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
 
+                // Amount Input
                 Column {
                     CompactInputField(
                         value = rawAmount,
                         onValueChange = { rawAmount = it },
-                        placeholder = "Amount (e.g. 150+40 or 5000)"
+                        placeholder = "Amount in ₹ (e.g. 150+40)"
                     )
                     if (computedAmount != null && rawAmount.contains("+")) {
                         Text("Evaluated: ₹$computedAmount", color = theme.accent, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp))
                     }
                 }
 
+                // Clean Structured Account Card: SOURCE
                 if (type in listOf(WizardType.EXPENSE, WizardType.TRANSFER, WizardType.CARD_BILL) || (type == WizardType.PEER_LEND_BORROW && peerModeIsLend)) {
-                    Text("Source Account", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(liquidPockets) { p ->
-                            val isSel = selectedSourceId == p.id
-                            val bal = pocketBalances.firstOrNull { it.pocketId == p.id.toString() }?.computedBalance ?: 0.0
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isSel) theme.accent else theme.surfaceAlt)
-                                    .clickable { selectedSourceId = p.id }
-                                    .padding(horizontal = 8.dp, vertical = 6.dp)
-                            ) {
-                                Text("${p.name} (₹${bal.toInt()})", color = if (isSel) theme.bg else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
+                    Text("Pay From (Liquid Account)", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                    val activeSrc = liquidPockets.firstOrNull { it.id == selectedSourceId } ?: liquidPockets.firstOrNull()
+                    val srcBal = pocketBalances.firstOrNull { it.pocketId == (activeSrc?.id?.toString() ?: "") }?.computedBalance ?: 0.0
+
+                    AccountCardSelector(
+                        title = activeSrc?.name ?: "No Account Selected",
+                        sub = "Available: ₹${String.format("%,.0f", srcBal.coerceAtLeast(0.0))}",
+                        theme = theme,
+                        accounts = liquidPockets.map { p ->
+                            val b = pocketBalances.firstOrNull { it.pocketId == p.id.toString() }?.computedBalance ?: 0.0
+                            Triple(p.id, p.name, "₹${String.format("%,.0f", b.coerceAtLeast(0.0))}")
+                        },
+                        onSelect = { selectedSourceId = it },
+                        onAdd = { onRequestNewAccount(PocketType.LIQUID) }
+                    )
                 }
 
+                // Clean Structured Account Card: DESTINATION (for Transfer, Card Bill, Peer)
                 if (type == WizardType.TRANSFER) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Destination Account", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
-                        Text(
-                            text = "+ Add Account",
-                            color = theme.accent,
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.clickable { onRequestNewAccount(PocketType.LIQUID) }
-                        )
-                    }
+                    Text("Transfer To", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
                     val validTargets = rawPockets.filter { it.id != selectedSourceId }
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(validTargets) { p ->
-                            val isSel = selectedTargetId == p.id
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isSel) theme.accent else theme.surfaceAlt)
-                                    .clickable { selectedTargetId = p.id }
-                                    .padding(horizontal = 8.dp, vertical = 6.dp)
-                            ) {
-                                Text(p.name, color = if (isSel) theme.bg else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
+                    val activeTgt = validTargets.firstOrNull { it.id == selectedTargetId } ?: validTargets.firstOrNull()
+                    val tgtBal = pocketBalances.firstOrNull { it.pocketId == (activeTgt?.id?.toString() ?: "") }?.computedBalance ?: 0.0
+
+                    AccountCardSelector(
+                        title = activeTgt?.name ?: "Select Destination",
+                        sub = "Current Balance: ₹${String.format("%,.0f", tgtBal)}",
+                        theme = theme,
+                        accounts = validTargets.map { p ->
+                            val b = pocketBalances.firstOrNull { it.pocketId == p.id.toString() }?.computedBalance ?: 0.0
+                            Triple(p.id, p.name, "₹${String.format("%,.0f", b)}")
+                        },
+                        onSelect = { selectedTargetId = it },
+                        onAdd = { onRequestNewAccount(PocketType.LIQUID) }
+                    )
                 }
 
                 if (type == WizardType.CARD_BILL) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Select Credit Card", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
-                        Text(
-                            text = "+ Add Card",
-                            color = theme.accent,
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.clickable { onRequestNewAccount(PocketType.CREDIT_LINE) }
-                        )
-                    }
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(cardPockets) { p ->
-                            val isSel = selectedTargetId == p.id
-                            val bal = pocketBalances.firstOrNull { it.pocketId == p.id.toString() }?.computedBalance ?: 0.0
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isSel) theme.accent else theme.surfaceAlt)
-                                    .clickable { selectedTargetId = p.id }
-                                    .padding(horizontal = 8.dp, vertical = 6.dp)
-                            ) {
-                                Text("${p.name} (Due: ₹${Math.abs(bal).toInt()})", color = if (isSel) theme.bg else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
+                    Text("Card Liability to Clear", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                    val activeCard = cardPockets.firstOrNull { it.id == selectedTargetId } ?: cardPockets.firstOrNull()
+                    val cardBal = pocketBalances.firstOrNull { it.pocketId == (activeCard?.id?.toString() ?: "") }?.computedBalance ?: 0.0
+                    val dues = if (cardBal < 0.0) Math.abs(cardBal) else 0.0
+
+                    AccountCardSelector(
+                        title = activeCard?.name ?: "Select Card",
+                        sub = "Outstanding Dues: ₹${String.format("%,.0f", dues)}",
+                        theme = theme,
+                        accounts = cardPockets.map { p ->
+                            val b = pocketBalances.firstOrNull { it.pocketId == p.id.toString() }?.computedBalance ?: 0.0
+                            Triple(p.id, p.name, "Due: ₹${String.format("%,.0f", if (b < 0.0) Math.abs(b) else 0.0)}")
+                        },
+                        onSelect = { selectedTargetId = it },
+                        onAdd = { onRequestNewAccount(PocketType.CREDIT_LINE) }
+                    )
                 }
 
                 if (type == WizardType.PEER_LEND_BORROW) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("Select Contact", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
-                        Text(
-                            text = "+ Add Contact",
-                            color = theme.accent,
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.clickable { onRequestNewAccount(PocketType.COUNTERPARTY) }
-                        )
-                    }
-                    if (peerPockets.isEmpty()) {
-                        Text("No contacts saved. Tap '+ Add Contact' above.", color = theme.mildRed, fontSize = 11.sp)
-                    } else {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(peerPockets) { p ->
-                                val isSel = selectedTargetId == p.id
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(if (isSel) theme.accent else theme.surfaceAlt)
-                                        .clickable { selectedTargetId = p.id }
-                                        .padding(horizontal = 8.dp, vertical = 6.dp)
-                                ) {
-                                    Text(p.name, color = if (isSel) theme.bg else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
+                    Text("Select Contact", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                    val activePeer = peerPockets.firstOrNull { it.id == selectedTargetId } ?: peerPockets.firstOrNull()
+
+                    AccountCardSelector(
+                        title = activePeer?.name ?: "No Contacts Saved",
+                        sub = if (activePeer == null) "Tap to add contact" else "Contact Entity",
+                        theme = theme,
+                        accounts = peerPockets.map { Triple(it.id, it.name, "Contact") },
+                        onSelect = { selectedTargetId = it },
+                        onAdd = { onRequestNewAccount(PocketType.COUNTERPARTY) }
+                    )
                 }
 
-                if (type == WizardType.INCOME) {
-                    Text("Destination Bank / Wallet", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(liquidPockets) { p ->
-                            val isSel = selectedTargetId == p.id
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isSel) theme.accent else theme.surfaceAlt)
-                                    .clickable { selectedTargetId = p.id }
-                                    .padding(horizontal = 8.dp, vertical = 6.dp)
-                            ) {
-                                Text(p.name, color = if (isSel) theme.bg else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-                }
-
+                // Symmetrical Category Flow
                 Text("Category", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
@@ -1651,7 +1503,7 @@ fun GuidedActionWizardDialog(
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(if (isSel) theme.accent else theme.surfaceAlt)
                                 .clickable { selectedCategoryId = cat }
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                                .padding(horizontal = 9.dp, vertical = 5.dp)
                         ) {
                             Text(cat, color = if (isSel) theme.bg else theme.textBright, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
                         }
@@ -1660,31 +1512,42 @@ fun GuidedActionWizardDialog(
 
                 CompactInputField(value = note, onValueChange = { note = it }, placeholder = "Merchant / Reference Note (Optional)")
 
+                // Symmetrical Repeat Cadence Segmented Control
+                Text("Repeat Cadence", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(theme.surfaceAlt)
+                        .padding(2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    Text("Repeat Cadence", color = theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("NONE" to "Once", "DAILY" to "Daily", "WEEKLY" to "Weekly", "MONTHLY" to "Monthly").forEach { (fCode, fName) ->
-                            val isSel = (if (!isRecurring) "NONE" else frequency) == fCode
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isSel) theme.accent else theme.surfaceAlt)
-                                    .clickable {
-                                        if (fCode == "NONE") {
-                                            isRecurring = false
-                                        } else {
-                                            isRecurring = true
-                                            frequency = fCode
-                                        }
+                    listOf("NONE" to "Once", "DAILY" to "Daily", "WEEKLY" to "Weekly", "MONTHLY" to "Monthly").forEach { (fCode, fName) ->
+                        val isSel = (if (!isRecurring) "NONE" else frequency) == fCode
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSel) theme.accent else Color.Transparent)
+                                .clickable {
+                                    if (fCode == "NONE") {
+                                        isRecurring = false
+                                    } else {
+                                        isRecurring = true
+                                        frequency = fCode
                                     }
-                                    .padding(horizontal = 6.dp, vertical = 4.dp)
-                            ) {
-                                Text(fName, color = if (isSel) theme.bg else theme.textBright, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            }
+                                }
+                                .padding(vertical = 7.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = fName,
+                                color = if (isSel) theme.bg else theme.textBright,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                textAlign = TextAlign.Center
+                            )
                         }
                     }
                 }
@@ -1740,6 +1603,67 @@ fun GuidedActionWizardDialog(
             }
         }
     )
+}
+
+@Composable
+fun AccountCardSelector(
+    title: String,
+    sub: String,
+    theme: ThemeColors,
+    accounts: List<Triple<Long, String, String>>,
+    onSelect: (Long) -> Unit,
+    onAdd: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(8.dp))
+                .background(theme.surfaceAlt)
+                .clickable { expanded = true }
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(text = title, color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(text = sub, color = theme.textMuted, fontSize = 10.5.sp)
+            }
+            Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = "Select", tint = theme.accent)
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.background(theme.surface)
+        ) {
+            accounts.forEach { (id, name, balanceStr) ->
+                DropdownMenuItem(
+                    text = {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(name, color = theme.textBright, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.width(16.dp))
+                            Text(balanceStr, color = theme.textMuted)
+                        }
+                    },
+                    onClick = {
+                        onSelect(id)
+                        expanded = false
+                    }
+                )
+            }
+            HorizontalDivider(color = theme.surfaceAlt)
+            DropdownMenuItem(
+                text = { Text("+ Add New Account", color = theme.accent, fontWeight = FontWeight.Bold) },
+                onClick = {
+                    expanded = false
+                    onAdd()
+                }
+            )
+        }
+    }
 }
 
 @Composable
