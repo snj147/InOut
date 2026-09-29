@@ -12,14 +12,6 @@ import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONArray
-import org.json.JSONObject
-import java.io.ByteArrayOutputStream
-import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -33,34 +25,22 @@ data class ParsedReceipt(
 
 object ReceiptScanner {
 
-    private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .build()
-
-    suspend fun processReceipt(
-        context: Context,
-        imageUri: Uri,
-        useCloudVision: Boolean = false,
-        apiKey: String = ""
-    ): ParsedReceipt = withContext(Dispatchers.IO) {
+    suspend fun processReceipt(context: Context, imageUri: Uri): ParsedReceipt = withContext(Dispatchers.IO) {
         val bitmap = loadBitmapFromUri(context, imageUri)
-        processReceiptBitmap(bitmap, useCloudVision, apiKey)
+        processReceiptBitmap(bitmap)
     }
 
-    suspend fun processReceiptBitmap(
-        bitmap: Bitmap,
-        useCloudVision: Boolean = false,
-        apiKey: String = ""
-    ): ParsedReceipt = withContext(Dispatchers.IO) {
-        if (useCloudVision && apiKey.isNotBlank()) {
-            try {
-                return@withContext processWithCloudVision(bitmap, apiKey)
-            } catch (_: Exception) {
-                // Fall back cleanly to on-device ML Kit if cloud vision request fails
-            }
+    suspend fun processReceiptBitmap(bitmap: Bitmap): ParsedReceipt = withContext(Dispatchers.IO) {
+        val image = InputImage.fromBitmap(bitmap, 0)
+        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+
+        val visionText = suspendCancellableCoroutine { cont ->
+            recognizer.process(image)
+                .addOnSuccessListener { cont.resume(it) }
+                .addOnFailureListener { cont.resumeWithException(it) }
         }
-        processWithOnDeviceMlKit(bitmap)
+
+        parseReceiptText(visionText.text)
     }
 
     @Suppress("DEPRECATION")
@@ -76,89 +56,41 @@ object ReceiptScanner {
         }
     }
 
-    private suspend fun processWithOnDeviceMlKit(bitmap: Bitmap): ParsedReceipt {
-        val image = InputImage.fromBitmap(bitmap, 0)
-        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-
-        val visionText = suspendCancellableCoroutine { cont ->
-            recognizer.process(image)
-                .addOnSuccessListener { text ->
-                    cont.resume(text)
-                }
-                .addOnFailureListener { e ->
-                    cont.resumeWithException(e)
-                }
-        }
-
-        return parseReceiptText(visionText.text)
-    }
-
-    private fun processWithCloudVision(bitmap: Bitmap, apiKey: String): ParsedReceipt {
-        val byteArrayOutputStream = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, byteArrayOutputStream)
-        val imageBytes = byteArrayOutputStream.toByteArray()
-        val base64Image = android.util.Base64.encodeToString(imageBytes, android.util.Base64.NO_WRAP)
-
-        val requestJson = JSONObject().apply {
-            put("requests", JSONArray().apply {
-                put(JSONObject().apply {
-                    put("image", JSONObject().put("content", base64Image))
-                    put("features", JSONArray().apply {
-                        put(JSONObject().apply {
-                            put("type", "TEXT_DETECTION")
-                            put("maxResults", 1)
-                        })
-                    })
-                })
-            })
-        }
-
-        val requestBody = requestJson.toString().toRequestBody("application/json".toMediaType())
-        val request = Request.Builder()
-            .url("https://vision.googleapis.com/v1/images:annotate?key=$apiKey")
-            .post(requestBody)
-            .build()
-
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw Exception("Cloud Vision API call failed: HTTP ${response.code}")
-            }
-            val responseBody = response.body?.string() ?: ""
-            val json = JSONObject(responseBody)
-            val responsesArray = json.optJSONArray("responses")
-            val firstResponse = responsesArray?.optJSONObject(0)
-            val fullTextAnnotation = firstResponse?.optJSONObject("fullTextAnnotation")
-            val extractedText = fullTextAnnotation?.optString("text") ?: ""
-
-            return parseReceiptText(extractedText)
-        }
-    }
-
     private fun parseReceiptText(rawText: String): ParsedReceipt {
         val lines = rawText.split("\n").map { it.trim() }.filter { it.isNotBlank() }
 
+        val ignoredHeaderPhrases = listOf(
+            "original for recipient",
+            "tax invoice",
+            "invoice",
+            "cash memo",
+            "retail invoice",
+            "bill to",
+            "ship to",
+            "gstin",
+            "phone:",
+            "email:"
+        )
+
         var merchant = "Store / Merchant"
-        for (line in lines.take(5)) {
+        for (line in lines.take(8)) {
             val lower = line.lowercase()
-            if (!lower.contains("tax") &&
-                !lower.contains("invoice") &&
-                !lower.contains("bill") &&
-                !lower.contains("receipt") &&
-                !lower.contains("tel") &&
-                !lower.contains("phone") &&
-                !lower.contains("gst") &&
-                line.length in 3..35
-            ) {
+            val isIgnored = ignoredHeaderPhrases.any { lower.contains(it) }
+            if (!isIgnored && line.length in 3..40 && !line.any { it.isDigit() }) {
                 merchant = line
                 break
             }
         }
 
+        // Target settlement summaries directly to avoid grabbing individual item rows
+        val primaryAmountPattern = Pattern.compile(
+            """(?i)(?:total\s*amount|grand\s*total|net\s*amount|total|amount\s*paid|received\s*amount)[\s:₹rs\.]*([\d,]+\.?\d{0,2})"""
+        )
+
         var detectedTotal: Double? = null
-        val amountPattern = Pattern.compile("""(?i)(?:total|grand\s*total|net\s*amount|amount\s*paid|subtotal|balance\s*due)[\s:₹rs\.]*([\d,]+\.?\d{0,2})""")
 
         for (line in lines.reversed()) {
-            val matcher = amountPattern.matcher(line)
+            val matcher = primaryAmountPattern.matcher(line)
             if (matcher.find()) {
                 val numStr = matcher.group(1)?.replace(",", "")
                 val parsed = numStr?.toDoubleOrNull()
