@@ -98,7 +98,7 @@ fun AccountPocketsView(
             item {
                 SectionHeader("Cash & Bank Accounts", liquidPockets.size, theme)
             }
-            items(liquidPockets, key = { it.id }) { pocket ->
+            items(liquidPockets, key = { "liquid_${it.id}" }) { pocket ->
                 val bal = pocketBalances.firstOrNull { it.pocketId == pocket.id.toString() }?.computedBalance ?: 0.0
                 PocketAccountRow(
                     pocket = pocket,
@@ -123,7 +123,7 @@ fun AccountPocketsView(
             if (goalPockets.isEmpty()) {
                 item { EmptySectionCard("No saving goals active.", theme) }
             } else {
-                items(goalPockets, key = { it.id }) { pocket ->
+                items(goalPockets, key = { "goal_${it.id}" }) { pocket ->
                     val bal = pocketBalances.firstOrNull { it.pocketId == pocket.id.toString() }?.computedBalance ?: 0.0
                     val target = pocket.targetAmount ?: 0.0
                     val shortfall = (target - bal).coerceAtLeast(0.0)
@@ -165,7 +165,7 @@ fun AccountPocketsView(
             }
         }
 
-        // 3. CREDIT CARDS & CREDIT LINES (Strict Limit Clamping)
+        // 3. CREDIT CARDS & CREDIT LINES
         if (selectedFilterTab == 0 || selectedFilterTab == 3) {
             item {
                 SectionHeader("Cards & Credit Lines", cardPockets.size, theme)
@@ -173,12 +173,10 @@ fun AccountPocketsView(
             if (cardPockets.isEmpty()) {
                 item { EmptySectionCard("No credit lines or credit cards added.", theme) }
             } else {
-                items(cardPockets, key = { it.id }) { pocket ->
+                items(cardPockets, key = { "card_${it.id}" }) { pocket ->
                     val rawBalance = pocketBalances.firstOrNull { it.pocketId == pocket.id.toString() }?.computedBalance ?: 0.0
                     val limit = pocket.creditLimit ?: 0.0
                     val outstandingDues = if (rawBalance < 0.0) Math.abs(rawBalance) else 0.0
-
-                    // Clamped: Available limit can NEVER exceed approved limit
                     val availableLimit = (limit - outstandingDues).coerceIn(0.0, limit)
 
                     Card(
@@ -232,7 +230,7 @@ fun AccountPocketsView(
             if (peerPockets.isEmpty()) {
                 item { EmptySectionCard("No peer counterparty debts recorded.", theme) }
             } else {
-                items(peerPockets, key = { it.id }) { pocket ->
+                items(peerPockets, key = { "peer_${it.id}" }) { pocket ->
                     val bal = pocketBalances.firstOrNull { it.pocketId == pocket.id.toString() }?.computedBalance ?: 0.0
                     val isReceivable = bal >= 0.0
 
@@ -267,13 +265,13 @@ fun AccountPocketsView(
             }
         }
 
-        // 5. RECURRING AUTOMATION PIPELINE
+        // 5. RECURRING AUTOMATION PIPELINE (Crash-Proofed Unique Keys)
         if (selectedFilterTab == 0) {
             item {
                 SectionHeader("Recurring Automation Pipeline", recurringSchedules.size, theme)
             }
-            items(recurringSchedules, key = { it.id }) { schedule ->
-                val nextDateStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(schedule.timestamp))
+            items(recurringSchedules, key = { "rec_${it.id}_${it.timestamp}_${it.frequency}" }) { schedule ->
+                val nextDateStr = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(schedule.timestamp))
                 Card(
                     shape = RoundedCornerShape(12.dp),
                     colors = CardDefaults.cardColors(containerColor = theme.surface),
