@@ -27,26 +27,39 @@ jobs:
         with:
           gradle-version: '8.8'
 
+      - name: Generate Consistent Debug Keystore
+        run: |
+          mkdir -p ~/.android
+          keytool -genkey -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+
       - name: Build Debug APK
         run: gradle assembleDebug -PGIT_SHA=${{ github.sha }}
 
       - name: Rename APK with Commit SHA
         run: |
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-          APK_PATH=$(find . -name "app-debug.apk" | head -n 1)
+          APK_PATH=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
           if [ -n "$APK_PATH" ]; then
-            DIR=$(dirname "$APK_PATH")
-            mv "$APK_PATH" "$DIR/InOut-alpha-${SHORT_SHA}.apk"
+            mv "$APK_PATH" "app/build/outputs/apk/debug/InOut-alpha-${SHORT_SHA}.apk"
           fi
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: InOut-Debug-APK
-          path: "**/InOut-alpha-*.apk"
+          path: "app/build/outputs/apk/debug/InOut-alpha-*.apk"
           retention-days: 1
 
-      - name: Publish Rolling Alpha Release
+      - name: Delete Old Rolling Alpha Release
+        uses: dev-drprasad/delete-tag-and-release@v1.1
+        with:
+          delete_release: true
+          tag_name: rolling-alpha
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Publish Fresh Rolling Alpha Release
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         with:
@@ -54,7 +67,7 @@ jobs:
           name: "InOut Alpha Rolling (${{ github.sha }})"
           body: |
             Automated continuous alpha build from commit `${{ github.sha }}`.
-          files: "**/InOut-alpha-*.apk"
+          files: "app/build/outputs/apk/debug/InOut-alpha-*.apk"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
