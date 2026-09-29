@@ -74,7 +74,7 @@ fun DashboardScreen(db: AppDatabase) {
 
     val currentInstalledSha = remember {
         val buildSha = BuildConfig.GIT_SHA
-        if (buildSha.isNotBlank() && buildSha != "localdev") buildSha else "92b6e02"
+        if (buildSha.isNotBlank() && buildSha != "localdev") buildSha else "6b36038"
     }
 
     val packageInfo = remember {
@@ -535,7 +535,6 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
-                                // Symmetrical Action Cockpit
                                 item {
                                     Card(
                                         shape = RoundedCornerShape(16.dp),
@@ -863,7 +862,6 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
 
-                // Symmetrical Guided Action Wizard Dialog
                 activeWizard?.let { wizard ->
                     GuidedActionWizardDialog(
                         type = wizard,
@@ -1377,7 +1375,6 @@ fun GuidedActionWizardDialog(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Peer Direction Toggle
                 if (type == WizardType.PEER_LEND_BORROW) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Box(
@@ -1405,7 +1402,6 @@ fun GuidedActionWizardDialog(
                     }
                 }
 
-                // Amount Input
                 Column {
                     CompactInputField(
                         value = rawAmount,
@@ -1417,7 +1413,6 @@ fun GuidedActionWizardDialog(
                     }
                 }
 
-                // Clean Structured Account Card: SOURCE
                 if (type in listOf(WizardType.EXPENSE, WizardType.TRANSFER, WizardType.CARD_BILL) || (type == WizardType.PEER_LEND_BORROW && peerModeIsLend)) {
                     Text("Pay From (Liquid Account)", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
                     val activeSrc = liquidPockets.firstOrNull { it.id == selectedSourceId } ?: liquidPockets.firstOrNull()
@@ -1436,7 +1431,6 @@ fun GuidedActionWizardDialog(
                     )
                 }
 
-                // Clean Structured Account Card: DESTINATION (for Transfer, Card Bill, Peer)
                 if (type == WizardType.TRANSFER) {
                     Text("Transfer To", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
                     val validTargets = rawPockets.filter { it.id != selectedSourceId }
@@ -1489,7 +1483,6 @@ fun GuidedActionWizardDialog(
                     )
                 }
 
-                // Symmetrical Category Flow
                 Text("Category", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
                 FlowRow(
                     modifier = Modifier.fillMaxWidth(),
