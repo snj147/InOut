@@ -59,12 +59,14 @@ object ReceiptScanner {
     private fun parseReceiptText(rawText: String): ParsedReceipt {
         val lines = rawText.split("\n").map { it.trim() }.filter { it.isNotBlank() }
 
-        val ignoredHeaderPhrases = listOf(
+        val blacklistedHeaderTokens = listOf(
             "original for recipient",
+            "duplicate for recipient",
+            "triplicate for supplier",
             "tax invoice",
-            "invoice",
-            "cash memo",
             "retail invoice",
+            "invoice no",
+            "cash memo",
             "bill to",
             "ship to",
             "gstin",
@@ -73,24 +75,24 @@ object ReceiptScanner {
         )
 
         var merchant = "Store / Merchant"
-        for (line in lines.take(8)) {
+        for (line in lines.take(10)) {
             val lower = line.lowercase()
-            val isIgnored = ignoredHeaderPhrases.any { lower.contains(it) }
-            if (!isIgnored && line.length in 3..40 && !line.any { it.isDigit() }) {
+            val isBlacklisted = blacklistedHeaderTokens.any { lower.contains(it) }
+            if (!isBlacklisted && line.length in 3..40 && !line.any { it.isDigit() }) {
                 merchant = line
                 break
             }
         }
 
-        // Target settlement summaries directly to avoid grabbing individual item rows
-        val primaryAmountPattern = Pattern.compile(
-            """(?i)(?:total\s*amount|grand\s*total|net\s*amount|total|amount\s*paid|received\s*amount)[\s:₹rs\.]*([\d,]+\.?\d{0,2})"""
+        // Anchor on the actual settlement row first
+        val settlementLabelPattern = Pattern.compile(
+            """(?i)(?:total\s*amount|grand\s*total|net\s*amount|amount\s*payable|sub\s*total)[\s:₹rs\.]*([\d,]+\.?\d{0,2})"""
         )
 
         var detectedTotal: Double? = null
 
         for (line in lines.reversed()) {
-            val matcher = primaryAmountPattern.matcher(line)
+            val matcher = settlementLabelPattern.matcher(line)
             if (matcher.find()) {
                 val numStr = matcher.group(1)?.replace(",", "")
                 val parsed = numStr?.toDoubleOrNull()
@@ -101,11 +103,12 @@ object ReceiptScanner {
             }
         }
 
+        // Fallback: look for the highest formatted currency value in the document
         if (detectedTotal == null) {
-            val fallbackPattern = Pattern.compile("""(?i)[₹rs\.\s]+([\d,]+\.\d{2})""")
+            val currencyPattern = Pattern.compile("""(?i)[₹rs\.\s]*([\d,]+\.\d{2})""")
             val candidates = mutableListOf<Double>()
             for (line in lines) {
-                val matcher = fallbackPattern.matcher(line)
+                val matcher = currencyPattern.matcher(line)
                 while (matcher.find()) {
                     val numStr = matcher.group(1)?.replace(",", "")
                     numStr?.toDoubleOrNull()?.let { candidates.add(it) }
