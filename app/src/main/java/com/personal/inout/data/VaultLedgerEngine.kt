@@ -25,20 +25,59 @@ class VaultLedgerEngine(
         isRecurring: Boolean = false,
         frequency: String = "NONE"
     ): VaultExecutionResult {
+        if (amount <= 0.0) {
+            return VaultExecutionResult.OverdraftError("Amount must be greater than zero.")
+        }
+
+        val allPockets = dao.getActivePocketsSync()
         val balances = dao.getPocketBalancesSync()
 
-        if (nature in listOf(MovementNature.OUTFLOW, MovementNature.PEER_LEND, MovementNature.CARD_PAYMENT, MovementNature.TRANSFER)) {
-            val sourceBalance = balances.firstOrNull { it.pocketId == sourcePocketId?.toString() }
-            val currentAvail = sourceBalance?.computedBalance ?: 0.0
+        // 1. Strict Outflow & Transfer Double-Entry Validation
+        if (nature in listOf(MovementNature.OUTFLOW, MovementNature.TRANSFER, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
+            if (sourcePocketId == null) {
+                return VaultExecutionResult.OverdraftError("Source account required.")
+            }
+            val srcPocket = allPockets.firstOrNull { it.id == sourcePocketId }
+                ?: return VaultExecutionResult.OverdraftError("Source account not found.")
 
-            if (currentAvail < amount && !autoSplitEnabled) {
-                val accName = sourceBalance?.pocketName ?: "Source Account"
+            val srcBalance = balances.firstOrNull { it.pocketId == sourcePocketId.toString() }?.computedBalance ?: 0.0
+
+            if (srcPocket.pocketType == PocketType.LIQUID && srcBalance < amount) {
+                if (!autoSplitEnabled) {
+                    val available = srcBalance.coerceAtLeast(0.0)
+                    return VaultExecutionResult.OverdraftError(
+                        "Insufficient funds in ${srcPocket.name} (Available: ₹${String.format("%,.0f", available)}). Transaction blocked."
+                    )
+                }
+            }
+        }
+
+        // 2. Strict Credit Card Payment Invariant
+        // A payment cannot exceed outstanding liability (Available limit cannot exceed approved limit)
+        if (nature == MovementNature.CARD_PAYMENT) {
+            if (targetPocketId == null) {
+                return VaultExecutionResult.OverdraftError("Target credit card required.")
+            }
+            val cardPocket = allPockets.firstOrNull { it.id == targetPocketId }
+                ?: return VaultExecutionResult.OverdraftError("Credit card not found.")
+
+            val cardBalance = balances.firstOrNull { it.pocketId == targetPocketId.toString() }?.computedBalance ?: 0.0
+            val outstandingDues = if (cardBalance < 0.0) Math.abs(cardBalance) else 0.0
+
+            if (outstandingDues == 0.0) {
                 return VaultExecutionResult.OverdraftError(
-                    "Insufficient balance in '$accName' (Available: ₹${currentAvail.toInt()}). Enable Auto-Split or choose another account."
+                    "${cardPocket.name} has no outstanding dues. Limit is fully available."
+                )
+            }
+
+            if (amount > outstandingDues + 0.01) {
+                return VaultExecutionResult.OverdraftError(
+                    "Payment of ₹${amount.toInt()} exceeds outstanding dues of ₹${outstandingDues.toInt()} on ${cardPocket.name}."
                 )
             }
         }
 
+        // 3. Execution
         dao.insertFlowRecord(
             FlowRecord(
                 id = 0L,
@@ -47,7 +86,7 @@ class VaultLedgerEngine(
                 amount = amount,
                 movementNature = nature,
                 category = category,
-                note = note,
+                note = note.ifBlank { category },
                 timestamp = timestamp,
                 isRecurring = isRecurring,
                 frequency = frequency,
@@ -56,99 +95,50 @@ class VaultLedgerEngine(
             )
         )
 
-        val actionVerb = when (nature) {
-            MovementNature.INFLOW -> "Received"
-            MovementNature.OUTFLOW -> "Spent"
-            MovementNature.TRANSFER -> "Transferred"
-            MovementNature.CARD_PAYMENT -> "Cleared card dues"
-            MovementNature.PEER_LEND -> "Lent"
-            MovementNature.PEER_BORROW -> "Borrowed"
-            MovementNature.PEER_COLLECT -> "Collected"
-            MovementNature.PEER_REPAY -> "Repaid"
+        val formattedAmt = String.format("%,.0f", amount)
+        val summary = when (nature) {
+            MovementNature.OUTFLOW -> "Logged expense of ₹$formattedAmt ($category)"
+            MovementNature.INFLOW -> "Credited ₹$formattedAmt to account"
+            MovementNature.TRANSFER -> "Transferred ₹$formattedAmt"
+            MovementNature.CARD_PAYMENT -> "Cleared ₹$formattedAmt card dues"
+            MovementNature.PEER_LEND -> "Lent ₹$formattedAmt"
+            MovementNature.PEER_BORROW -> "Borrowed ₹$formattedAmt"
+            MovementNature.PEER_COLLECT -> "Collected ₹$formattedAmt"
+            MovementNature.PEER_REPAY -> "Repaid ₹$formattedAmt"
         }
 
-        return VaultExecutionResult.Success("$actionVerb ₹${amount.toInt()} ($note)")
-    }
-
-    suspend fun triangularPeerSettle(debtorName: String, creditorName: String, amount: Double): VaultExecutionResult {
-        val activePockets = dao.getActivePocketsSync()
-        val debtor = activePockets.firstOrNull { it.pocketType == PocketType.COUNTERPARTY && it.name.equals(debtorName, ignoreCase = true) }
-        val creditor = activePockets.firstOrNull { it.pocketType == PocketType.COUNTERPARTY && it.name.equals(creditorName, ignoreCase = true) }
-
-        if (debtor == null || creditor == null) {
-            return VaultExecutionResult.OverdraftError("Could not locate contacts '$debtorName' or '$creditorName'")
-        }
-
-        dao.insertFlowRecord(
-            FlowRecord(
-                id = 0L,
-                sourcePocketId = debtor.id,
-                targetPocketId = creditor.id,
-                amount = amount,
-                movementNature = MovementNature.TRANSFER,
-                category = "Triangular Settle",
-                note = "Settlement: $debtorName -> $creditorName",
-                timestamp = System.currentTimeMillis()
-            )
-        )
-
-        return VaultExecutionResult.Success("Triangular settlement of ₹${amount.toInt()} recorded.")
+        return VaultExecutionResult.Success(summary)
     }
 
     suspend fun catchUpRecurringRules(): Int {
-        val activeRules = dao.getActiveRecurringSchedulesSync()
+        val recurringRules = dao.getActiveRecurringSchedulesSync()
         var catchUpCount = 0
+        val now = System.currentTimeMillis()
 
-        for (rule in activeRules) {
-            val cadence = when (rule.recurringCadence.uppercase()) {
-                "DAILY" -> CadenceType.DAILY
-                "WEEKLY" -> CadenceType.WEEKLY
-                "MONTHLY" -> CadenceType.MONTHLY
-                else -> CadenceType.NONE
+        for (rule in recurringRules) {
+            val lastRun = rule.timestamp
+            val diff = now - lastRun
+            val interval = when (rule.frequency) {
+                "DAILY" -> 24 * 3600 * 1000L
+                "WEEKLY" -> 7 * 24 * 3600 * 1000L
+                "MONTHLY" -> 30 * 24 * 3600 * 1000L
+                else -> Long.MAX_VALUE
             }
 
-            if (cadence == CadenceType.NONE) continue
-
-            val cal = Calendar.getInstance().apply { timeInMillis = rule.timestamp }
-            val now = Calendar.getInstance()
-
-            while (cal.timeInMillis < now.timeInMillis) {
-                val startWindow = cal.timeInMillis - (12 * 3600 * 1000L)
-                val endWindow = cal.timeInMillis + (12 * 3600 * 1000L)
-
-                val count = dao.countRecordsWithFingerprint(
-                    rule.note,
-                    rule.amount ?: 0.0,
-                    startWindow,
-                    endWindow
+            if (diff >= interval) {
+                recordMovement(
+                    nature = rule.movementNature,
+                    sourcePocketId = rule.sourcePocketId,
+                    targetPocketId = rule.targetPocketId,
+                    amount = rule.amount ?: 0.0,
+                    category = rule.category,
+                    note = rule.note,
+                    timestamp = now,
+                    isRecurring = false,
+                    frequency = rule.frequency
                 )
-
-                if (count == 0) {
-                    dao.insertFlowRecord(
-                        FlowRecord(
-                            id = 0L,
-                            sourcePocketId = rule.sourcePocketId,
-                            targetPocketId = rule.targetPocketId,
-                            amount = rule.amount,
-                            movementNature = rule.movementNature,
-                            category = rule.category,
-                            note = rule.note,
-                            timestamp = cal.timeInMillis,
-                            isRecurring = false,
-                            frequency = rule.frequency,
-                            recurringCadence = rule.recurringCadence,
-                            isPaused = false
-                        )
-                    )
-                    catchUpCount++
-                }
-
-                when (cadence) {
-                    CadenceType.DAILY -> cal.add(Calendar.DAY_OF_YEAR, 1)
-                    CadenceType.WEEKLY -> cal.add(Calendar.WEEK_OF_YEAR, 1)
-                    CadenceType.MONTHLY -> cal.add(Calendar.MONTH, 1)
-                    CadenceType.NONE -> break
-                }
+                dao.updateFlowRecord(rule.copy(timestamp = now))
+                catchUpCount++
             }
         }
         return catchUpCount
