@@ -31,14 +31,18 @@ class VaultLedgerEngine(
         val allPockets = dao.getActivePocketsSync()
         val balances = dao.getPocketBalancesSync()
 
+        // 1. Strict Inflow Deposit Guard: Must target a real liquid asset account
         if (nature == MovementNature.INFLOW) {
-            if (targetPocketId == null || targetPocketId <= 0L) {
+            if (targetPocketId == null) {
                 return VaultExecutionResult.OverdraftError("Please create or select a bank account to deposit funds into.")
             }
+            allPockets.firstOrNull { it.id == targetPocketId }
+                ?: return VaultExecutionResult.OverdraftError("Destination bank account not found. Please add an account first.")
         }
 
+        // 2. Strict Outflow & Transfer Double-Entry Guard: Must have verified source with sufficient funds
         if (nature in listOf(MovementNature.OUTFLOW, MovementNature.TRANSFER, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
-            if (sourcePocketId == null || sourcePocketId <= 0L) {
+            if (sourcePocketId == null) {
                 return VaultExecutionResult.OverdraftError("Please create or select an account to pay from.")
             }
             val srcPocket = allPockets.firstOrNull { it.id == sourcePocketId }
@@ -56,8 +60,9 @@ class VaultLedgerEngine(
             }
         }
 
+        // 3. Strict Credit Card Payment Guard: Payments cannot exceed outstanding dues
         if (nature == MovementNature.CARD_PAYMENT) {
-            if (targetPocketId == null || targetPocketId <= 0L) {
+            if (targetPocketId == null) {
                 return VaultExecutionResult.OverdraftError("Please select a credit card to settle.")
             }
             val cardPocket = allPockets.firstOrNull { it.id == targetPocketId }
@@ -79,6 +84,7 @@ class VaultLedgerEngine(
             }
         }
 
+        // 4. Atomic Commit
         dao.insertFlowRecord(
             FlowRecord(
                 id = 0L,
