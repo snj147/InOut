@@ -74,7 +74,7 @@ fun DashboardScreen(db: AppDatabase) {
 
     val currentInstalledSha = remember {
         val buildSha = BuildConfig.GIT_SHA
-        if (buildSha.isNotBlank() && buildSha != "localdev") buildSha else "6b36038"
+        if (buildSha.isNotBlank() && buildSha != "localdev") buildSha else "98f9b7f"
     }
 
     val packageInfo = remember {
@@ -210,6 +210,8 @@ fun DashboardScreen(db: AppDatabase) {
     var isCheckingForUpdate by remember { mutableStateOf(false) }
     var showFeedbackDialog by remember { mutableStateOf(false) }
     var isFabExpanded by remember { mutableStateOf(false) }
+
+    val downloadState by AppUpdateEngine.downloadState.collectAsState()
 
     val pagerState = rememberPagerState(initialPage = 0, pageCount = { 4 })
 
@@ -722,38 +724,10 @@ fun DashboardScreen(db: AppDatabase) {
                                     alertManager.showAlert("Recurring schedule deleted", AlertType.SUCCESS)
                                 }
                             },
-                            onRecordCardSettlement = { cardId, liquidId, amt ->
-                                scope.launch {
-                                    when (val res = ledgerEngine.recordMovement(
-                                        nature = MovementNature.CARD_PAYMENT,
-                                        sourcePocketId = liquidId,
-                                        targetPocketId = cardId,
-                                        amount = amt ?: 0.0,
-                                        category = "Bill Payment",
-                                        note = "Card Dues Clearance",
-                                        autoSplitEnabled = autoSplitEnabled
-                                    )) {
-                                        is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
-                                        is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
-                                    }
-                                }
-                            },
-                            onPeerAction = { nature, peerId, liquidId, amt ->
-                                scope.launch {
-                                    val (src, tgt) = if (nature in listOf(MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) liquidId to peerId else peerId to liquidId
-                                    when (val res = ledgerEngine.recordMovement(
-                                        nature = nature,
-                                        sourcePocketId = src,
-                                        targetPocketId = tgt,
-                                        amount = amt ?: 0.0,
-                                        category = "Peer Transfer",
-                                        note = nature.name,
-                                        autoSplitEnabled = autoSplitEnabled
-                                    )) {
-                                        is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
-                                        is VaultExecutionResult.Success -> alertManager.showAlert(res.summary, AlertType.SUCCESS)
-                                    }
-                                }
+                            onRequestCreateAccount = { reqType ->
+                                prefilledCreatePocketName = ""
+                                prefilledCreatePocketType = reqType
+                                showCreatePocketDialog = true
                             }
                         )
 
@@ -778,6 +752,7 @@ fun DashboardScreen(db: AppDatabase) {
                             isProUnlocked = isProUnlocked,
                             availableUpdate = availableUpdateInfo,
                             isCheckingUpdate = isCheckingForUpdate,
+                            downloadState = downloadState,
                             onCheckUpdate = {
                                 scope.launch {
                                     isCheckingForUpdate = true
@@ -797,9 +772,13 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
                             },
-                            onInstallUpdate = { info ->
-                                AppUpdateEngine.startDownloadAndInstall(context, info.downloadUrl, info.latestVersion)
-                                alertManager.showAlert("Downloading update ${info.latestVersion}...", AlertType.INFO)
+                            onStartStreamDownload = { info ->
+                                scope.launch {
+                                    AppUpdateEngine.startStreamDownload(context, info.downloadUrl, info.latestVersion)
+                                }
+                            },
+                            onInstallDownloadedApk = { apkFile ->
+                                AppUpdateEngine.triggerPackageInstaller(context, apkFile)
                             },
                             onOpenFeedback = { showFeedbackDialog = true },
                             onAutoSplitToggled = {
@@ -862,6 +841,7 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
 
+                // Symmetrical Guided Action Wizard Dialog
                 activeWizard?.let { wizard ->
                     GuidedActionWizardDialog(
                         type = wizard,
@@ -876,6 +856,22 @@ fun DashboardScreen(db: AppDatabase) {
                         },
                         onCommit = { nature, srcId, tgtId, amt, cat, note, date, isRec, freq ->
                             scope.launch {
+                                if (nature == MovementNature.INFLOW && tgtId == null) {
+                                    alertManager.showAlert("Please add a bank account before logging income.", AlertType.ERROR)
+                                    prefilledCreatePocketName = ""
+                                    prefilledCreatePocketType = PocketType.LIQUID
+                                    showCreatePocketDialog = true
+                                    return@launch
+                                }
+
+                                if (nature in listOf(MovementNature.OUTFLOW, MovementNature.TRANSFER) && srcId == null) {
+                                    alertManager.showAlert("Please add a source account before logging expenses.", AlertType.ERROR)
+                                    prefilledCreatePocketName = ""
+                                    prefilledCreatePocketType = PocketType.LIQUID
+                                    showCreatePocketDialog = true
+                                    return@launch
+                                }
+
                                 when (val res = ledgerEngine.recordMovement(
                                     nature = nature,
                                     sourcePocketId = srcId,
@@ -1330,6 +1326,7 @@ fun GuidedActionWizardDialog(
     var selectedTargetId by remember {
         mutableStateOf(
             when (type) {
+                WizardType.INCOME -> liquidPockets.firstOrNull()?.id
                 WizardType.TRANSFER -> rawPockets.firstOrNull { it.id != (liquidPockets.firstOrNull()?.id ?: -1L) }?.id
                 WizardType.CARD_BILL -> cardPockets.firstOrNull()?.id
                 WizardType.PEER_LEND_BORROW -> peerPockets.firstOrNull()?.id
@@ -1342,9 +1339,8 @@ fun GuidedActionWizardDialog(
     var isRecurring by remember { mutableStateOf(false) }
     var frequency by remember { mutableStateOf("MONTHLY") }
 
-    // Interactive Date Selection State
     var selectedDateEpoch by remember { mutableStateOf(System.currentTimeMillis()) }
-    var selectedDatePreset by remember { mutableStateOf("TODAY") } // "TODAY", "YESTERDAY", "CUSTOM"
+    var selectedDatePreset by remember { mutableStateOf("TODAY") }
     var showDatePickerDialog by remember { mutableStateOf(false) }
 
     val computedAmount = remember(rawAmount) { MathEvaluator.evaluate(rawAmount) }
@@ -1391,7 +1387,6 @@ fun GuidedActionWizardDialog(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                // Peer Direction Toggle
                 if (type == WizardType.PEER_LEND_BORROW) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Box(
@@ -1491,8 +1486,8 @@ fun GuidedActionWizardDialog(
                     val srcBal = pocketBalances.firstOrNull { it.pocketId == (activeSrc?.id?.toString() ?: "") }?.computedBalance ?: 0.0
 
                     AccountCardSelector(
-                        title = activeSrc?.name ?: "No Account Selected",
-                        sub = "Available: ₹${String.format("%,.0f", srcBal.coerceAtLeast(0.0))}",
+                        title = activeSrc?.name ?: "No Bank Account Found",
+                        sub = if (activeSrc == null) "+ Add bank account to pay from" else "Available: ₹${String.format("%,.0f", srcBal.coerceAtLeast(0.0))}",
                         theme = theme,
                         accounts = liquidPockets.map { p ->
                             val b = pocketBalances.firstOrNull { it.pocketId == p.id.toString() }?.computedBalance ?: 0.0
@@ -1510,8 +1505,8 @@ fun GuidedActionWizardDialog(
                     val tgtBal = pocketBalances.firstOrNull { it.pocketId == (activeTgt?.id?.toString() ?: "") }?.computedBalance ?: 0.0
 
                     AccountCardSelector(
-                        title = activeTgt?.name ?: "Select Bank Account",
-                        sub = "Current: ₹${String.format("%,.0f", tgtBal)}",
+                        title = activeTgt?.name ?: "No Bank Account Found",
+                        sub = if (activeTgt == null) "+ Add bank account to deposit" else "Current: ₹${String.format("%,.0f", tgtBal)}",
                         theme = theme,
                         accounts = liquidPockets.map { p ->
                             val b = pocketBalances.firstOrNull { it.pocketId == p.id.toString() }?.computedBalance ?: 0.0
@@ -1530,7 +1525,7 @@ fun GuidedActionWizardDialog(
 
                     AccountCardSelector(
                         title = activeTgt?.name ?: "Select Destination",
-                        sub = "Current Balance: ₹${String.format("%,.0f", tgtBal)}",
+                        sub = if (activeTgt == null) "Tap to select or add" else "Current Balance: ₹${String.format("%,.0f", tgtBal)}",
                         theme = theme,
                         accounts = validTargets.map { p ->
                             val b = pocketBalances.firstOrNull { it.pocketId == p.id.toString() }?.computedBalance ?: 0.0
@@ -1548,8 +1543,8 @@ fun GuidedActionWizardDialog(
                     val dues = if (cardBal < 0.0) Math.abs(cardBal) else 0.0
 
                     AccountCardSelector(
-                        title = activeCard?.name ?: "Select Card",
-                        sub = "Outstanding Dues: ₹${String.format("%,.0f", dues)}",
+                        title = activeCard?.name ?: "No Credit Cards Linked",
+                        sub = if (activeCard == null) "+ Add credit card to clear" else "Outstanding Dues: ₹${String.format("%,.0f", dues)}",
                         theme = theme,
                         accounts = cardPockets.map { p ->
                             val b = pocketBalances.firstOrNull { it.pocketId == p.id.toString() }?.computedBalance ?: 0.0
@@ -1659,7 +1654,8 @@ fun GuidedActionWizardDialog(
 
                     val tgt = when (type) {
                         WizardType.EXPENSE -> null
-                        WizardType.INCOME, WizardType.TRANSFER, WizardType.CARD_BILL -> selectedTargetId
+                        WizardType.INCOME -> selectedTargetId ?: liquidPockets.firstOrNull()?.id
+                        WizardType.TRANSFER, WizardType.CARD_BILL -> selectedTargetId
                         WizardType.PEER_LEND_BORROW -> if (peerModeIsLend) selectedTargetId else selectedSourceId
                     }
 
@@ -1935,8 +1931,10 @@ private fun SettingsCardsList(
     isProUnlocked: Boolean,
     availableUpdate: UpdateInfo?,
     isCheckingUpdate: Boolean,
+    downloadState: UpdateDownloadState,
     onCheckUpdate: () -> Unit,
-    onInstallUpdate: (UpdateInfo) -> Unit,
+    onStartStreamDownload: (UpdateInfo) -> Unit,
+    onInstallDownloadedApk: (java.io.File) -> Unit,
     onOpenFeedback: () -> Unit,
     onAutoSplitToggled: (Boolean) -> Unit,
     onPhantomLockToggled: (Boolean) -> Unit,
@@ -1970,6 +1968,7 @@ private fun SettingsCardsList(
             }
         }
 
+        // Theme-Styled In-App Update Component
         item {
             Card(
                 shape = RoundedCornerShape(14.dp),
@@ -1979,41 +1978,104 @@ private fun SettingsCardsList(
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(text = "APPLICATION UPDATES & SUPPORT", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
 
-                    if (availableUpdate != null && availableUpdate.hasUpdate) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(theme.accent.copy(alpha = 0.15f))
-                                .padding(10.dp)
-                        ) {
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(text = "New Version Available: ${availableUpdate.latestVersion}", color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                Text(text = availableUpdate.releaseNotes, color = theme.textBright, fontSize = 10.5.sp, maxLines = 2)
+                    when (val state = downloadState) {
+                        is UpdateDownloadState.Idle -> {
+                            if (availableUpdate != null && availableUpdate.hasUpdate) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(theme.accent.copy(alpha = 0.15f))
+                                        .padding(10.dp)
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(text = "New Build Available: ${availableUpdate.latestVersion}", color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Text(text = availableUpdate.releaseNotes, color = theme.textBright, fontSize = 10.5.sp, maxLines = 2)
+                                    }
+                                }
+
+                                Button(
+                                    onClick = { onStartStreamDownload(availableUpdate) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(imageVector = Icons.Default.Download, contentDescription = null, tint = theme.bg, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(text = "Download Build ${availableUpdate.latestVersion}", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            } else {
+                                Button(
+                                    onClick = onCheckUpdate,
+                                    enabled = !isCheckingUpdate,
+                                    colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(imageVector = Icons.Default.Refresh, contentDescription = null, tint = theme.textBright, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(text = if (isCheckingUpdate) "Checking Alpha Releases..." else "Check for App Update", color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                }
                             }
                         }
 
-                        Button(
-                            onClick = { onInstallUpdate(availableUpdate) },
-                            colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(imageVector = Icons.Default.Download, contentDescription = null, tint = theme.bg, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(text = "Download & Install ${availableUpdate.latestVersion}", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        is UpdateDownloadState.Downloading -> {
+                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val percent = (state.progress * 100).toInt()
+                                val mbDownloaded = String.format("%.1f", state.bytesDownloaded / (1024f * 1024f))
+                                val mbTotal = String.format("%.1f", state.totalBytes / (1024f * 1024f))
+
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Streaming Alpha Build: $percent%", color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    Text("$mbDownloaded MB / $mbTotal MB", color = theme.textMuted, fontSize = 11.sp)
+                                }
+                                LinearProgressIndicator(
+                                    progress = { state.progress },
+                                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
+                                    color = theme.accent,
+                                    trackColor = theme.surfaceAlt
+                                )
+                            }
                         }
-                    } else {
-                        Button(
-                            onClick = onCheckUpdate,
-                            enabled = !isCheckingUpdate,
-                            colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(imageVector = Icons.Default.Refresh, contentDescription = null, tint = theme.textBright, modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text(text = if (isCheckingUpdate) "Checking Alpha Releases..." else "Check for App Update", color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+
+                        is UpdateDownloadState.ReadyToInstall -> {
+                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(theme.mildGreen.copy(alpha = 0.15f))
+                                        .padding(10.dp)
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                        Text("Package Downloaded (Build ${state.versionTag})", color = theme.mildGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Text("Tap below to invoke the system installer.", color = theme.textBright, fontSize = 11.sp)
+                                    }
+                                }
+
+                                Button(
+                                    onClick = { onInstallDownloadedApk(state.apkFile) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = theme.mildGreen),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Icon(imageVector = Icons.Default.InstallMobile, contentDescription = null, tint = theme.bg, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Install Update Now", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        is UpdateDownloadState.Error -> {
+                            Text(state.message, color = theme.mildRed, fontSize = 11.5.sp)
+                            Button(
+                                onClick = onCheckUpdate,
+                                colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Retry Update Check", color = theme.textBright, fontSize = 12.sp)
+                            }
                         }
                     }
 
@@ -2334,7 +2396,7 @@ private fun CreateAccountDialog(
     var type by remember { mutableStateOf(initialType) }
     var limit by remember { mutableStateOf("") }
     var targetAmt by remember { mutableStateOf("") }
-    var targetDateEpoch by remember { mutableStateOf(System.currentTimeMillis() + (90L * 24 * 3600 * 1000L)) }
+    var targetDateEpoch by remember { mutableStateOf(System.currentTimeMillis() + (30L * 24 * 3600 * 1000L)) }
     var showDatePicker by remember { mutableStateOf(false) }
 
     val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(targetDateEpoch))
@@ -2380,6 +2442,19 @@ private fun CreateAccountDialog(
                 }
                 if (type == PocketType.CREDIT_LINE) {
                     CompactInputField(value = limit, onValueChange = { limit = it }, placeholder = "Credit Limit (e.g. 50000)")
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(theme.surfaceAlt)
+                            .clickable { showDatePicker = true }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = "Bill Due Date: $dateFormatted", color = theme.textBright, fontSize = 11.5.sp)
+                        Icon(imageVector = Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
+                    }
                 }
                 if (type == PocketType.SAVING_GOAL) {
                     CompactInputField(value = targetAmt, onValueChange = { targetAmt = it }, placeholder = "Target Goal Amount (e.g. 60000)")
@@ -2393,7 +2468,7 @@ private fun CreateAccountDialog(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(text = "Target: $dateFormatted", color = theme.textBright, fontSize = 11.5.sp)
+                        Text(text = "Target Date: $dateFormatted", color = theme.textBright, fontSize = 11.5.sp)
                         Icon(imageVector = Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
                     }
                 }
@@ -2430,7 +2505,7 @@ private fun EditAccountDialog(
     var name by remember { mutableStateOf(account.name) }
     var limit by remember { mutableStateOf(if (accLimit > 0.0) String.format("%.0f", accLimit) else "") }
     var targetAmt by remember { mutableStateOf(if (accTarget > 0.0) String.format("%.0f", accTarget) else "") }
-    var targetDateEpoch by remember { mutableStateOf(if (account.targetDateEpoch > 0) account.targetDateEpoch else System.currentTimeMillis() + (90L * 24 * 3600 * 1000L)) }
+    var targetDateEpoch by remember { mutableStateOf(if (account.targetDateEpoch > 0) account.targetDateEpoch else System.currentTimeMillis() + (30L * 24 * 3600 * 1000L)) }
     var showDatePicker by remember { mutableStateOf(false) }
 
     val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(targetDateEpoch))
@@ -2449,12 +2524,33 @@ private fun EditAccountDialog(
     AlertDialog(
         containerColor = theme.surface,
         onDismissRequest = onDismiss,
-        title = { Text(text = if (account.pocketType == PocketType.SAVING_GOAL) "Edit Goal Pot" else "Edit Account", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+        title = {
+            val titleText = when (account.pocketType) {
+                PocketType.SAVING_GOAL -> "Edit Goal Pot"
+                PocketType.CREDIT_LINE -> "Edit Credit Card"
+                PocketType.COUNTERPARTY -> "Edit Contact"
+                else -> "Edit Bank Account"
+            }
+            Text(text = titleText, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 CompactInputField(value = name, onValueChange = { name = it }, placeholder = "Name")
                 if (account.pocketType == PocketType.CREDIT_LINE) {
                     CompactInputField(value = limit, onValueChange = { limit = it }, placeholder = "Credit Limit")
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(theme.surfaceAlt)
+                            .clickable { showDatePicker = true }
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = "Bill Due Date: $dateFormatted", color = theme.textBright, fontSize = 11.5.sp)
+                        Icon(imageVector = Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
+                    }
                 }
                 if (account.pocketType == PocketType.SAVING_GOAL) {
                     CompactInputField(value = targetAmt, onValueChange = { targetAmt = it }, placeholder = "Target Goal Amount")
@@ -2468,7 +2564,7 @@ private fun EditAccountDialog(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(text = "Target: $dateFormatted", color = theme.textBright, fontSize = 11.5.sp)
+                        Text(text = "Target Date: $dateFormatted", color = theme.textBright, fontSize = 11.5.sp)
                         Icon(imageVector = Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
                     }
                 }
