@@ -1,7 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.jetbrains.kotlin.android)
-    id("kotlin-kapt")
+    alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.kapt)
 }
 
 val runNumber = (project.findProperty("VERSION_CODE") as? String)?.toIntOrNull() ?: 1
@@ -27,10 +27,19 @@ android {
 
     signingConfigs {
         getByName("debug") {
-            storeFile = file("debug.keystore")
-            storePassword = "androiddebug"
-            keyAlias = "androiddebugkey"
-            keyPassword = "androiddebug"
+            val localDebugKeystore = file("debug.keystore")
+            val defaultHomeKeystore = file("${System.getProperty("user.home")}/.android/debug.keystore")
+            if (localDebugKeystore.exists()) {
+                storeFile = localDebugKeystore
+                storePassword = "androiddebug"
+                keyAlias = "androiddebugkey"
+                keyPassword = "androiddebug"
+            } else if (defaultHomeKeystore.exists()) {
+                storeFile = defaultHomeKeystore
+                storePassword = "android"
+                keyAlias = "androiddebugkey"
+                keyPassword = "android"
+            }
         }
     }
 
@@ -76,8 +85,8 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     kapt(libs.androidx.room.compiler)
-    implementation("androidx.compose.material:material-icons-extended:1.6.7")
-    implementation("com.google.mlkit:text-recognition:16.0.0")
-    implementation("com.android.billingclient:billing-ktx:6.2.1")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation(libs.androidx.material.icons.extended)
+    implementation(libs.mlkit.text.recognition)
+    implementation(libs.play.billing.ktx)
+    implementation(libs.okhttp)
 }
