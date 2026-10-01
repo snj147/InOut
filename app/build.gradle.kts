@@ -1,27 +1,37 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.kapt)
+    alias(libs.plugins.jetbrains.kotlin.android)
+    id("kotlin-kapt")
 }
+
+val runNumber = (project.findProperty("VERSION_CODE") as? String)?.toIntOrNull() ?: 1
+val gitSha = (project.findProperty("GIT_SHA") as? String) ?: "localdev"
 
 android {
     namespace = "com.personal.inout"
-    compileSdk = 35
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "com.personal.inout"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        targetSdk = 34
+        versionCode = runNumber
+        versionName = "1.0.$runNumber"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
             useSupportLibrary = true
         }
-
-        val gitSha = project.findProperty("GIT_SHA") as String? ?: "localdev"
+        
         buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "androiddebug"
+            keyAlias = "androiddebugkey"
+            keyPassword = "androiddebug"
+        }
     }
 
     buildTypes {
@@ -32,17 +42,13 @@ android {
                 "proguard-rules.pro"
             )
         }
-        debug {
-            val gitSha = project.findProperty("GIT_SHA") as String? ?: "localdev"
-            buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
-        }
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
     }
     kotlinOptions {
-        jvmTarget = "17"
+        jvmTarget = "1.8"
     }
     buildFeatures {
         compose = true
@@ -67,31 +73,11 @@ dependencies {
     implementation(libs.androidx.ui.graphics)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
-    implementation(libs.androidx.material.icons.extended)
-
-    // Room
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     kapt(libs.androidx.room.compiler)
-
-    // Play Billing
-    implementation(libs.play.billing.ktx)
-
-    // ML Kit & Camera
-    implementation(libs.mlkit.text.recognition)
-    implementation(libs.androidx.camera.core)
-    implementation(libs.androidx.camera.camera2)
-    implementation(libs.androidx.camera.lifecycle)
-    implementation(libs.androidx.camera.view)
-
-    // Networking
-    implementation(libs.okhttp)
-
-    testImplementation(libs.junit)
-    androidTestImplementation(libs.androidx.junit)
-    androidTestImplementation(libs.androidx.espresso.core)
-    androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.ui.test.junit4)
-    debugImplementation(libs.androidx.ui.tooling)
-    debugImplementation(libs.androidx.ui.test.manifest)
+    implementation("androidx.compose.material:material-icons-extended:1.6.7")
+    implementation("com.google.mlkit:text-recognition:16.0.0")
+    implementation("com.android.billingclient:billing-ktx:6.2.1")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
