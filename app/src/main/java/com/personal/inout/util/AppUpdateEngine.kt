@@ -3,13 +3,13 @@ package com.personal.inout.util
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import androidx.core.content.FileProvider
 import com.personal.inout.BuildConfig
 import com.personal.inout.MainActivity
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -25,14 +25,22 @@ data class UpdateInfo(
     val releaseNotes: String
 )
 
+sealed class UpdateDownloadState {
+    object Idle : UpdateDownloadState()
+    data class Downloading(val progress: Float, val bytesDownloaded: Long, val totalBytes: Long) : UpdateDownloadState()
+    data class ReadyToInstall(val apkFile: File, val versionTag: String) : UpdateDownloadState()
+    data class Error(val message: String) : UpdateDownloadState()
+}
+
 object AppUpdateEngine {
 
-    val downloadProgress = MutableStateFlow(-1f) // -1f = Idle, 0.0..1.0 = Downloading, 2.0 = Staging
-
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
+        .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
+
+    private val _downloadState = MutableStateFlow<UpdateDownloadState>(UpdateDownloadState.Idle)
+    val downloadState: StateFlow<UpdateDownloadState> = _downloadState.asStateFlow()
 
     suspend fun checkForUpdate(context: Context): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         try {
@@ -83,55 +91,48 @@ object AppUpdateEngine {
         }
     }
 
-    suspend fun startDownloadAndInstall(context: Context, downloadUrl: String, versionTag: String) = withContext(Dispatchers.IO) {
-        downloadProgress.value = 0f
+    suspend fun startStreamDownload(context: Context, downloadUrl: String, versionTag: String) = withContext(Dispatchers.IO) {
         try {
+            val targetFile = File(context.cacheDir, "InOut-alpha-$versionTag.apk")
+            if (targetFile.exists()) targetFile.delete()
+
             val request = Request.Builder().url(downloadUrl).build()
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    downloadProgress.value = -1f
+                    _downloadState.value = UpdateDownloadState.Error("HTTP Error: ${response.code}")
                     return@withContext
                 }
 
-                val body = response.body ?: run {
-                    downloadProgress.value = -1f
+                val responseBody = response.body ?: run {
+                    _downloadState.value = UpdateDownloadState.Error("Empty download stream")
                     return@withContext
                 }
 
-                val contentLength = body.contentLength()
-                val source = body.source()
-
-                val fileName = "InOut-update-$versionTag.apk"
-                val file = File(context.cacheDir, fileName)
-                val sink = FileOutputStream(file)
-
-                var bytesRead: Long = 0
+                val totalBytes = responseBody.contentLength()
+                var bytesCopied = 0L
                 val buffer = ByteArray(8 * 1024)
-                while (true) {
-                    val read = source.read(buffer)
-                    if (read == -1) break
-                    sink.write(buffer, 0, read)
-                    bytesRead += read
-                    if (contentLength > 0) {
-                        downloadProgress.value = (bytesRead.toFloat() / contentLength.toFloat()).coerceIn(0f, 0.99f)
+
+                responseBody.byteStream().use { input ->
+                    FileOutputStream(targetFile).use { output ->
+                        var read = input.read(buffer)
+                        while (read != -1) {
+                            output.write(buffer, 0, read)
+                            bytesCopied += read
+                            val progress = if (totalBytes > 0) bytesCopied.toFloat() / totalBytes.toFloat() else 0f
+                            _downloadState.value = UpdateDownloadState.Downloading(progress, bytesCopied, totalBytes)
+                            read = input.read(buffer)
+                        }
                     }
                 }
-                sink.flush()
-                sink.close()
 
-                downloadProgress.value = 2f
-                withContext(Dispatchers.Main) {
-                    triggerPackageInstaller(context, file)
-                    delay(3000)
-                    downloadProgress.value = -1f
-                }
+                _downloadState.value = UpdateDownloadState.ReadyToInstall(targetFile, versionTag)
             }
         } catch (e: Exception) {
-            downloadProgress.value = -1f
+            _downloadState.value = UpdateDownloadState.Error("Download failed: ${e.localizedMessage}")
         }
     }
 
-    private fun triggerPackageInstaller(context: Context, apkFile: File) {
+    fun triggerPackageInstaller(context: Context, apkFile: File) {
         if (!apkFile.exists()) return
 
         val apkUri = FileProvider.getUriForFile(
@@ -147,6 +148,10 @@ object AppUpdateEngine {
         }
 
         context.startActivity(installIntent)
+    }
+
+    fun resetState() {
+        _downloadState.value = UpdateDownloadState.Idle
     }
 }
 
