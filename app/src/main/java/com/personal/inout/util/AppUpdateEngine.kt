@@ -4,13 +4,12 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import androidx.core.content.FileProvider
 import com.personal.inout.BuildConfig
 import com.personal.inout.MainActivity
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -26,34 +25,14 @@ data class UpdateInfo(
     val releaseNotes: String
 )
 
-sealed class UpdateDownloadStatus {
-    object Idle : UpdateDownloadStatus()
-    data class Downloading(val progress: Float, val downloadedBytes: Long, val totalBytes: Long) : UpdateDownloadStatus()
-    object Staging : UpdateDownloadStatus()
-    data class ReadyToInstall(val apkFile: File) : UpdateDownloadStatus()
-    data class Failed(val error: String) : UpdateDownloadStatus()
-}
-
-class PackageReplacedReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent?) {
-        if (intent?.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
-            val launchIntent = Intent(context, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            }
-            context.startActivity(launchIntent)
-        }
-    }
-}
-
 object AppUpdateEngine {
 
+    val downloadProgress = MutableStateFlow(-1f) // -1f = Idle, 0.0..1.0 = Downloading, 2.0 = Staging
+
     private val httpClient = OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
+        .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
-
-    private val _downloadStatus = MutableStateFlow<UpdateDownloadStatus>(UpdateDownloadStatus.Idle)
-    val downloadStatus = _downloadStatus.asStateFlow()
 
     suspend fun checkForUpdate(context: Context): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         try {
@@ -104,52 +83,58 @@ object AppUpdateEngine {
         }
     }
 
-    suspend fun streamDownloadApk(context: Context, downloadUrl: String, versionTag: String) = withContext(Dispatchers.IO) {
-        val cacheApk = File(context.cacheDir, "InOut-alpha-$versionTag.apk")
-        if (cacheApk.exists()) cacheApk.delete()
-
+    suspend fun startDownloadAndInstall(context: Context, downloadUrl: String, versionTag: String) = withContext(Dispatchers.IO) {
+        downloadProgress.value = 0f
         try {
             val request = Request.Builder().url(downloadUrl).build()
             httpClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
-                    _downloadStatus.value = UpdateDownloadStatus.Failed("Download failed: HTTP ${response.code}")
+                    downloadProgress.value = -1f
                     return@withContext
                 }
 
-                val responseBody = response.body ?: run {
-                    _downloadStatus.value = UpdateDownloadStatus.Failed("Empty response body")
+                val body = response.body ?: run {
+                    downloadProgress.value = -1f
                     return@withContext
                 }
 
-                val totalLength = responseBody.contentLength()
-                var downloaded = 0L
+                val contentLength = body.contentLength()
+                val source = body.source()
 
-                responseBody.byteStream().use { input ->
-                    FileOutputStream(cacheApk).use { output ->
-                        val buffer = ByteArray(8 * 1024)
-                        var bytesRead: Int
-                        while (input.read(buffer).also { bytesRead = it } != -1) {
-                            output.write(buffer, 0, bytesRead)
-                            downloaded += bytesRead
-                            val progress = if (totalLength > 0) downloaded.toFloat() / totalLength.toFloat() else 0f
-                            _downloadStatus.value = UpdateDownloadStatus.Downloading(progress, downloaded, totalLength)
-                        }
-                        output.flush()
+                val fileName = "InOut-update-$versionTag.apk"
+                val file = File(context.cacheDir, fileName)
+                val sink = FileOutputStream(file)
+
+                var bytesRead: Long = 0
+                val buffer = ByteArray(8 * 1024)
+                while (true) {
+                    val read = source.read(buffer)
+                    if (read == -1) break
+                    sink.write(buffer, 0, read)
+                    bytesRead += read
+                    if (contentLength > 0) {
+                        downloadProgress.value = (bytesRead.toFloat() / contentLength.toFloat()).coerceIn(0f, 0.99f)
                     }
                 }
+                sink.flush()
+                sink.close()
 
-                _downloadStatus.value = UpdateDownloadStatus.Staging
-                _downloadStatus.value = UpdateDownloadStatus.ReadyToInstall(cacheApk)
+                downloadProgress.value = 2f
+                withContext(Dispatchers.Main) {
+                    triggerPackageInstaller(context, file)
+                    delay(3000)
+                    downloadProgress.value = -1f
+                }
             }
         } catch (e: Exception) {
-            _downloadStatus.value = UpdateDownloadStatus.Failed(e.localizedMessage ?: "Network error during download")
+            downloadProgress.value = -1f
         }
     }
 
-    fun promptInstaller(context: Context, apkFile: File) {
+    private fun triggerPackageInstaller(context: Context, apkFile: File) {
         if (!apkFile.exists()) return
 
-        val apkUri: Uri = FileProvider.getUriForFile(
+        val apkUri = FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
             apkFile
@@ -160,10 +145,18 @@ object AppUpdateEngine {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
+
         context.startActivity(installIntent)
     }
+}
 
-    fun resetStatus() {
-        _downloadStatus.value = UpdateDownloadStatus.Idle
+class UpdateRestartReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            val launchIntent = Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            }
+            context.startActivity(launchIntent)
+        }
     }
 }
