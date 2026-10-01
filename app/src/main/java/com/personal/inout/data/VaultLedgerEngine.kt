@@ -1,7 +1,6 @@
 package com.personal.inout.data
 
 import android.content.SharedPreferences
-import java.util.Calendar
 
 sealed class VaultExecutionResult {
     data class Success(val summary: String) : VaultExecutionResult()
@@ -32,13 +31,18 @@ class VaultLedgerEngine(
         val allPockets = dao.getActivePocketsSync()
         val balances = dao.getPocketBalancesSync()
 
-        // 1. Strict Outflow & Transfer Double-Entry Validation
+        if (nature == MovementNature.INFLOW) {
+            if (targetPocketId == null || targetPocketId <= 0L) {
+                return VaultExecutionResult.OverdraftError("Please create or select a bank account to deposit funds into.")
+            }
+        }
+
         if (nature in listOf(MovementNature.OUTFLOW, MovementNature.TRANSFER, MovementNature.PEER_LEND, MovementNature.PEER_REPAY)) {
-            if (sourcePocketId == null) {
-                return VaultExecutionResult.OverdraftError("Source account required.")
+            if (sourcePocketId == null || sourcePocketId <= 0L) {
+                return VaultExecutionResult.OverdraftError("Please create or select an account to pay from.")
             }
             val srcPocket = allPockets.firstOrNull { it.id == sourcePocketId }
-                ?: return VaultExecutionResult.OverdraftError("Source account not found.")
+                ?: return VaultExecutionResult.OverdraftError("Source account not found. Please add an account first.")
 
             val srcBalance = balances.firstOrNull { it.pocketId == sourcePocketId.toString() }?.computedBalance ?: 0.0
 
@@ -52,11 +56,9 @@ class VaultLedgerEngine(
             }
         }
 
-        // 2. Strict Credit Card Payment Invariant
-        // A payment cannot exceed outstanding liability (Available limit cannot exceed approved limit)
         if (nature == MovementNature.CARD_PAYMENT) {
-            if (targetPocketId == null) {
-                return VaultExecutionResult.OverdraftError("Target credit card required.")
+            if (targetPocketId == null || targetPocketId <= 0L) {
+                return VaultExecutionResult.OverdraftError("Please select a credit card to settle.")
             }
             val cardPocket = allPockets.firstOrNull { it.id == targetPocketId }
                 ?: return VaultExecutionResult.OverdraftError("Credit card not found.")
@@ -77,7 +79,6 @@ class VaultLedgerEngine(
             }
         }
 
-        // 3. Execution
         dao.insertFlowRecord(
             FlowRecord(
                 id = 0L,
