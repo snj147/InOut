@@ -44,6 +44,15 @@
                 android:resource="@xml/widget_horizon_glance_info" />
         </receiver>
 
+        <!-- Auto-Relaunch on package update -->
+        <receiver
+            android:name=".util.PackageReplacedReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
