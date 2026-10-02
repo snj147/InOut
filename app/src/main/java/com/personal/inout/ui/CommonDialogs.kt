@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -27,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.personal.inout.data.LedgerPocket
+import com.personal.inout.data.SystemNotice
 
 @Composable
 fun DashboardHeader(
@@ -140,18 +143,16 @@ fun ThemedDatePickerDialog(
 }
 
 /**
- * 6-Digit Master Security PIN Pad Modal
+ * Perfectly Symmetrical, 3-Column Keypad Master PIN Authorization with Dedicated Error Banner
  */
 @Composable
-fun ThemePinPadDialog(
-    title: String,
-    subtitle: String,
-    expectedPin: String = "147258",
+fun CenteredMasterPinPurgeModal(
+    expectedPin: String,
+    theme: ThemeColors,
     onDismiss: () -> Unit,
-    onSuccess: () -> Unit
+    onPurgeConfirmed: () -> Unit
 ) {
-    val theme = LocalThemeColors.current
-    var pin by remember { mutableStateOf("") }
+    var enteredPin by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
 
     Dialog(
@@ -170,33 +171,43 @@ fun ThemePinPadDialog(
                 colors = CardDefaults.cardColors(containerColor = theme.surface),
                 modifier = Modifier
                     .fillMaxWidth(0.88f)
-                    .widthIn(max = 360.dp)
-                    .border(1.dp, theme.borderLight, RoundedCornerShape(16.dp))
-                    .clickable(enabled = false) {}
+                    .widthIn(max = 350.dp)
+                    .border(1.dp, if (isError) theme.mildRed else theme.borderLight, RoundedCornerShape(16.dp))
             ) {
                 Column(
-                    modifier = Modifier.padding(18.dp),
+                    modifier = Modifier.padding(20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(title, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                    Text(subtitle, color = theme.textMuted, fontSize = 11.sp, textAlign = TextAlign.Center)
+                    Text("MASTER PIN AUTHORIZATION", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Text("Enter Master Security PIN to authorize ledger wipe", color = theme.textMuted, fontSize = 11.sp, textAlign = TextAlign.Center)
 
-                    // 6 Dots
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (isError) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(theme.mildRed.copy(alpha = 0.15f))
+                                .padding(vertical = 5.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("⚠ Incorrect Security PIN • Try again", color = theme.mildRed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         repeat(6) { idx ->
-                            val filled = idx < pin.length
+                            val filled = idx < enteredPin.length
                             Box(
                                 modifier = Modifier
                                     .size(12.dp)
                                     .clip(CircleShape)
                                     .background(if (filled) (if (isError) theme.mildRed else theme.accent) else theme.surfaceAlt)
-                                    .border(1.dp, if (filled) theme.accent else theme.borderLight, CircleShape)
+                                    .border(1.dp, if (filled) (if (isError) theme.mildRed else theme.accent) else theme.borderLight, CircleShape)
                             )
                         }
                     }
 
-                    // Numeric Pad Grid
                     val keys = listOf(
                         listOf("1", "2", "3"),
                         listOf("4", "5", "6"),
@@ -204,35 +215,42 @@ fun ThemePinPadDialog(
                         listOf("C", "0", "⌫")
                     )
 
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         keys.forEach { row ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
                                 row.forEach { k ->
                                     Box(
                                         modifier = Modifier
-                                            .size(width = 68.dp, height = 40.dp)
+                                            .weight(1f)
+                                            .height(46.dp)
                                             .clip(RoundedCornerShape(8.dp))
                                             .background(theme.surfaceAlt)
                                             .clickable {
                                                 when (k) {
                                                     "C" -> {
-                                                        pin = ""
+                                                        enteredPin = ""
                                                         isError = false
                                                     }
                                                     "⌫" -> {
-                                                        if (pin.isNotEmpty()) pin = pin.dropLast(1)
+                                                        if (enteredPin.isNotEmpty()) enteredPin = enteredPin.dropLast(1)
                                                         isError = false
                                                     }
                                                     else -> {
-                                                        if (pin.length < 6) {
-                                                            pin += k
+                                                        if (enteredPin.length < 6) {
+                                                            enteredPin += k
                                                             isError = false
-                                                            if (pin.length == 6) {
-                                                                if (pin == expectedPin || pin == "000000") {
-                                                                    onSuccess()
+                                                            if (enteredPin.length == 6) {
+                                                                if (enteredPin == expectedPin || enteredPin == "000000") {
+                                                                    onPurgeConfirmed()
                                                                 } else {
                                                                     isError = true
-                                                                    pin = ""
+                                                                    enteredPin = ""
                                                                 }
                                                             }
                                                         }
@@ -241,7 +259,7 @@ fun ThemePinPadDialog(
                                             },
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Text(k, color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                        Text(k, color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -250,6 +268,142 @@ fun ThemePinPadDialog(
 
                     TextButton(onClick = onDismiss) {
                         Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Set Master Security PIN Dialog
+ */
+@Composable
+fun ThemeSetPinDialog(
+    onDismiss: () -> Unit,
+    onSavePin: (String) -> Unit
+) {
+    val theme = LocalThemeColors.current
+    var pin by remember { mutableStateOf("") }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = theme.surface),
+            modifier = Modifier.fillMaxWidth().padding(16.dp).border(1.dp, theme.borderLight, RoundedCornerShape(16.dp))
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("Set Master Security PIN", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
+                Text("Enter a 6-digit code to authorize critical ledger actions.", color = theme.textMuted, fontSize = 11.sp, textAlign = TextAlign.Center)
+
+                OutlinedTextField(
+                    value = pin,
+                    onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) pin = it },
+                    placeholder = { Text("6-digit PIN", fontSize = 12.sp) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = theme.surfaceAlt,
+                        unfocusedContainerColor = theme.surfaceAlt,
+                        focusedBorderColor = theme.accent,
+                        unfocusedBorderColor = theme.borderLight,
+                        focusedTextColor = theme.textBright,
+                        unfocusedTextColor = theme.textBright
+                    )
+                )
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
+                    Button(
+                        onClick = { if (pin.length == 6) onSavePin(pin) },
+                        colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
+                        enabled = pin.length == 6,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Save PIN", color = theme.bg, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Centered System Notices Modal
+ */
+@Composable
+fun CenteredNoticesModal(
+    notices: List<SystemNotice>,
+    theme: ThemeColors,
+    onDismiss: () -> Unit,
+    onMarkAllRead: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.6f))
+                .clickable { onDismiss() },
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = theme.surface),
+                modifier = Modifier
+                    .fillMaxWidth(0.9f)
+                    .widthIn(max = 400.dp)
+                    .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(text = "System Notices", color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        if (notices.isNotEmpty()) {
+                            TextButton(onClick = onMarkAllRead) {
+                                Text("Mark All Read", color = theme.accent, fontSize = 11.5.sp)
+                            }
+                        }
+                    }
+
+                    if (notices.isEmpty()) {
+                        Text("No pending notifications.", color = theme.textMuted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 16.dp))
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.heightIn(max = 260.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            items(notices, key = { it.id }) { n ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(theme.surfaceAlt)
+                                        .padding(10.dp)
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text(n.title, color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Text(n.message, color = theme.textBright, fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
+                        Text("Close", color = theme.textMuted)
                     }
                 }
             }
@@ -292,7 +446,6 @@ fun ReconcileBalanceCockpitModal(
                     .fillMaxWidth(0.9f)
                     .widthIn(max = 380.dp)
                     .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
-                    .clickable(enabled = false) {}
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -322,7 +475,6 @@ fun ReconcileBalanceCockpitModal(
                         )
                     }
 
-                    // Auto Computed Drift
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
