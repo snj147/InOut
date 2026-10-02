@@ -5,11 +5,10 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AvTimer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,10 +22,11 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.personal.inout.data.FlowRecord
+import com.personal.inout.data.LedgerPocket
+import com.personal.inout.data.LedgerTransaction
 import com.personal.inout.data.MovementNature
-import com.personal.inout.data.PocketBalanceSummary
 import com.personal.inout.data.PocketType
+import kotlin.math.abs
 import kotlin.math.max
 
 enum class CockpitDisplayMode {
@@ -37,30 +37,42 @@ enum class CockpitDisplayMode {
 
 @Composable
 fun DynamicCockpit(
-    pockets: List<PocketBalanceSummary>,
-    flows: List<FlowRecord>,
+    rawPockets: List<LedgerPocket>,
+    pocketBalances: Map<Long, Double>,
+    transactions: List<LedgerTransaction>,
     mode: CockpitDisplayMode,
     configuredDailyBurn: Double,
     isPrivacyMode: Boolean
 ) {
     val theme = LocalThemeColors.current
 
-    val totalLiquid = remember(pockets) {
-        pockets.filter { it.pocketType == PocketType.LIQUID }.sumOf { it.currentBalance }.coerceAtLeast(0.0)
+    val totalLiquid = remember(rawPockets, pocketBalances) {
+        rawPockets
+            .filter { it.type == PocketType.LIQUID || it.type == PocketType.PREPAID_WALLET }
+            .sumOf { pocketBalances[it.id]?.coerceAtLeast(0.0) ?: 0.0 }
     }
-    val totalDues = remember(pockets) {
-        pockets.filter { it.pocketType == PocketType.CREDIT_LINE }.sumOf { it.currentBalance }.coerceAtLeast(0.0)
+
+    val totalCardDues = remember(rawPockets, pocketBalances) {
+        rawPockets
+            .filter { it.type == PocketType.CREDIT_CARD }
+            .sumOf {
+                val bal = pocketBalances[it.id] ?: 0.0
+                if (bal < 0.0) abs(bal) else 0.0
+            }
     }
 
     val dailyPace = if (configuredDailyBurn > 0) configuredDailyBurn else 500.0
-    val maxAvailableDays = if (dailyPace > 0) ((totalLiquid - totalDues).coerceAtLeast(0.0) / dailyPace).toInt() else 0
+    val safeLiquid = (totalLiquid - totalCardDues).coerceAtLeast(0.0)
+    val maxAvailableDays = if (dailyPace > 0) (safeLiquid / dailyPace).toInt() else 0
 
     var selectedSurvivalDayTarget by remember { mutableFloatStateOf(maxAvailableDays.toFloat().coerceAtMost(90f)) }
 
     Card(
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = theme.surface),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(1.dp, theme.borderLight, RoundedCornerShape(18.dp))
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -74,13 +86,13 @@ fun DynamicCockpit(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("RUNWAY SURVIVAL HORIZON", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
+                            Text("RUNWAY SURVIVAL HORIZON (RULE 13)", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
                             val daysText = if (isPrivacyMode) "•• Days" else "$maxAvailableDays Days"
                             Text(daysText, color = theme.textBright, fontSize = 24.sp, fontWeight = FontWeight.Black)
-                            Text("Cash cushion at ₹${dailyPace.toInt()}/day burn", color = theme.textMuted, fontSize = 10.sp)
+                            Text("Safe liquid cushion at ₹${dailyPace.toInt()}/day burn", color = theme.textMuted, fontSize = 10.sp)
                         }
 
-                        val reserveRatio = if (totalLiquid > 0) ((totalLiquid - totalDues) / totalLiquid).toFloat().coerceIn(0f, 1f) else 0f
+                        val reserveRatio = if (totalLiquid > 0) (safeLiquid / totalLiquid).toFloat().coerceIn(0f, 1f) else 0f
                         BatteryCanvas(ratio = reserveRatio, theme = theme)
                     }
 
@@ -90,7 +102,7 @@ fun DynamicCockpit(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Survival Plan Slider", color = theme.accent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text("Survival Plan Pacing", color = theme.accent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             val planCashNeeded = (selectedSurvivalDayTarget * dailyPace).toInt()
                             Text("Target: ${selectedSurvivalDayTarget.toInt()} Days (₹$planCashNeeded)", color = theme.textBright, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
@@ -124,40 +136,40 @@ fun DynamicCockpit(
                 }
 
                 CockpitDisplayMode.CASH_VS_DEBT_RADAR -> {
-                    Text("CASH VS DEBT HORIZON", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
+                    Text("CASH VS UNBILLED LIABILITIES (RULE 3 & 4)", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("Cash & Bank", color = theme.textMuted, fontSize = 11.sp)
+                            Text("Liquid Banks & Cash", color = theme.textMuted, fontSize = 11.sp)
                             Text(if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", totalLiquid)}", color = theme.mildGreen, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         }
                         Column(horizontalAlignment = Alignment.End) {
-                            Text("Cards & Loans", color = theme.textMuted, fontSize = 11.sp)
-                            Text(if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", totalDues)}", color = theme.mildRed, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            Text("Card Dues & Borrowings", color = theme.textMuted, fontSize = 11.sp)
+                            Text(if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", totalCardDues)}", color = theme.mildRed, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         }
                     }
-                    val netAvailable = (totalLiquid - totalDues).coerceAtLeast(0.0)
+                    val netAvailable = (totalLiquid - totalCardDues).coerceAtLeast(0.0)
                     LinearProgressIndicator(
-                        progress = if (totalLiquid + totalDues > 0) (totalLiquid / (totalLiquid + totalDues)).toFloat() else 1f,
+                        progress = { if (totalLiquid + totalCardDues > 0) (totalLiquid / (totalLiquid + totalCardDues)).toFloat().coerceIn(0f, 1f) else 1f },
                         color = theme.mildGreen,
                         trackColor = theme.mildRed,
-                        modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp))
+                        modifier = Modifier.fillMaxWidth().height(7.dp).clip(RoundedCornerShape(3.dp))
                     )
-                    Text("Net Solvent Headroom: ₹${String.format("%,.0f", netAvailable)}", color = theme.accent, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
+                    Text("True Safe Liquid Headroom: ₹${String.format("%,.0f", netAvailable)}", color = theme.accent, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
                 }
 
                 CockpitDisplayMode.WEEKLY_SPEND_PULSE -> {
                     Text("DAILY SPENDING EQUALIZER (LAST 7 DAYS)", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
-                    val last7DaysSpend = remember(flows) {
+                    val last7DaysSpend = remember(transactions) {
                         val dayBuckets = DoubleArray(7) { 0.0 }
                         val now = System.currentTimeMillis()
-                        flows.filter { it.nature == MovementNature.OUTFLOW }.forEach { f ->
-                            val diffDays = ((now - f.timestamp) / (1000 * 60 * 60 * 24)).toInt()
+                        transactions.filter { it.movementNature == MovementNature.OPERATING_EXPENSE }.forEach { tx ->
+                            val diffDays = ((now - tx.timestamp) / (1000 * 60 * 60 * 24)).toInt()
                             if (diffDays in 0..6) {
-                                dayBuckets[6 - diffDays] += (f.amount ?: 0.0)
+                                dayBuckets[6 - diffDays] += tx.amount
                             }
                         }
                         dayBuckets.toList()
@@ -176,7 +188,7 @@ fun DynamicCockpit(
                                     .padding(horizontal = 3.dp)
                                     .fillMaxHeight(hRatio)
                                     .clip(RoundedCornerShape(4.dp))
-                                    .background(theme.accent.copy(alpha = if (idx == 6) 1f else 0.55f))
+                                    .background(theme.accent.copy(alpha = if (idx == 6) 1f else 0.45f))
                             )
                         }
                     }
