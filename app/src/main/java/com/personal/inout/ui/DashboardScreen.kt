@@ -26,7 +26,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -63,14 +62,6 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.abs
-
-enum class WizardType {
-    EXPENSE,
-    INFLOW,
-    TRANSFER,
-    CARD_BILL,
-    PEER_LEND_BORROW
-}
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -181,7 +172,6 @@ fun DashboardScreen(db: AppDatabase) {
     var selectedTab by remember { mutableIntStateOf(0) }
     var isPrivacyMode by remember { mutableStateOf(false) }
 
-    var activeWizard by remember { mutableStateOf<WizardType?>(null) }
     var showUnifiedEntrySheet by remember { mutableStateOf(false) }
     var selectedPocketIdForEntry by remember { mutableStateOf<Long?>(null) }
 
@@ -253,7 +243,7 @@ fun DashboardScreen(db: AppDatabase) {
                         flags = Intent.FLAG_ACTIVITY_NEW_TASK
                     }
                     context.startActivity(intent)
-                    alertManager.showAlert("Allow app installs from InOut, then tap Install again", AlertType.WARNING)
+                    alertManager.showAlert("Enable permission, then tap Install", AlertType.WARNING)
                     return
                 }
             }
@@ -271,47 +261,6 @@ fun DashboardScreen(db: AppDatabase) {
             context.startActivity(installIntent)
         } catch (e: Exception) {
             alertManager.showAlert("Install invocation failed: ${e.message}", AlertType.ERROR)
-        }
-    }
-
-    fun processReceiptResult(bitmap: Bitmap) {
-        scope.launch {
-            try {
-                val parsed = ReceiptScanner.processReceiptBitmap(bitmap)
-                ocrPrefilledNote = parsed.merchant
-                ocrPrefilledAmount = parsed.total
-                selectedPocketIdForEntry = rawPockets.firstOrNull { it.type == PocketType.LIQUID }?.id
-                showUnifiedEntrySheet = true
-                alertManager.showAlert("Parsed: ${parsed.merchant} (₹${String.format("%,.0f", parsed.total ?: 0.0)})", AlertType.INFO)
-            } catch (e: Exception) {
-                alertManager.showAlert("OCR Failed: ${e.localizedMessage}", AlertType.ERROR)
-            }
-        }
-    }
-
-    val cameraSnapLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap: Bitmap? ->
-        if (bitmap != null) processReceiptResult(bitmap)
-    }
-
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) cameraSnapLauncher.launch(null)
-        else alertManager.showAlert("Camera permission required for OCR receipts", AlertType.WARNING)
-    }
-
-    val photoPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
-        if (uri != null) {
-            scope.launch {
-                try {
-                    val parsed = ReceiptScanner.processReceipt(context, uri)
-                    ocrPrefilledNote = parsed.merchant
-                    ocrPrefilledAmount = parsed.total
-                    selectedPocketIdForEntry = rawPockets.firstOrNull { it.type == PocketType.LIQUID }?.id
-                    showUnifiedEntrySheet = true
-                    alertManager.showAlert("Parsed: ${parsed.merchant} (₹${String.format("%,.0f", parsed.total ?: 0.0)})", AlertType.INFO)
-                } catch (e: Exception) {
-                    alertManager.showAlert("OCR Failed: ${e.localizedMessage}", AlertType.ERROR)
-                }
-            }
         }
     }
 
@@ -351,10 +300,7 @@ fun DashboardScreen(db: AppDatabase) {
                         ).forEach { (idx, title, icon) ->
                             NavigationBarItem(
                                 selected = selectedTab == idx,
-                                onClick = {
-                                    selectedTab = idx
-                                    isFabExpanded = false
-                                },
+                                onClick = { selectedTab = idx },
                                 icon = { Icon(imageVector = icon, contentDescription = title) },
                                 label = {
                                     Text(
@@ -376,95 +322,28 @@ fun DashboardScreen(db: AppDatabase) {
                 },
                 floatingActionButton = {
                     if (selectedTab == 0 || selectedTab == 1) {
-                        val rotation by animateFloatAsState(
-                            targetValue = if (isFabExpanded) 45f else 0f,
-                            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
-                            label = "fabRotation"
-                        )
-
-                        Column(
-                            horizontalAlignment = Alignment.End,
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        FloatingActionButton(
+                            onClick = {
+                                if (selectedTab == 1) {
+                                    prefilledCreatePocketType = PocketType.LIQUID
+                                    showCreatePocketDialog = true
+                                } else {
+                                    ocrPrefilledNote = ""
+                                    ocrPrefilledAmount = null
+                                    selectedPocketIdForEntry = rawPockets.firstOrNull { it.type == PocketType.LIQUID }?.id
+                                    showUnifiedEntrySheet = true
+                                }
+                            },
+                            containerColor = theme.accent,
+                            contentColor = theme.bg,
+                            shape = CircleShape,
                             modifier = Modifier.navigationBarsPadding()
                         ) {
-                            AnimatedVisibility(
-                                visible = isFabExpanded,
-                                enter = fadeIn() + slideInVertically { it / 2 },
-                                exit = fadeOut() + slideOutVertically { it / 2 }
-                            ) {
-                                Column(
-                                    horizontalAlignment = Alignment.End,
-                                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                                ) {
-                                    FloatingActionButton(
-                                        onClick = {
-                                            isFabExpanded = false
-                                            ocrPrefilledNote = ""
-                                            ocrPrefilledAmount = null
-                                            selectedPocketIdForEntry = rawPockets.firstOrNull { it.type == PocketType.LIQUID }?.id
-                                            showUnifiedEntrySheet = true
-                                        },
-                                        modifier = Modifier.size(46.dp),
-                                        containerColor = theme.accent,
-                                        contentColor = theme.bg,
-                                        shape = CircleShape
-                                    ) {
-                                        Icon(imageVector = Icons.Default.EditNote, contentDescription = "Unified Entry", modifier = Modifier.size(22.dp))
-                                    }
-
-                                    FloatingActionButton(
-                                        onClick = {
-                                            isFabExpanded = false
-                                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                                                cameraSnapLauncher.launch(null)
-                                            } else {
-                                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                                            }
-                                        },
-                                        modifier = Modifier.size(46.dp),
-                                        containerColor = theme.accent,
-                                        contentColor = theme.bg,
-                                        shape = CircleShape
-                                    ) {
-                                        Icon(imageVector = Icons.Default.PhotoCamera, contentDescription = "Camera OCR", modifier = Modifier.size(20.dp))
-                                    }
-
-                                    FloatingActionButton(
-                                        onClick = {
-                                            isFabExpanded = false
-                                            photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-                                        },
-                                        modifier = Modifier.size(46.dp),
-                                        containerColor = theme.accent,
-                                        contentColor = theme.bg,
-                                        shape = CircleShape
-                                    ) {
-                                        Icon(imageVector = Icons.Default.Image, contentDescription = "Gallery OCR", modifier = Modifier.size(20.dp))
-                                    }
-                                }
-                            }
-
-                            FloatingActionButton(
-                                onClick = {
-                                    if (selectedTab == 1) {
-                                        prefilledCreatePocketType = PocketType.LIQUID
-                                        showCreatePocketDialog = true
-                                    } else {
-                                        isFabExpanded = !isFabExpanded
-                                    }
-                                },
-                                containerColor = theme.accent,
-                                contentColor = theme.bg,
-                                shape = CircleShape
-                            ) {
-                                Icon(
-                                    imageVector = if (selectedTab == 1) Icons.Default.AddCard else Icons.Default.Add,
-                                    contentDescription = "Action",
-                                    modifier = Modifier
-                                        .size(24.dp)
-                                        .rotate(if (selectedTab == 0) rotation else 0f)
-                                )
-                            }
+                            Icon(
+                                imageVector = if (selectedTab == 1) Icons.Default.AddCard else Icons.Default.Add,
+                                contentDescription = "Add Entry",
+                                modifier = Modifier.size(24.dp)
+                            )
                         }
                     }
                 }
@@ -553,90 +432,12 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
-                                item {
-                                    Card(
-                                        shape = RoundedCornerShape(14.dp),
-                                        colors = CardDefaults.cardColors(containerColor = theme.surface),
-                                        modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
-                                    ) {
-                                        Column(
-                                            modifier = Modifier.padding(12.dp),
-                                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    text = "QUICK ACTIONS",
-                                                    color = theme.textMuted,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    letterSpacing = 1.sp
-                                                )
-                                                Text(
-                                                    text = "Instant Movement",
-                                                    color = theme.accent,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-
-                                            LazyRow(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                            ) {
-                                                item {
-                                                    ActionPillButton(
-                                                        title = "- Expense",
-                                                        icon = Icons.Default.TrendingDown,
-                                                        color = theme.mildRed,
-                                                        onClick = { activeWizard = WizardType.EXPENSE }
-                                                    )
-                                                }
-                                                item {
-                                                    ActionPillButton(
-                                                        title = "+ Inflow",
-                                                        icon = Icons.Default.TrendingUp,
-                                                        color = theme.mildGreen,
-                                                        onClick = { activeWizard = WizardType.INFLOW }
-                                                    )
-                                                }
-                                                item {
-                                                    ActionPillButton(
-                                                        title = "⇄ Transfer",
-                                                        icon = Icons.Default.SwapHoriz,
-                                                        color = theme.accent,
-                                                        onClick = { activeWizard = WizardType.TRANSFER }
-                                                    )
-                                                }
-                                                item {
-                                                    ActionPillButton(
-                                                        title = "💳 Pay Card Bill",
-                                                        icon = Icons.Default.CreditCard,
-                                                        color = theme.accent,
-                                                        onClick = { activeWizard = WizardType.CARD_BILL }
-                                                    )
-                                                }
-                                                item {
-                                                    ActionPillButton(
-                                                        title = "👥 Lend / Borrow",
-                                                        icon = Icons.Default.People,
-                                                        color = theme.accent,
-                                                        onClick = { activeWizard = WizardType.PEER_LEND_BORROW }
-                                                    )
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
+                                // Quick Action Pills Card Removed - Clean Minimalist Flow
                                 item {
                                     Row(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .padding(top = 4.dp),
+                                            .padding(top = 8.dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
@@ -663,11 +464,11 @@ fun DashboardScreen(db: AppDatabase) {
                                         Box(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .padding(vertical = 32.dp),
+                                                .padding(vertical = 40.dp),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Text(
-                                                text = "No records logged yet. Tap an action above to start.",
+                                                text = "No records logged yet. Tap + below to add entry.",
                                                 color = theme.textMuted,
                                                 fontSize = 12.sp
                                             )
@@ -818,52 +619,6 @@ fun DashboardScreen(db: AppDatabase) {
                     }
                 }
 
-                if (isFabExpanded) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.4f))
-                            .clickable { isFabExpanded = false }
-                    )
-                }
-
-                activeWizard?.let { wizard ->
-                    GuidedActionWizardDialog(
-                        type = wizard,
-                        rawPockets = rawPockets,
-                        pocketBalances = pocketBalances,
-                        theme = theme,
-                        onDismiss = { activeWizard = null },
-                        onRequestNewAccount = { reqType ->
-                            prefilledCreatePocketType = reqType
-                            showCreatePocketDialog = true
-                        },
-                        onCommit = { nature, srcId, tgtId, amt, cat, note, date, isRec, freq ->
-                            scope.launch {
-                                when (val res = ledgerEngine.recordMovement(
-                                    movementNature = nature,
-                                    sourcePocketId = srcId,
-                                    targetPocketId = tgtId,
-                                    amount = amt,
-                                    category = cat,
-                                    description = note,
-                                    timestamp = date,
-                                    autoSplitEnabled = autoSplitEnabled,
-                                    isRecurring = isRec,
-                                    recurringFrequency = freq
-                                )) {
-                                    is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
-                                    is VaultExecutionResult.DuplicateWarning -> alertManager.showAlert(res.message, AlertType.WARNING)
-                                    is VaultExecutionResult.Success -> {
-                                        alertManager.showAlert(res.summary, AlertType.SUCCESS)
-                                        activeWizard = null
-                                    }
-                                }
-                            }
-                        }
-                    )
-                }
-
                 if (showUnifiedEntrySheet) {
                     UnifiedEntrySheet(
                         allPockets = rawPockets,
@@ -1007,7 +762,7 @@ fun DashboardScreen(db: AppDatabase) {
                         title = { Text(text = "Update Daily Burn Target", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
                         text = {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(text = "Configure your baseline daily operational burn ceiling.", color = theme.textMuted, fontSize = 12.sp)
+                                Text(text = "Configure baseline daily operational burn ceiling.", color = theme.textMuted, fontSize = 12.sp)
                                 OutlinedTextField(
                                     value = burnInput,
                                     onValueChange = { burnInput = it },
@@ -1137,350 +892,6 @@ fun DashboardScreen(db: AppDatabase) {
             }
 
             VaultFloatingTopOverlay(alertManager = alertManager, theme = theme)
-        }
-    }
-}
-
-@Composable
-fun ActionPillButton(
-    title: String,
-    icon: ImageVector,
-    color: Color,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(color.copy(alpha = 0.15f))
-            .border(1.dp, color.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
-            .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 9.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Icon(imageVector = icon, contentDescription = title, tint = color, modifier = Modifier.size(16.dp))
-        Text(text = title, color = color, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-fun GuidedActionWizardDialog(
-    type: WizardType,
-    rawPockets: List<LedgerPocket>,
-    pocketBalances: Map<Long, Double>,
-    theme: ThemeColors,
-    onDismiss: () -> Unit,
-    onRequestNewAccount: (PocketType) -> Unit,
-    onCommit: (
-        nature: MovementNature,
-        sourcePocketId: Long,
-        targetPocketId: Long?,
-        amount: Double,
-        category: String,
-        note: String,
-        timestamp: Long,
-        isRecurring: Boolean,
-        frequency: String
-    ) -> Unit
-) {
-    var rawAmount by remember { mutableStateOf("") }
-    var note by remember { mutableStateOf("") }
-    var selectedCategoryId by remember { mutableStateOf("General") }
-
-    val liquidPockets = remember(rawPockets) { rawPockets.filter { it.type == PocketType.LIQUID || it.type == PocketType.PREPAID_WALLET } }
-    val cardPockets = remember(rawPockets) { rawPockets.filter { it.type == PocketType.CREDIT_CARD } }
-    val peerPockets = remember(rawPockets) { rawPockets.filter { it.type == PocketType.PEER_RECEIVABLE || it.type == PocketType.PEER_PAYABLE } }
-
-    var selectedSourceId by remember { mutableStateOf(liquidPockets.firstOrNull()?.id) }
-    var selectedTargetId by remember {
-        mutableStateOf(
-            when (type) {
-                WizardType.INFLOW -> liquidPockets.firstOrNull()?.id
-                WizardType.TRANSFER -> rawPockets.firstOrNull { it.id != (liquidPockets.firstOrNull()?.id ?: -1L) }?.id
-                WizardType.CARD_BILL -> cardPockets.firstOrNull()?.id
-                WizardType.PEER_LEND_BORROW -> peerPockets.firstOrNull()?.id
-                else -> null
-            }
-        )
-    }
-
-    var peerModeIsLend by remember { mutableStateOf(true) }
-    var isRecurring by remember { mutableStateOf(false) }
-    var frequency by remember { mutableStateOf("MONTHLY") }
-
-    var selectedDateEpoch by remember { mutableStateOf(System.currentTimeMillis()) }
-    var selectedDatePreset by remember { mutableStateOf("TODAY") }
-    var showDatePickerDialog by remember { mutableStateOf(false) }
-
-    val computedAmount = remember(rawAmount) { MathEvaluator.evaluate(rawAmount) }
-
-    val categories = when (type) {
-        WizardType.EXPENSE -> listOf("Food & Dining", "Groceries", "Transport", "Bills", "Shopping", "Health", "General")
-        WizardType.INFLOW -> listOf("Salary", "Investment", "Freelance", "Refund", "Income")
-        WizardType.TRANSFER -> listOf("Internal Transfer", "Savings Pot")
-        WizardType.CARD_BILL -> listOf("Card Payment", "Bill Payment")
-        WizardType.PEER_LEND_BORROW -> listOf("Peer Debt", "Personal Loan")
-    }
-
-    if (showDatePickerDialog) {
-        CustomCalendarDialog(
-            initialDateMillis = selectedDateEpoch,
-            onDismiss = { showDatePickerDialog = false },
-            onDateSelected = { pickedMillis ->
-                selectedDateEpoch = pickedMillis
-                selectedDatePreset = "CUSTOM"
-                showDatePickerDialog = false
-            }
-        )
-    }
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.6f))
-                .clickable { onDismiss() },
-            contentAlignment = Alignment.Center
-        ) {
-            Card(
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = theme.surface),
-                modifier = Modifier
-                    .fillMaxWidth(0.9f)
-                    .widthIn(max = 400.dp)
-                    .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
-                    .clickable(enabled = false) {}
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        text = when (type) {
-                            WizardType.EXPENSE -> "Record Expense Outflow"
-                            WizardType.INFLOW -> "Record Inflow Receipt"
-                            WizardType.TRANSFER -> "Internal Transfer"
-                            WizardType.CARD_BILL -> "Pay Credit Card Liability"
-                            WizardType.PEER_LEND_BORROW -> if (peerModeIsLend) "Lend Money to Contact" else "Borrow Money from Contact"
-                        },
-                        color = theme.textBright,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-
-                    if (type == WizardType.PEER_LEND_BORROW) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (peerModeIsLend) theme.accent else theme.surfaceAlt)
-                                    .clickable { peerModeIsLend = true }
-                                    .padding(vertical = 8.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("I Gave (Lent)", color = if (peerModeIsLend) theme.bg else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(if (!peerModeIsLend) theme.accent else theme.surfaceAlt)
-                                    .clickable { peerModeIsLend = false }
-                                    .padding(vertical = 8.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("I Took (Borrowed)", color = if (!peerModeIsLend) theme.bg else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-
-                    Column {
-                        OutlinedTextField(
-                            value = rawAmount,
-                            onValueChange = { rawAmount = it },
-                            placeholder = { Text("Amount in ₹ (e.g. 150+40)") },
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = theme.surfaceAlt,
-                                unfocusedContainerColor = theme.surfaceAlt,
-                                focusedBorderColor = theme.accent,
-                                unfocusedBorderColor = theme.borderLight,
-                                focusedTextColor = theme.textBright,
-                                unfocusedTextColor = theme.textBright
-                            )
-                        )
-                        if (computedAmount != null && rawAmount.contains("+")) {
-                            Text("Evaluated: ₹$computedAmount", color = theme.accent, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp))
-                        }
-                    }
-
-                    val activeSrc = liquidPockets.firstOrNull { it.id == selectedSourceId } ?: liquidPockets.firstOrNull()
-                    val srcBal = pocketBalances[activeSrc?.id ?: 0L] ?: 0.0
-
-                    AccountCardSelector(
-                        title = activeSrc?.name ?: "No Bank Account Found",
-                        sub = if (activeSrc == null) "+ Add bank account" else "Available: ₹${String.format("%,.0f", srcBal.coerceAtLeast(0.0))}",
-                        theme = theme,
-                        accounts = liquidPockets.map { p ->
-                            val b = pocketBalances[p.id] ?: 0.0
-                            Triple(p.id, p.name, "₹${String.format("%,.0f", b.coerceAtLeast(0.0))}")
-                        },
-                        onSelect = { selectedSourceId = it },
-                        onAdd = { onRequestNewAccount(PocketType.LIQUID) }
-                    )
-
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        categories.forEach { cat ->
-                            val isSel = selectedCategoryId == cat
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isSel) theme.accent else theme.surfaceAlt)
-                                    .clickable { selectedCategoryId = cat }
-                                    .padding(horizontal = 8.dp, vertical = 5.dp)
-                            ) {
-                                Text(cat, color = if (isSel) theme.bg else theme.textBright, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-
-                    OutlinedTextField(
-                        value = note,
-                        onValueChange = { note = it },
-                        placeholder = { Text("Narration (Optional)") },
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = theme.surfaceAlt,
-                            unfocusedContainerColor = theme.surfaceAlt,
-                            focusedBorderColor = theme.accent,
-                            unfocusedBorderColor = theme.borderLight,
-                            focusedTextColor = theme.textBright,
-                            unfocusedTextColor = theme.textBright
-                        )
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        OutlinedButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text("Cancel", color = theme.textMuted)
-                        }
-
-                        Button(
-                            onClick = {
-                                val amt = computedAmount ?: return@Button
-                                val srcId = selectedSourceId ?: return@Button
-
-                                val finalNature = when (type) {
-                                    WizardType.EXPENSE -> MovementNature.OPERATING_EXPENSE
-                                    WizardType.INFLOW -> MovementNature.OPERATING_INCOME
-                                    WizardType.TRANSFER -> MovementNature.TRANSFER
-                                    WizardType.CARD_BILL -> MovementNature.OPERATING_EXPENSE
-                                    WizardType.PEER_LEND_BORROW -> MovementNature.TRANSFER
-                                }
-
-                                onCommit(
-                                    finalNature,
-                                    srcId,
-                                    selectedTargetId,
-                                    amt,
-                                    selectedCategoryId,
-                                    note.ifBlank { selectedCategoryId },
-                                    selectedDateEpoch,
-                                    isRecurring,
-                                    frequency
-                                )
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.weight(1.3f),
-                            enabled = computedAmount != null && computedAmount > 0.0 && selectedSourceId != null
-                        ) {
-                            Text("Commit", color = theme.bg, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun AccountCardSelector(
-    title: String,
-    sub: String,
-    theme: ThemeColors,
-    accounts: List<Triple<Long, String, String>>,
-    onSelect: (Long) -> Unit,
-    onAdd: () -> Unit
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    Box(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(theme.surfaceAlt)
-                .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
-                .clickable { expanded = true }
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(text = title, color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                Text(text = sub, color = theme.textMuted, fontSize = 10.5.sp)
-            }
-            Icon(imageVector = Icons.Default.ArrowDropDown, contentDescription = "Select", tint = theme.accent)
-        }
-
-        DropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false },
-            modifier = Modifier.background(theme.surface)
-        ) {
-            accounts.forEach { (id, name, balanceStr) ->
-                DropdownMenuItem(
-                    text = {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(name, color = theme.textBright, fontWeight = FontWeight.SemiBold)
-                            Spacer(Modifier.width(16.dp))
-                            Text(balanceStr, color = theme.textMuted)
-                        }
-                    },
-                    onClick = {
-                        onSelect(id)
-                        expanded = false
-                    }
-                )
-            }
-            HorizontalDivider(color = theme.borderLight)
-            DropdownMenuItem(
-                text = { Text("+ Add New Account", color = theme.accent, fontWeight = FontWeight.Bold) },
-                onClick = {
-                    expanded = false
-                    onAdd()
-                }
-            )
         }
     }
 }
@@ -1733,6 +1144,9 @@ private fun CenteredNoticesModal(
     }
 }
 
+/**
+ * Perfectly Symmetrical, 3-Column Keypad Master PIN Authorization with Error Banner
+ */
 @Composable
 private fun CenteredMasterPinPurgeModal(
     expectedPin: String,
@@ -1759,19 +1173,34 @@ private fun CenteredMasterPinPurgeModal(
                 colors = CardDefaults.cardColors(containerColor = theme.surface),
                 modifier = Modifier
                     .fillMaxWidth(0.88f)
-                    .widthIn(max = 360.dp)
+                    .widthIn(max = 350.dp)
                     .border(1.dp, if (isError) theme.mildRed else theme.borderLight, RoundedCornerShape(16.dp))
                     .clickable(enabled = false) {}
             ) {
                 Column(
-                    modifier = Modifier.padding(18.dp),
+                    modifier = Modifier.padding(20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("MASTER PIN AUTHORIZATION", color = if (isError) theme.mildRed else theme.accent, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    Text("Enter Master Security PIN to authorize total ledger wipe:", color = theme.textMuted, fontSize = 11.sp, textAlign = TextAlign.Center)
+                    Text("MASTER PIN AUTHORIZATION", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Text("Enter Master Security PIN to authorize ledger wipe", color = theme.textMuted, fontSize = 11.sp, textAlign = TextAlign.Center)
 
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Dedicated Animated Error Banner
+                    if (isError) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(theme.mildRed.copy(alpha = 0.15f))
+                                .padding(vertical = 5.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("⚠ Incorrect Security PIN • Try again", color = theme.mildRed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    // 6 Dots Indicator
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         repeat(6) { idx ->
                             val filled = idx < enteredPin.length
                             Box(
@@ -1779,11 +1208,12 @@ private fun CenteredMasterPinPurgeModal(
                                     .size(12.dp)
                                     .clip(CircleShape)
                                     .background(if (filled) (if (isError) theme.mildRed else theme.accent) else theme.surfaceAlt)
-                                    .border(1.dp, if (filled) theme.accent else theme.borderLight, CircleShape)
+                                    .border(1.dp, if (filled) (if (isError) theme.mildRed else theme.accent) else theme.borderLight, CircleShape)
                             )
                         }
                     }
 
+                    // Strict 3x4 Balanced Keypad Grid
                     val keys = listOf(
                         listOf("1", "2", "3"),
                         listOf("4", "5", "6"),
@@ -1791,13 +1221,20 @@ private fun CenteredMasterPinPurgeModal(
                         listOf("C", "0", "⌫")
                     )
 
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
                         keys.forEach { row ->
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
                                 row.forEach { k ->
                                     Box(
                                         modifier = Modifier
-                                            .size(width = 68.dp, height = 40.dp)
+                                            .weight(1f)
+                                            .height(46.dp)
                                             .clip(RoundedCornerShape(8.dp))
                                             .background(theme.surfaceAlt)
                                             .clickable {
@@ -1828,7 +1265,7 @@ private fun CenteredMasterPinPurgeModal(
                                             },
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        Text(k, color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                        Text(k, color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
@@ -2349,6 +1786,9 @@ private fun EditTransactionDialog(
     )
 }
 
+/**
+ * Balanced, Color-Coded Account Creation Form with Full Loan EMI & Interest Fields
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CreateAccountDialog(
@@ -2396,66 +1836,81 @@ private fun CreateAccountDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.6f))
+                .background(Color.Black.copy(alpha = 0.65f))
                 .clickable { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = theme.surface),
                 modifier = Modifier
-                    .fillMaxWidth(0.9f)
-                    .widthIn(max = 400.dp)
-                    .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
+                    .fillMaxWidth(0.92f)
+                    .widthIn(max = 420.dp)
+                    .border(1.dp, theme.borderLight, RoundedCornerShape(16.dp))
                     .clickable(enabled = false) {}
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(text = "NEW ACCOUNT SETUP", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(text = "NEW ACCOUNT SETUP", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
 
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        listOf(
-                            Triple(PocketType.LIQUID, "Bank", theme.mildGreen),
-                            Triple(PocketType.PREPAID_WALLET, "Wallet", theme.mildGreen),
-                            Triple(PocketType.CREDIT_CARD, "Card", theme.mildRed),
-                            Triple(PocketType.GOAL_POT, "Goal", theme.accent),
-                            Triple(PocketType.INVESTMENT, "Invest", theme.accent),
-                            Triple(PocketType.PEER_RECEIVABLE, "Peer", theme.textBright),
-                            Triple(PocketType.LIABILITY_LOAN, "Loan", theme.mildRed)
-                        ).forEach { (t, lbl, pillColor) ->
-                            val isSel = type == t
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isSel) pillColor else theme.surfaceAlt)
-                                    .border(1.dp, if (isSel) pillColor else theme.borderLight, RoundedCornerShape(6.dp))
-                                    .clickable { type = t }
-                                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = lbl,
-                                    color = if (isSel) theme.bg else theme.textBright,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                    // Strict 2-Row Classification Grid (Balanced 4 on Row 1, 3 on Row 2)
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(
+                                Triple(PocketType.LIQUID, "Bank", theme.mildGreen),
+                                Triple(PocketType.PREPAID_WALLET, "Wallet", theme.mildGreen),
+                                Triple(PocketType.CREDIT_CARD, "Card", theme.mildRed),
+                                Triple(PocketType.GOAL_POT, "Goal", theme.accent)
+                            ).forEach { (t, lbl, c) ->
+                                val isSel = type == t
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(if (isSel) c else theme.surfaceAlt)
+                                        .border(1.dp, if (isSel) c else theme.borderLight, RoundedCornerShape(6.dp))
+                                        .clickable { type = t }
+                                        .padding(vertical = 7.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(lbl, color = if (isSel) theme.bg else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(
+                                Triple(PocketType.INVESTMENT, "Invest", theme.accent),
+                                Triple(PocketType.PEER_RECEIVABLE, "Peer", Color(0xFF8BA7C7)),
+                                Triple(PocketType.LIABILITY_LOAN, "Loan", theme.mildRed)
+                            ).forEach { (t, lbl, c) ->
+                                val isSel = type == t
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(if (isSel) c else theme.surfaceAlt)
+                                        .border(1.dp, if (isSel) c else theme.borderLight, RoundedCornerShape(6.dp))
+                                        .clickable { type = t }
+                                        .padding(vertical = 7.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(lbl, color = if (isSel) theme.bg else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
 
+                    // Account Name Field (Enabled and interactive)
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
-                        placeholder = { Text("Account Name (e.g. HDFC Salary, Emergency Pot)") },
+                        placeholder = { Text("Account Name (e.g., HDFC Salary, Home Loan)", fontSize = 12.sp) },
                         singleLine = true,
                         shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = theme.surfaceAlt,
                             unfocusedContainerColor = theme.surfaceAlt,
@@ -2466,15 +1921,16 @@ private fun CreateAccountDialog(
                         )
                     )
 
+                    // Contextual Symmetrical Field Inputs
                     when (type) {
                         PocketType.LIQUID, PocketType.PREPAID_WALLET -> {
                             OutlinedTextField(
                                 value = initialValuation,
                                 onValueChange = { initialValuation = it },
-                                placeholder = { Text("Opening Balance in ₹") },
+                                placeholder = { Text("Current Opening Balance in ₹", fontSize = 12.sp) },
                                 singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth().height(52.dp),
+                                modifier = Modifier.fillMaxWidth(),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = theme.surfaceAlt,
                                     unfocusedContainerColor = theme.surfaceAlt,
@@ -2485,15 +1941,16 @@ private fun CreateAccountDialog(
                                 )
                             )
                         }
+
                         PocketType.CREDIT_CARD -> {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                 OutlinedTextField(
                                     value = limit,
                                     onValueChange = { limit = it },
-                                    placeholder = { Text("Credit Limit ₹") },
+                                    placeholder = { Text("Limit ₹", fontSize = 12.sp) },
                                     singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.weight(1.2f).height(52.dp),
+                                    modifier = Modifier.weight(1.2f),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedContainerColor = theme.surfaceAlt,
                                         unfocusedContainerColor = theme.surfaceAlt,
@@ -2506,10 +1963,10 @@ private fun CreateAccountDialog(
                                 OutlinedTextField(
                                     value = dueDay,
                                     onValueChange = { dueDay = it },
-                                    placeholder = { Text("Due Day (1-31)") },
+                                    placeholder = { Text("Due Day (1-31)", fontSize = 12.sp) },
                                     singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.weight(0.8f).height(52.dp),
+                                    modifier = Modifier.weight(0.8f),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedContainerColor = theme.surfaceAlt,
                                         unfocusedContainerColor = theme.surfaceAlt,
@@ -2521,14 +1978,15 @@ private fun CreateAccountDialog(
                                 )
                             }
                         }
+
                         PocketType.GOAL_POT -> {
                             OutlinedTextField(
                                 value = targetAmt,
                                 onValueChange = { targetAmt = it },
-                                placeholder = { Text("Target Goal Amount ₹") },
+                                placeholder = { Text("Target Goal Amount in ₹", fontSize = 12.sp) },
                                 singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth().height(52.dp),
+                                modifier = Modifier.fillMaxWidth(),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = theme.surfaceAlt,
                                     unfocusedContainerColor = theme.surfaceAlt,
@@ -2544,7 +2002,7 @@ private fun CreateAccountDialog(
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(theme.surfaceAlt)
                                     .clickable { showDatePicker = true }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    .padding(horizontal = 12.dp, vertical = 12.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -2552,14 +2010,15 @@ private fun CreateAccountDialog(
                                 Icon(imageVector = Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
                             }
                         }
+
                         PocketType.INVESTMENT, PocketType.FIXED_ASSET -> {
                             OutlinedTextField(
                                 value = initialValuation,
                                 onValueChange = { initialValuation = it },
-                                placeholder = { Text("Current Investment / WDV Valuation in ₹") },
+                                placeholder = { Text("Current Investment / WDV Valuation in ₹", fontSize = 12.sp) },
                                 singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth().height(52.dp),
+                                modifier = Modifier.fillMaxWidth(),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = theme.surfaceAlt,
                                     unfocusedContainerColor = theme.surfaceAlt,
@@ -2570,14 +2029,15 @@ private fun CreateAccountDialog(
                                 )
                             )
                         }
+
                         PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE -> {
                             OutlinedTextField(
                                 value = initialValuation,
                                 onValueChange = { initialValuation = it },
-                                placeholder = { Text("Initial Amount Owed in ₹") },
+                                placeholder = { Text("Initial Amount Lent / Borrowed in ₹", fontSize = 12.sp) },
                                 singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth().height(52.dp),
+                                modifier = Modifier.fillMaxWidth(),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = theme.surfaceAlt,
                                     unfocusedContainerColor = theme.surfaceAlt,
@@ -2588,46 +2048,87 @@ private fun CreateAccountDialog(
                                 )
                             )
                         }
+
+                        // Full Balanced 2x2 Grid for Loans
                         PocketType.LIABILITY_LOAN -> {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                                OutlinedTextField(
-                                    value = initialValuation,
-                                    onValueChange = { initialValuation = it },
-                                    placeholder = { Text("Principal ₹") },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.weight(1.2f).height(52.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedContainerColor = theme.surfaceAlt,
-                                        unfocusedContainerColor = theme.surfaceAlt,
-                                        focusedBorderColor = theme.accent,
-                                        unfocusedBorderColor = theme.borderLight,
-                                        focusedTextColor = theme.textBright,
-                                        unfocusedTextColor = theme.textBright
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                    OutlinedTextField(
+                                        value = initialValuation,
+                                        onValueChange = { initialValuation = it },
+                                        placeholder = { Text("Principal Debt ₹", fontSize = 12.sp) },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.weight(1f),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedContainerColor = theme.surfaceAlt,
+                                            unfocusedContainerColor = theme.surfaceAlt,
+                                            focusedBorderColor = theme.accent,
+                                            unfocusedBorderColor = theme.borderLight,
+                                            focusedTextColor = theme.textBright,
+                                            unfocusedTextColor = theme.textBright
+                                        )
                                     )
-                                )
-                                OutlinedTextField(
-                                    value = dueDay,
-                                    onValueChange = { dueDay = it },
-                                    placeholder = { Text("Due Day") },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.weight(0.8f).height(52.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedContainerColor = theme.surfaceAlt,
-                                        unfocusedContainerColor = theme.surfaceAlt,
-                                        focusedBorderColor = theme.accent,
-                                        unfocusedBorderColor = theme.borderLight,
-                                        focusedTextColor = theme.textBright,
-                                        unfocusedTextColor = theme.textBright
+                                    OutlinedTextField(
+                                        value = targetAmt,
+                                        onValueChange = { targetAmt = it },
+                                        placeholder = { Text("Monthly EMI ₹", fontSize = 12.sp) },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.weight(1f),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedContainerColor = theme.surfaceAlt,
+                                            unfocusedContainerColor = theme.surfaceAlt,
+                                            focusedBorderColor = theme.accent,
+                                            unfocusedBorderColor = theme.borderLight,
+                                            focusedTextColor = theme.textBright,
+                                            unfocusedTextColor = theme.textBright
+                                        )
                                     )
-                                )
+                                }
+
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                    OutlinedTextField(
+                                        value = dueDay,
+                                        onValueChange = { dueDay = it },
+                                        placeholder = { Text("Due Day (1-31)", fontSize = 12.sp) },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.weight(1f),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedContainerColor = theme.surfaceAlt,
+                                            unfocusedContainerColor = theme.surfaceAlt,
+                                            focusedBorderColor = theme.accent,
+                                            unfocusedBorderColor = theme.borderLight,
+                                            focusedTextColor = theme.textBright,
+                                            unfocusedTextColor = theme.textBright
+                                        )
+                                    )
+                                    OutlinedTextField(
+                                        value = interestRate,
+                                        onValueChange = { interestRate = it },
+                                        placeholder = { Text("Interest Rate %", fontSize = 12.sp) },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.weight(1f),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedContainerColor = theme.surfaceAlt,
+                                            unfocusedContainerColor = theme.surfaceAlt,
+                                            focusedBorderColor = theme.accent,
+                                            unfocusedBorderColor = theme.borderLight,
+                                            focusedTextColor = theme.textBright,
+                                            unfocusedTextColor = theme.textBright
+                                        )
+                                    )
+                                }
                             }
                         }
                     }
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         OutlinedButton(
@@ -2635,7 +2136,7 @@ private fun CreateAccountDialog(
                             modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("Cancel", color = theme.textMuted)
+                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
                         }
 
                         Button(
@@ -2656,7 +2157,7 @@ private fun CreateAccountDialog(
                             colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
                             enabled = name.isNotBlank()
                         ) {
-                            Text("Save Account", color = theme.bg, fontWeight = FontWeight.Bold)
+                            Text("Save Account", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                     }
                 }
@@ -2724,7 +2225,7 @@ private fun EditAccountDialog(
                         placeholder = { Text("Account Name") },
                         singleLine = true,
                         shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = theme.surfaceAlt,
                             unfocusedContainerColor = theme.surfaceAlt,
@@ -2743,7 +2244,7 @@ private fun EditAccountDialog(
                                 placeholder = { Text("Credit Limit") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.weight(1.2f).height(52.dp),
+                                modifier = Modifier.weight(1.2f),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = theme.surfaceAlt,
                                     unfocusedContainerColor = theme.surfaceAlt,
@@ -2759,7 +2260,7 @@ private fun EditAccountDialog(
                                 placeholder = { Text("Due Day (1-31)") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.weight(0.8f).height(52.dp),
+                                modifier = Modifier.weight(0.8f),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = theme.surfaceAlt,
                                     unfocusedContainerColor = theme.surfaceAlt,
@@ -2779,7 +2280,7 @@ private fun EditAccountDialog(
                             placeholder = { Text("Target Goal Amount") },
                             singleLine = true,
                             shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth().height(52.dp),
+                            modifier = Modifier.fillMaxWidth(),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedContainerColor = theme.surfaceAlt,
                                 unfocusedContainerColor = theme.surfaceAlt,
