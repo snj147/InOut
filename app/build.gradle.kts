@@ -1,8 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.compose)
-    id("kotlin-kapt")
+    alias(libs.plugins.kotlin.kapt)
 }
 
 android {
@@ -14,7 +13,6 @@ android {
         minSdk = 26
         targetSdk = 35
 
-        // Injected dynamically by GitHub Actions workflow, fallback for local dev
         val passedVersionCode = project.findProperty("VERSION_CODE")?.toString()?.toIntOrNull() ?: 1
         val passedGitSha = project.findProperty("GIT_SHA")?.toString()?.trim() ?: "localdev"
 
@@ -22,8 +20,6 @@ android {
         versionName = "1.0.0-alpha"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-        // Rule: Expose exact Git SHA to AppUpdateEngine without breaking in-app updates
         buildConfigField("String", "GIT_SHA", "\"$passedGitSha\"")
     }
 
@@ -68,6 +64,10 @@ android {
         compose = true
         buildConfig = true
     }
+
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.14"
+    }
 }
 
 dependencies {
@@ -75,11 +75,11 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.ui.tooling.preview)
-    implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.compose.material.icons.extended)
+    implementation(libs.androidx.ui)
+    implementation(libs.androidx.ui.graphics)
+    implementation(libs.androidx.ui.tooling.preview)
+    implementation(libs.androidx.material3)
+    implementation(libs.androidx.material.icons.extended)
 
     // Room Database
     val roomVersion = "2.6.1"
@@ -90,11 +90,11 @@ dependencies {
     // Google Play In-App Billing
     implementation("com.android.billingclient:billing-ktx:7.1.1")
 
-    // ML Kit On-Device OCR (Rule 29: Statement & Receipt Scanner)
+    // ML Kit On-Device OCR
     implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
 
-    // OkHttp (Required for AppUpdateEngine GitHub API rolling release downloads)
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // OkHttp (Streaming updates)
+    implementation(libs.okhttp)
 
     // Coroutines & Lifecycle
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
@@ -103,6 +103,6 @@ dependencies {
     // Android App Widget & Core RemoteViews
     implementation("androidx.core:core-remoteviews:1.1.0")
 
-    debugImplementation(libs.androidx.compose.ui.tooling)
-    debugImplementation(libs.androidx.compose.ui.test.manifest)
+    debugImplementation(libs.androidx.ui.tooling)
+    debugImplementation(libs.androidx.ui.test.manifest)
 }
