@@ -115,12 +115,10 @@ fun DashboardScreen(db: AppDatabase) {
         AppThemeMode.NORDIC_SLATE -> NordicSlateTheme
     }
 
-    // Reactive streams from the unified v5 Room DB (Rules 1-37)
     val rawPockets by db.ledgerDao().getAllActivePockets().collectAsState(initial = emptyList())
     val completedTransactions by db.ledgerDao().observeHistoricalTransactions().collectAsState(initial = emptyList())
     val unreadNotices by db.ledgerDao().observeUnreadNotices().collectAsState(initial = emptyList())
 
-    // Computed Pocket Balances map
     var pocketBalances by remember { mutableStateOf<Map<Long, Double>>(emptyMap()) }
     var solvencyDeck by remember {
         mutableStateOf(
@@ -137,7 +135,6 @@ fun DashboardScreen(db: AppDatabase) {
         )
     }
 
-    // Dynamic Balance & Metric Recalibration
     LaunchedEffect(rawPockets, completedTransactions) {
         withContext(Dispatchers.IO) {
             val balMap = mutableMapOf<Long, Double>()
@@ -149,7 +146,6 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    // Rule 8: Deterministic Recurring Automation Catch-Up on Boot
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             val caughtUp = ledgerEngine.catchUpRecurringRules()
@@ -457,9 +453,8 @@ fun DashboardScreen(db: AppDatabase) {
                                             modifier = Modifier.fillMaxWidth()
                                         ) { page ->
                                             when (page) {
-                                                // Card 0: True Safe Liquid (Rule 3)
                                                 0 -> MetricCarouselCard(
-                                                    tag = "TRUE SAFE LIQUID (RULE 3)",
+                                                    tag = "TRUE SAFE LIQUID",
                                                     status = if (solvencyDeck.trueSafeLiquid > 0) "Solvent" else "Deficit",
                                                     isPositive = solvencyDeck.trueSafeLiquid > 0,
                                                     heroText = if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", solvencyDeck.trueSafeLiquid)}",
@@ -468,9 +463,8 @@ fun DashboardScreen(db: AppDatabase) {
                                                     theme = theme,
                                                     onCardClick = {}
                                                 )
-                                                // Card 1: Runway Survival Horizon (Rule 13)
                                                 1 -> MetricCarouselCard(
-                                                    tag = "RUNWAY SURVIVAL HORIZON (RULE 13)",
+                                                    tag = "RUNWAY SURVIVAL HORIZON",
                                                     status = if (solvencyDeck.runwayDays > 30) "Comfortable" else "Critical",
                                                     isPositive = solvencyDeck.runwayDays > 30,
                                                     heroText = if (isPrivacyMode) "•• Days" else "${solvencyDeck.runwayDays} Days",
@@ -479,9 +473,8 @@ fun DashboardScreen(db: AppDatabase) {
                                                     theme = theme,
                                                     onCardClick = { showBurnEditDialog = true }
                                                 )
-                                                // Card 2: Deterministic Month-End Cash Horizon (Rule 26)
                                                 2 -> MetricCarouselCard(
-                                                    tag = "MONTH-END CASH FORECAST (RULE 26)",
+                                                    tag = "MONTH-END CASH FORECAST",
                                                     status = if (solvencyDeck.hasEarlyDeficitAlert) "Deficit Alert" else "Healthy",
                                                     isPositive = !solvencyDeck.hasEarlyDeficitAlert,
                                                     heroText = if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", solvencyDeck.projectedClosingLiquid)}",
@@ -490,9 +483,8 @@ fun DashboardScreen(db: AppDatabase) {
                                                     theme = theme,
                                                     onCardClick = {}
                                                 )
-                                                // Card 3: Macro Net Worth (Rule 28)
                                                 3 -> MetricCarouselCard(
-                                                    tag = "STATUTORY NET WORTH (RULE 28)",
+                                                    tag = "STATUTORY NET WORTH",
                                                     status = if (solvencyDeck.totalNetWorth >= 0) "Positive" else "Insolvent",
                                                     isPositive = solvencyDeck.totalNetWorth >= 0,
                                                     heroText = if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", solvencyDeck.totalNetWorth)}",
@@ -523,7 +515,6 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
-                                // Quick Action Workspace (Rule 30)
                                 item {
                                     Card(
                                         shape = RoundedCornerShape(14.dp),
@@ -547,7 +538,7 @@ fun DashboardScreen(db: AppDatabase) {
                                                     letterSpacing = 1.sp
                                                 )
                                                 Text(
-                                                    text = "Rule 30 Fast Pills",
+                                                    text = "Instant Movement",
                                                     color = theme.accent,
                                                     fontSize = 10.sp,
                                                     fontWeight = FontWeight.Bold
@@ -798,7 +789,6 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
 
-                // Symmetrical Guided Action Wizard Dialog (Rule 30)
                 activeWizard?.let { wizard ->
                     GuidedActionWizardDialog(
                         type = wizard,
@@ -836,7 +826,6 @@ fun DashboardScreen(db: AppDatabase) {
                     )
                 }
 
-                // Unified Entry Sheet Integration (Rule 30, 10, 17, 22)
                 if (showUnifiedEntrySheet) {
                     UnifiedEntrySheet(
                         allPockets = rawPockets,
@@ -962,9 +951,9 @@ fun DashboardScreen(db: AppDatabase) {
                         initialType = prefilledCreatePocketType,
                         theme = theme,
                         onDismiss = { showCreatePocketDialog = false },
-                        onSave = { name, type, limit, dueDay, targetAmt, targetDateEpoch ->
+                        onSave = { name, type, limit, dueDay, targetAmt, targetDateEpoch, initialVal, interestRate ->
                             scope.launch {
-                                db.ledgerDao().insertPocket(
+                                val pocketId = db.ledgerDao().insertPocket(
                                     LedgerPocket(
                                         name = name,
                                         type = type,
@@ -974,8 +963,27 @@ fun DashboardScreen(db: AppDatabase) {
                                         goalTargetDate = targetDateEpoch
                                     )
                                 )
+                                // If initial valuation/principal was provided, book the baseline acquisition entry
+                                if (initialVal > 0.0) {
+                                    val nat = when (type) {
+                                        PocketType.FIXED_ASSET -> MovementNature.CAPITAL_ACQUISITION
+                                        PocketType.INVESTMENT -> MovementNature.INVESTMENT_ALLOCATION
+                                        PocketType.LIABILITY_LOAN -> MovementNature.OPERATING_EXPENSE
+                                        PocketType.LIQUID, PocketType.PREPAID_WALLET -> MovementNature.OPERATING_INCOME
+                                        else -> MovementNature.TRANSFER
+                                    }
+                                    ledgerEngine.recordMovement(
+                                        movementNature = nat,
+                                        sourcePocketId = pocketId,
+                                        targetPocketId = null,
+                                        amount = initialVal,
+                                        category = "Initial Position",
+                                        description = "Initial balance for $name",
+                                        timestamp = System.currentTimeMillis()
+                                    )
+                                }
                                 showCreatePocketDialog = false
-                                alertManager.showAlert("Provisioned pocket '$name'", AlertType.SUCCESS)
+                                alertManager.showAlert("Created '$name'", AlertType.SUCCESS)
                             }
                         }
                     )
@@ -1019,10 +1027,10 @@ fun DashboardScreen(db: AppDatabase) {
                     AlertDialog(
                         onDismissRequest = { showBurnEditDialog = false },
                         containerColor = theme.surface,
-                        title = { Text(text = "Update Daily Burn Ceiling", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
+                        title = { Text(text = "Update Daily Burn Target", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
                         text = {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(text = "Configure Rule 13 daily operational burn ceiling.", color = theme.textMuted, fontSize = 12.sp)
+                                Text(text = "Configure your baseline daily operational burn ceiling.", color = theme.textMuted, fontSize = 12.sp)
                                 OutlinedTextField(
                                     value = burnInput,
                                     onValueChange = { burnInput = it },
@@ -1353,7 +1361,6 @@ fun GuidedActionWizardDialog(
                     }
                 }
 
-                // Amount Input
                 Column {
                     OutlinedTextField(
                         value = rawAmount,
@@ -1375,7 +1382,6 @@ fun GuidedActionWizardDialog(
                     }
                 }
 
-                // Interactive Transaction Date Selector
                 Text("Transaction Date", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
                 Row(
                     modifier = Modifier
@@ -1428,7 +1434,6 @@ fun GuidedActionWizardDialog(
                     }
                 }
 
-                // Account Bindings
                 val activeSrc = liquidPockets.firstOrNull { it.id == selectedSourceId } ?: liquidPockets.firstOrNull()
                 val srcBal = pocketBalances[activeSrc?.id ?: 0L] ?: 0.0
 
@@ -1792,7 +1797,7 @@ private fun SettingsCardsList(
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(text = "ABOUT INOUT", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     Column {
-                        Text(text = "InOut Vault (Institutional v5)", color = theme.textBright, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                        Text(text = "InOut Vault", color = theme.textBright, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
                         Text(text = "Build SHA: ${currentSha.take(7)}", color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         Text(text = "Installed: $lastUpdatedDate", color = theme.textMuted, fontSize = 10.5.sp)
                     }
@@ -1928,11 +1933,11 @@ private fun SettingsCardsList(
         item {
             Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(text = "LEDGER AUTOMATION GUARDS", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Text(text = "AUTOMATION PREFERENCES", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
 
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text(text = "Cross-Account Auto-Split (Rule 14)", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text(text = "Cross-Account Auto-Split", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                             Text(text = "Draw shortfalls automatically from secondary liquid accounts.", color = theme.textMuted, fontSize = 10.5.sp)
                         }
                         Switch(
@@ -1983,7 +1988,7 @@ private fun SettingsCardsList(
         item {
             Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(text = "DATA PORTABILITY & TALLY SUITE (RULE 34)", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Text(text = "DATA PORTABILITY & EXPORT", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
 
                     Button(
                         onClick = onExportEncryptedBackup,
@@ -2067,7 +2072,7 @@ private fun EditRecurringRuleDialog(
     AlertDialog(
         containerColor = theme.surface,
         onDismissRequest = onDismiss,
-        title = { Text(text = "Edit Recurring Rule (Rule 8)", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
+        title = { Text(text = "Edit Recurring Rule", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
@@ -2225,18 +2230,30 @@ private fun EditTransactionDialog(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CreateAccountDialog(
     initialType: PocketType = PocketType.LIQUID,
     theme: ThemeColors,
     onDismiss: () -> Unit,
-    onSave: (name: String, type: PocketType, limit: Double, dueDay: Int, targetAmt: Double, targetDateEpoch: Long) -> Unit
+    onSave: (
+        name: String,
+        type: PocketType,
+        limit: Double,
+        dueDay: Int,
+        targetAmt: Double,
+        targetDateEpoch: Long,
+        initialValuation: Double,
+        interestRate: Double
+    ) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
     var type by remember { mutableStateOf(initialType) }
     var limit by remember { mutableStateOf("") }
     var dueDay by remember { mutableStateOf("") }
     var targetAmt by remember { mutableStateOf("") }
+    var initialValuation by remember { mutableStateOf("") }
+    var interestRate by remember { mutableStateOf("") }
     var targetDateEpoch by remember { mutableStateOf(System.currentTimeMillis() + (30L * 24 * 3600 * 1000L)) }
     var showDatePicker by remember { mutableStateOf(false) }
 
@@ -2256,7 +2273,7 @@ private fun CreateAccountDialog(
     AlertDialog(
         containerColor = theme.surface,
         onDismissRequest = onDismiss,
-        title = { Text(text = "Add Account / Pot / Asset", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
+        title = { Text(text = "Add Account / Asset / Liability", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 OutlinedTextField(
@@ -2275,37 +2292,60 @@ private fun CreateAccountDialog(
                     )
                 )
 
-                // Pocket Type Selector (Rules 1, 4, 7, 20, 31, 35, 36, 37)
-                Text(text = "Pocket Type", color = theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(text = "Account Classification", color = theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
                     listOf(
-                        PocketType.LIQUID to "Liquid",
-                        PocketType.CREDIT_CARD to "Card",
+                        PocketType.LIQUID to "Bank / Cash",
+                        PocketType.PREPAID_WALLET to "Prepaid Wallet",
+                        PocketType.CREDIT_CARD to "Credit Card",
                         PocketType.INVESTMENT to "Portfolio",
                         PocketType.FIXED_ASSET to "Fixed Asset",
-                        PocketType.LIABILITY_LOAN to "Loan",
-                        PocketType.GOAL_POT to "Goal"
+                        PocketType.LIABILITY_LOAN to "Loan / EMI",
+                        PocketType.PEER_RECEIVABLE to "Lent (Debtor)",
+                        PocketType.PEER_PAYABLE to "Borrowed (Creditor)",
+                        PocketType.GOAL_POT to "Goal Pot"
                     ).forEach { (t, lbl) ->
                         val isSel = type == t
                         Box(
                             modifier = Modifier
-                                .weight(1f)
                                 .clip(RoundedCornerShape(6.dp))
                                 .background(if (isSel) theme.accent else theme.surfaceAlt)
                                 .clickable { type = t }
-                                .padding(vertical = 6.dp),
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(text = lbl, color = if (isSel) theme.bg else theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                            Text(text = lbl, color = if (isSel) theme.bg else theme.textBright, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
                     }
+                }
+
+                if (type == PocketType.LIQUID || type == PocketType.PREPAID_WALLET) {
+                    OutlinedTextField(
+                        value = initialValuation,
+                        onValueChange = { initialValuation = it },
+                        placeholder = { Text("Current Opening Balance in ₹") },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = theme.surfaceAlt,
+                            unfocusedContainerColor = theme.surfaceAlt,
+                            focusedBorderColor = theme.accent,
+                            unfocusedBorderColor = theme.borderLight,
+                            focusedTextColor = theme.textBright,
+                            unfocusedTextColor = theme.textBright
+                        )
+                    )
                 }
 
                 if (type == PocketType.CREDIT_CARD) {
                     OutlinedTextField(
                         value = limit,
                         onValueChange = { limit = it },
-                        placeholder = { Text("Approved Credit Limit (e.g. 50000)") },
+                        placeholder = { Text("Total Credit Limit in ₹ (e.g. 50000)") },
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -2334,11 +2374,80 @@ private fun CreateAccountDialog(
                     )
                 }
 
+                if (type == PocketType.FIXED_ASSET || type == PocketType.INVESTMENT) {
+                    OutlinedTextField(
+                        value = initialValuation,
+                        onValueChange = { initialValuation = it },
+                        placeholder = { Text(if (type == PocketType.FIXED_ASSET) "Acquisition / Current WDV Value in ₹" else "Portfolio Initial Investment in ₹") },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = theme.surfaceAlt,
+                            unfocusedContainerColor = theme.surfaceAlt,
+                            focusedBorderColor = theme.accent,
+                            unfocusedBorderColor = theme.borderLight,
+                            focusedTextColor = theme.textBright,
+                            unfocusedTextColor = theme.textBright
+                        )
+                    )
+                }
+
+                if (type == PocketType.LIABILITY_LOAN) {
+                    OutlinedTextField(
+                        value = initialValuation,
+                        onValueChange = { initialValuation = it },
+                        placeholder = { Text("Remaining Principal Outstanding in ₹") },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = theme.surfaceAlt,
+                            unfocusedContainerColor = theme.surfaceAlt,
+                            focusedBorderColor = theme.accent,
+                            unfocusedBorderColor = theme.borderLight,
+                            focusedTextColor = theme.textBright,
+                            unfocusedTextColor = theme.textBright
+                        )
+                    )
+                    OutlinedTextField(
+                        value = interestRate,
+                        onValueChange = { interestRate = it },
+                        placeholder = { Text("Annual Interest Rate % (Optional)") },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = theme.surfaceAlt,
+                            unfocusedContainerColor = theme.surfaceAlt,
+                            focusedBorderColor = theme.accent,
+                            unfocusedBorderColor = theme.borderLight,
+                            focusedTextColor = theme.textBright,
+                            unfocusedTextColor = theme.textBright
+                        )
+                    )
+                }
+
+                if (type == PocketType.PEER_RECEIVABLE || type == PocketType.PEER_PAYABLE) {
+                    OutlinedTextField(
+                        value = initialValuation,
+                        onValueChange = { initialValuation = it },
+                        placeholder = { Text(if (type == PocketType.PEER_RECEIVABLE) "Initial Amount Lent in ₹" else "Initial Amount Borrowed in ₹") },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = theme.surfaceAlt,
+                            unfocusedContainerColor = theme.surfaceAlt,
+                            focusedBorderColor = theme.accent,
+                            unfocusedBorderColor = theme.borderLight,
+                            focusedTextColor = theme.textBright,
+                            unfocusedTextColor = theme.textBright
+                        )
+                    )
+                }
+
                 if (type == PocketType.GOAL_POT) {
                     OutlinedTextField(
                         value = targetAmt,
                         onValueChange = { targetAmt = it },
-                        placeholder = { Text("Target Goal Amount (e.g. 60000)") },
+                        placeholder = { Text("Target Goal Amount in ₹ (e.g. 60000)") },
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -2375,7 +2484,9 @@ private fun CreateAccountDialog(
                         limit.toDoubleOrNull() ?: 0.0,
                         dueDay.toIntOrNull() ?: 0,
                         targetAmt.toDoubleOrNull() ?: 0.0,
-                        targetDateEpoch
+                        targetDateEpoch,
+                        initialValuation.toDoubleOrNull() ?: 0.0,
+                        interestRate.toDoubleOrNull() ?: 0.0
                     )
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
