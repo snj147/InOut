@@ -11,6 +11,9 @@ interface LedgerDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertPocket(pocket: LedgerPocket): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPocketsBatch(pockets: List<LedgerPocket>): List<Long>
+
     @Update
     suspend fun updatePocket(pocket: LedgerPocket)
 
@@ -29,9 +32,6 @@ interface LedgerDao {
     @Query("SELECT * FROM ledger_pockets WHERE type = 'LIQUID' AND LOWER(name) = LOWER(:name) AND isArchived = 0 LIMIT 1")
     suspend fun getLiquidPocketByName(name: String): LedgerPocket?
 
-    @Query("SELECT * FROM ledger_pockets WHERE type = 'LIQUID' AND name = 'Cash in Hand' AND isArchived = 0 LIMIT 1")
-    suspend fun getDefaultCashInHandPocket(): LedgerPocket?
-
     @Query("SELECT COUNT(*) FROM ledger_pockets WHERE isArchived = 0")
     suspend fun getActivePocketCount(): Int
 
@@ -39,6 +39,9 @@ interface LedgerDao {
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertTransaction(tx: LedgerTransaction): Long
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertTransactionsBatch(txs: List<LedgerTransaction>): List<Long>
 
     @Update
     suspend fun updateTransaction(tx: LedgerTransaction)
