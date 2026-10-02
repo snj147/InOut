@@ -35,20 +35,42 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "inout_vault_database"
                 )
-                    // Upgrades from legacy version 4 schema to institutional 37-rule v5 schema cleanly
                     .fallbackToDestructiveMigration()
                     .addCallback(object : Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
-                            // Initialize Rule 36 default Cash in Hand pocket atomically
                             CoroutineScope(Dispatchers.IO).launch {
-                                getInstance(context).ledgerDao().insertPocket(
-                                    LedgerPocket(
-                                        name = "Cash in Hand",
-                                        type = PocketType.LIQUID,
-                                        currency = "INR"
+                                val dao = getInstance(context).ledgerDao()
+                                // Strict guard: Only insert Cash in Hand if it doesn't already exist
+                                val existing = dao.getDefaultCashInHandPocket()
+                                if (existing == null) {
+                                    dao.insertPocket(
+                                        LedgerPocket(
+                                            name = "Cash in Hand",
+                                            type = PocketType.LIQUID,
+                                            currency = "INR"
+                                        )
                                     )
-                                )
+                                }
+                            }
+                        }
+
+                        override fun onOpen(db: SupportSQLiteDatabase) {
+                            super.onOpen(db)
+                            CoroutineScope(Dispatchers.IO).launch {
+                                val dao = getInstance(context).ledgerDao()
+                                // Deduplicate on open: Ensure only one active "Cash in Hand" exists
+                                val pockets = dao.getAllActivePocketsSnapshot()
+                                val cashPockets = pockets.filter { it.name.equals("Cash in Hand", ignoreCase = true) }
+                                if (cashPockets.size > 1) {
+                                    // Keep the first, archive duplicate spares
+                                    cashPockets.drop(1).forEach { dup ->
+                                        val bal = dao.computePocketBalance(dup.id)
+                                        if (bal == 0.0) {
+                                            dao.updatePocket(dup.copy(isArchived = true))
+                                        }
+                                    }
+                                }
                             }
                         }
                     })
