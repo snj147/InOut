@@ -27,14 +27,15 @@ jobs:
         with:
           gradle-version: '8.8'
 
-      # Creates the stable debug.keystore directly in the app directory
+      # Generate keystore in the root workspace AND in app/ directory so both paths are covered
       - name: Setup Stable Debug Keystore
         run: |
           mkdir -p app
-          keytool -genkeypair -v -keystore app/debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" -noprompt
+          keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" -noprompt
+          cp debug.keystore app/debug.keystore
 
       - name: Build Debug APK
-        run: gradle assembleDebug -PGIT_SHA=${{ github.sha }} -PVERSION_CODE=${{ github.run_number }} -Pandroid.injected.signing.store.file=app/debug.keystore -Pandroid.injected.signing.store.password=android -Pandroid.injected.signing.key.alias=androiddebugkey -Pandroid.injected.signing.key.password=android
+        run: gradle assembleDebug -PGIT_SHA=${{ github.sha }} -PVERSION_CODE=${{ github.run_number }}
 
       - name: Rename APK with Commit SHA
         run: |
