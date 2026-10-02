@@ -194,7 +194,6 @@ fun DashboardScreen(db: AppDatabase) {
     var prefilledCreatePocketType by remember { mutableStateOf(PocketType.LIQUID) }
 
     var showAllRecordsSheet by remember { mutableStateOf(false) }
-    var showMockPaywall by remember { mutableStateOf(false) }
     var showBurnEditDialog by remember { mutableStateOf(false) }
     var showClearLedgerConfirmation by remember { mutableStateOf(false) }
     var showNoticesDialog by remember { mutableStateOf(false) }
@@ -923,11 +922,11 @@ fun DashboardScreen(db: AppDatabase) {
                 if (showSetPinDialog) {
                     ThemeSetPinDialog(
                         onDismiss = { showSetPinDialog = false },
-                        onSavePin = { newPin ->
+                        onSavePin = { newPin: String ->
                             masterSecurityPin = newPin
                             prefs.edit().putString("master_security_pin", newPin).apply()
                             showSetPinDialog = false
-                            alertManager.showAlert("Master PIN updated successfully", AlertType.SUCCESS)
+                            alertManager.showAlert("Master PIN updated", AlertType.SUCCESS)
                         }
                     )
                 }
@@ -1133,15 +1132,6 @@ fun DashboardScreen(db: AppDatabase) {
                         onExportPdfDossier = {
                             scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, completedTransactions) }
                         }
-                    )
-                }
-
-                if (showMockPaywall) {
-                    MockPaywallBottomSheet(
-                        currentProState = isProUnlocked,
-                        onDismiss = { showMockPaywall = false },
-                        onSimulatePurchaseSuccess = { billingManager.simulatePurchaseSuccess() },
-                        onSimulateRevokePro = { billingManager.simulateRevokePro() }
                     )
                 }
             }
@@ -1855,6 +1845,60 @@ private fun CenteredMasterPinPurgeModal(
 }
 
 @Composable
+private fun ThemeSetPinDialog(
+    onDismiss: () -> Unit,
+    onSavePin: (String) -> Unit
+) {
+    val theme = LocalThemeColors.current
+    var pin by remember { mutableStateOf("") }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = theme.surface),
+            modifier = Modifier.fillMaxWidth().padding(16.dp).border(1.dp, theme.borderLight, RoundedCornerShape(16.dp))
+        ) {
+            Column(
+                modifier = Modifier.padding(18.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("Set Master Security PIN", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
+                Text("Enter a 6-digit code to authorize critical ledger actions.", color = theme.textMuted, fontSize = 11.sp, textAlign = TextAlign.Center)
+
+                OutlinedTextField(
+                    value = pin,
+                    onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) pin = it },
+                    placeholder = { Text("6-digit PIN", fontSize = 12.sp) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = theme.surfaceAlt,
+                        unfocusedContainerColor = theme.surfaceAlt,
+                        focusedBorderColor = theme.accent,
+                        unfocusedBorderColor = theme.borderLight,
+                        focusedTextColor = theme.textBright,
+                        unfocusedTextColor = theme.textBright
+                    )
+                )
+
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
+                    Button(
+                        onClick = { if (pin.length == 6) onSavePin(pin) },
+                        colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
+                        enabled = pin.length == 6,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Save PIN", color = theme.bg, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SettingsCardsList(
     theme: ThemeColors,
     currentSha: String,
@@ -2371,7 +2415,6 @@ private fun CreateAccountDialog(
                 ) {
                     Text(text = "NEW ACCOUNT SETUP", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp)
 
-                    // Text-only, color-coded classification rail
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
