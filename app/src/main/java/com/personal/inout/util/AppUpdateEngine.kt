@@ -3,6 +3,7 @@ package com.personal.inout.util
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Environment
 import androidx.core.content.FileProvider
 import com.personal.inout.BuildConfig
 import com.personal.inout.MainActivity
@@ -92,8 +93,19 @@ object AppUpdateEngine {
     }
 
     suspend fun startStreamDownload(context: Context, downloadUrl: String, versionTag: String) = withContext(Dispatchers.IO) {
+        // Prevent duplicate download triggers if already completed
+        val currentState = _downloadState.value
+        if (currentState is UpdateDownloadState.ReadyToInstall && currentState.versionTag == versionTag && currentState.apkFile.exists()) {
+            return@withContext
+        }
+        if (currentState is UpdateDownloadState.Downloading) {
+            return@withContext
+        }
+
         try {
-            val targetFile = File(context.cacheDir, "InOut-alpha-$versionTag.apk")
+            // Use external files dir so the system installer has guaranteed read permissions
+            val downloadDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.cacheDir
+            val targetFile = File(downloadDir, "InOut-alpha-$versionTag.apk")
             if (targetFile.exists()) targetFile.delete()
 
             val request = Request.Builder().url(downloadUrl).build()
@@ -110,7 +122,7 @@ object AppUpdateEngine {
 
                 val totalBytes = responseBody.contentLength()
                 var bytesCopied = 0L
-                val buffer = ByteArray(8 * 1024)
+                val buffer = ByteArray(16 * 1024)
 
                 responseBody.byteStream().use { input ->
                     FileOutputStream(targetFile).use { output ->
