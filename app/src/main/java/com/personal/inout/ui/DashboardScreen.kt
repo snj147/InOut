@@ -963,22 +963,14 @@ fun DashboardScreen(db: AppDatabase) {
                                         goalTargetDate = targetDateEpoch
                                     )
                                 )
-                                // If initial valuation/principal was provided, book the baseline acquisition entry
                                 if (initialVal > 0.0) {
-                                    val nat = when (type) {
-                                        PocketType.FIXED_ASSET -> MovementNature.CAPITAL_ACQUISITION
-                                        PocketType.INVESTMENT -> MovementNature.INVESTMENT_ALLOCATION
-                                        PocketType.LIABILITY_LOAN -> MovementNature.OPERATING_EXPENSE
-                                        PocketType.LIQUID, PocketType.PREPAID_WALLET -> MovementNature.OPERATING_INCOME
-                                        else -> MovementNature.TRANSFER
-                                    }
                                     ledgerEngine.recordMovement(
-                                        movementNature = nat,
+                                        movementNature = MovementNature.OPENING_BASELINE,
                                         sourcePocketId = pocketId,
                                         targetPocketId = null,
                                         amount = initialVal,
                                         category = "Initial Position",
-                                        description = "Initial balance for $name",
+                                        description = "Opening baseline for $name",
                                         timestamp = System.currentTimeMillis()
                                     )
                                 }
