@@ -3,13 +3,14 @@ package com.personal.inout.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,10 +22,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
-import com.personal.inout.data.Account
-import com.personal.inout.data.Transaction
-import java.text.SimpleDateFormat
-import java.util.*
 
 @Composable
 fun DashboardHeader(
@@ -243,174 +240,5 @@ private fun PinKey(digit: String, theme: ThemeColors, onClick: (String) -> Unit)
         contentAlignment = Alignment.Center
     ) {
         Text(digit, color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-fun CreateAccountCardDialog(
-    availableSourceAccounts: List<Account>,
-    onDismiss: () -> Unit,
-    onSave: (Account, Double, Long, Long) -> Unit
-) {
-    val theme = LocalThemeColors.current
-    var name by remember { mutableStateOf("") }
-    var selectedType by remember { mutableStateOf("BANK") }
-    var limit by remember { mutableStateOf("") }
-
-    AlertDialog(
-        containerColor = theme.surface,
-        onDismissRequest = onDismiss,
-        title = { Text("Add Account", color = theme.textBright, fontWeight = FontWeight.Bold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                CompactInputField(value = name, onValueChange = { name = it }, placeholder = "Account Name (e.g. HDFC, Cash)")
-
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    listOf("BANK", "CASH", "CREDIT", "BORROWER", "LENDER").forEach { type ->
-                        val isSel = selectedType == type
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (isSel) theme.accent else theme.surfaceAlt)
-                                .clickable { selectedType = type }
-                                .padding(vertical = 6.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(type.take(4), color = if (isSel) theme.bg else theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-
-                if (selectedType == "CREDIT") {
-                    CompactInputField(value = limit, onValueChange = { limit = it }, placeholder = "Credit Limit")
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    if (name.isNotBlank()) {
-                        val acc = Account(
-                            name = name,
-                            type = selectedType,
-                            totalLimit = limit.toDoubleOrNull() ?: 0.0,
-                            balance = 0.0
-                        )
-                        onSave(acc, 0.0, 0L, 0L)
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-            ) {
-                Text("Save", color = theme.bg, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
-        }
-    )
-}
-
-@Composable
-fun EditAccountCardDialog(
-    account: Account,
-    onDismiss: () -> Unit,
-    onSave: (Account, Double, Long) -> Unit,
-    onDelete: () -> Unit
-) {
-    val theme = LocalThemeColors.current
-    var name by remember { mutableStateOf(account.name) }
-    var limit by remember { mutableStateOf(account.totalLimit.toString()) }
-
-    AlertDialog(
-        containerColor = theme.surface,
-        onDismissRequest = onDismiss,
-        title = { Text("Edit Account", color = theme.textBright, fontWeight = FontWeight.Bold) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                CompactInputField(value = name, onValueChange = { name = it }, placeholder = "Account Name")
-                if (account.type == "CREDIT") {
-                    CompactInputField(value = limit, onValueChange = { limit = it }, placeholder = "Credit Limit")
-                }
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val updated = account.copy(
-                        name = name,
-                        totalLimit = limit.toDoubleOrNull() ?: account.totalLimit
-                    )
-                    onSave(updated, 0.0, 0L)
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-            ) {
-                Text("Update", color = theme.bg, fontWeight = FontWeight.Bold)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDelete) { Text("Delete", color = theme.mildRed) }
-        }
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun AllTransactionsSearchSheet(
-    transactions: List<Transaction>,
-    onDismiss: () -> Unit,
-    onExportCsv: () -> Unit
-) {
-    val theme = LocalThemeColors.current
-    var query by remember { mutableStateOf("") }
-    val filtered = remember(query, transactions) {
-        if (query.isBlank()) transactions else transactions.filter {
-            it.note.contains(query, ignoreCase = true) || it.category.contains(query, ignoreCase = true)
-        }
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        containerColor = theme.surface
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("All Postings", color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                IconButton(onClick = onExportCsv) {
-                    Icon(Icons.Default.FileDownload, contentDescription = "Export CSV", tint = theme.accent)
-                }
-            }
-
-            CompactInputField(value = query, onValueChange = { query = it }, placeholder = "Search description or category...")
-
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(filtered, key = { it.id }) { tx ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column {
-                            Text(tx.note.ifBlank { tx.category }, color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            val dStr = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(tx.timestamp))
-                            Text(dStr, color = theme.textMuted, fontSize = 10.sp)
-                        }
-                        Text("₹${String.format("%,.0f", tx.amount)}", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                    }
-                    Divider(color = theme.surfaceAlt, thickness = 0.5.dp)
-                }
-            }
-        }
     }
 }
