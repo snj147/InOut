@@ -18,11 +18,6 @@ class VaultLedgerEngine(
     private val prefs: SharedPreferences
 ) {
 
-    /**
-     * BRD Rule 1, 2, 4, 7, 10, 11, 14, 27, 35, 36, 37:
-     * Atomic ledger transaction processor with overdraft prevention, auto-split fallback,
-     * and idempotency deduplication checks.
-     */
     suspend fun recordMovement(
         movementNature: MovementNature,
         sourcePocketId: Long,
@@ -46,11 +41,9 @@ class VaultLedgerEngine(
             return@withContext VaultExecutionResult.OverdraftError("Amount must be strictly greater than zero.")
         }
 
-        // Rule 10: Mandatory Account Binding Guard
         val sourcePocket = dao.getPocketById(sourcePocketId)
             ?: return@withContext VaultExecutionResult.OverdraftError("Source account not found. Please select an active account.")
 
-        // Rule 11.2: Self-Transfer Invariant
         if (movementNature == MovementNature.TRANSFER) {
             if (targetPocketId == null || targetPocketId == sourcePocketId) {
                 return@withContext VaultExecutionResult.OverdraftError("Transfer requires distinct source and destination accounts.")
@@ -59,7 +52,6 @@ class VaultLedgerEngine(
                 ?: return@withContext VaultExecutionResult.OverdraftError("Destination account not found.")
         }
 
-        // Rule 27: Deduplication Collision Interceptor
         if (!bypassDuplicateCheck) {
             val duplicate = dao.findPotentialDuplicate(sourcePocketId, amount, timestamp)
             if (duplicate != null) {
@@ -72,7 +64,6 @@ class VaultLedgerEngine(
 
         val currentSourceBalance = dao.computePocketBalance(sourcePocketId, System.currentTimeMillis())
 
-        // Rule 2 & 14: Hard-Overdraft & Cross-Account Auto-Split Invariants
         if (movementNature in listOf(MovementNature.OPERATING_EXPENSE, MovementNature.TRANSFER)) {
             if (sourcePocket.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET)) {
                 if (currentSourceBalance < amount) {
@@ -96,7 +87,6 @@ class VaultLedgerEngine(
                     }
                 }
             } else if (sourcePocket.type == PocketType.CREDIT_CARD) {
-                // Rule 5: Credit Limit Utilization Guard
                 val outstandingDues = abs(currentSourceBalance)
                 val remainingCredit = sourcePocket.creditLimit - outstandingDues
                 if (sourcePocket.creditLimit > 0.0 && amount > remainingCredit) {
@@ -127,7 +117,6 @@ class VaultLedgerEngine(
 
         val txId = dao.insertTransaction(tx)
 
-        // Rule 24: Forensic Audit Entry
         dao.insertAuditEntry(
             LedgerAuditEntry(
                 actionType = "INSERT",
@@ -153,9 +142,6 @@ class VaultLedgerEngine(
         VaultExecutionResult.Success(summary, txId)
     }
 
-    /**
-     * BRD Rule 14: Cross-Account Auto-Split Execution Waterfall.
-     */
     private suspend fun executeAutoSplitPayment(
         primaryPocket: LedgerPocket,
         primaryAvailable: Double,
@@ -171,7 +157,6 @@ class VaultLedgerEngine(
         val shortfall = totalAmount - primaryAvailable
         val activePockets = dao.getAllActivePocketsSnapshot()
         
-        // Find secondary liquid account with highest balance excluding primary
         val candidateSecondary = activePockets
             .filter { it.id != primaryPocket.id && it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET) }
             .map { pocket -> Pair(pocket, dao.computePocketBalance(pocket.id)) }
@@ -186,7 +171,6 @@ class VaultLedgerEngine(
 
         val secondaryPocket = candidateSecondary.first
 
-        // Leg 1: Primary available debit
         if (primaryAvailable > 0.0) {
             val primaryTx = LedgerTransaction(
                 timestamp = timestamp,
@@ -202,7 +186,6 @@ class VaultLedgerEngine(
             dao.insertTransaction(primaryTx)
         }
 
-        // Leg 2: Secondary shortfall debit
         val secondaryTx = LedgerTransaction(
             timestamp = timestamp,
             amount = shortfall,
@@ -222,12 +205,11 @@ class VaultLedgerEngine(
         )
     }
 
-    /**
-     * BRD Rule 3, 13, 26: Core Solvency Deck Metrics.
-     */
     suspend fun computeSolvencyDeck(): SolvencyMetricDeck = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
         val pockets = dao.getAllActivePocketsSnapshot()
+        val totalTxCount = dao.getTransactionCount()
+        
         var sumLiquid = 0.0
         var sumCardDues = 0.0
         var sumGoalPots = 0.0
@@ -262,14 +244,10 @@ class VaultLedgerEngine(
             }
         }
 
-        // Rule 3: The True Safe Liquid Equation
         val trueSafeLiquid = max(0.0, sumLiquid - sumCardDues) - sumGoalPots
         val finalSafeLiquid = max(0.0, trueSafeLiquid)
-
-        // Rule 28: Total Net Worth
         val netWorth = totalAssets - totalLiabilities
 
-        // Rule 13: Daily Burn Velocity & Runway Survival Horizon
         val calendar = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0)
             set(Calendar.MINUTE, 0)
@@ -286,7 +264,6 @@ class VaultLedgerEngine(
         val burnStatus = if (dailyBurnRate > dailyBurnCeiling) BurnPacingStatus.SPIKED else BurnPacingStatus.ON_TRACK
         val runwayDays = if (dailyBurnCeiling > 0.0) (finalSafeLiquid / dailyBurnCeiling).toLong() else 0L
 
-        // Rule 26: Deterministic Month-End Cash Horizon
         val maxDays = calendar.getActualMaximum(Calendar.DAY_OF_MONTH)
         val currentDay = calendar.get(Calendar.DAY_OF_MONTH)
         val daysRemainingInMonth = max(0, maxDays - currentDay)
@@ -299,7 +276,20 @@ class VaultLedgerEngine(
             .filter { it.movementNature in listOf(MovementNature.OPERATING_EXPENSE, MovementNature.EMI_PRINCIPAL) }
             .sumOf { it.amount }
 
-        val projectedClosingLiquid = finalSafeLiquid + expectedInflows - knownFixedDues - (daysRemainingInMonth * dailyBurnCeiling)
+        // Clean-Slate Safety Guard:
+        // Do not project a negative phantom burn deficit if the ledger is freshly installed with 0 transactions
+        val projectedClosingLiquid = if (totalTxCount == 0 && finalSafeLiquid == 0.0) {
+            0.0
+        } else {
+            finalSafeLiquid + expectedInflows - knownFixedDues - (daysRemainingInMonth * dailyBurnCeiling)
+        }
+
+        // Deficit alert only fires when there is an active liability/shortfall, never on an empty fresh setup
+        val hasDeficit = if (totalTxCount == 0 && sumCardDues == 0.0) {
+            false
+        } else {
+            projectedClosingLiquid < 0.0
+        }
 
         SolvencyMetricDeck(
             trueSafeLiquid = finalSafeLiquid,
@@ -309,13 +299,10 @@ class VaultLedgerEngine(
             burnStatus = burnStatus,
             runwayDays = runwayDays,
             projectedClosingLiquid = projectedClosingLiquid,
-            hasEarlyDeficitAlert = projectedClosingLiquid < 0.0
+            hasEarlyDeficitAlert = hasDeficit
         )
     }
 
-    /**
-     * BRD Rule 8: Deterministic Recurring Automation Catch-Up Engine.
-     */
     suspend fun catchUpRecurringRules(): Int = withContext(Dispatchers.IO) {
         val allTx = dao.getTransactionsBetween(0L, System.currentTimeMillis())
         val recurringTemplates = allTx.filter { it.isRecurring && it.recurringFrequency != "NONE" }
@@ -353,9 +340,6 @@ class VaultLedgerEngine(
         catchUpCount
     }
 
-    /**
-     * BRD Rule 28, 34: Statutory India-First Financial Statements Compiler.
-     */
     suspend fun generateIndianStatements(startEpoch: Long, endEpoch: Long): Pair<IndianBalanceSheetReport, IndianPnLStatement> = withContext(Dispatchers.IO) {
         val pockets = dao.getAllActivePocketsSnapshot()
         val txs = dao.getTransactionsBetween(startEpoch, endEpoch)
@@ -410,7 +394,6 @@ class VaultLedgerEngine(
             isBalanced = abs(totalAssets - totalLiabilitiesAndCapital) < 0.01
         )
 
-        // P&L Statement
         val grossInflows = txs.filter { it.movementNature == MovementNature.OPERATING_INCOME }.sumOf { it.amount }
         val operatingLiving = txs.filter { it.movementNature == MovementNature.OPERATING_EXPENSE }.sumOf { it.amount }
         val financeCharges = txs.filter { it.category.contains("Interest", ignoreCase = true) || it.category.contains("Finance", ignoreCase = true) }.sumOf { it.amount }
