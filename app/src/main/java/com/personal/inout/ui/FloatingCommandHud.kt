@@ -1,6 +1,7 @@
 package com.personal.inout.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -19,9 +20,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.personal.inout.data.LedgerPocket
 import com.personal.inout.data.MovementNature
 import com.personal.inout.data.PocketType
-import com.personal.inout.data.VaultPocket
 import com.personal.inout.util.MathEvaluator
 import java.text.SimpleDateFormat
 import java.util.*
@@ -29,26 +30,40 @@ import java.util.*
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FloatingCommandHud(
-    activePockets: List<VaultPocket>,
+    activePockets: List<LedgerPocket>,
     prefilledPocketId: Long? = null,
     prefilledNote: String = "",
     prefilledAmount: Double? = null,
     inDialogErrorMessage: String? = null,
     onDismiss: () -> Unit,
-    onSubmit: (nature: MovementNature, sourceId: Long?, targetId: Long?, amount: Double, cat: String, note: String, date: Long, isRec: Boolean, freq: String) -> Unit
+    onSubmit: (
+        nature: MovementNature,
+        sourceId: Long,
+        targetId: Long?,
+        amount: Double,
+        cat: String,
+        note: String,
+        date: Long,
+        isRec: Boolean,
+        freq: String
+    ) -> Unit
 ) {
     val theme = LocalThemeColors.current
     val scrollState = rememberScrollState()
 
-    var primaryNature by remember { mutableStateOf(MovementNature.OUTFLOW) }
+    var primaryNature by remember { mutableStateOf(MovementNature.OPERATING_EXPENSE) }
     var expression by remember { mutableStateOf(prefilledAmount?.let { String.format("%.2f", it) } ?: "") }
     var note by remember { mutableStateOf(prefilledNote) }
     var selectedDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
     var showCustomCalendar by remember { mutableStateOf(false) }
 
-    val liquidPockets = remember(activePockets) { activePockets.filter { it.pocketType == PocketType.LIQUID } }
-    val creditPockets = remember(activePockets) { activePockets.filter { it.pocketType == PocketType.CREDIT_LINE } }
-    val spendOptions = remember(liquidPockets, creditPockets) { liquidPockets + creditPockets }
+    val liquidPockets = remember(activePockets) {
+        activePockets.filter { it.type == PocketType.LIQUID || it.type == PocketType.PREPAID_WALLET }
+    }
+    val cardPockets = remember(activePockets) {
+        activePockets.filter { it.type == PocketType.CREDIT_CARD }
+    }
+    val spendOptions = remember(liquidPockets, cardPockets) { liquidPockets + cardPockets }
 
     var selectedSpendPocket by remember(spendOptions, prefilledPocketId) {
         mutableStateOf(spendOptions.firstOrNull { it.id == prefilledPocketId } ?: spendOptions.firstOrNull())
@@ -61,7 +76,7 @@ fun FloatingCommandHud(
     val expenseCategories = listOf("Food & Dining", "Groceries", "Transport", "Shopping", "Bills", "Health", "Leisure", "General")
     val incomeCategories = listOf("Salary", "Freelance", "Investments", "Gifts", "Rental", "Refunds", "General")
     var selectedCategory by remember(primaryNature) {
-        mutableStateOf(if (primaryNature == MovementNature.INFLOW) "Salary" else "Food & Dining")
+        mutableStateOf(if (primaryNature == MovementNature.OPERATING_INCOME) "Salary" else "Food & Dining")
     }
 
     // 4-Pill Repeat Cadence: None, Daily, Weekly, Monthly
@@ -73,20 +88,21 @@ fun FloatingCommandHud(
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
         Card(
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(containerColor = theme.surface),
             modifier = Modifier
                 .fillMaxWidth(0.92f)
                 .padding(vertical = 16.dp)
+                .border(1.dp, theme.borderLight, RoundedCornerShape(20.dp))
                 .imePadding()
         ) {
             Column(
                 modifier = Modifier
                     .verticalScroll(scrollState)
-                    .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(13.dp)
             ) {
-                // Main Nature Selector
+                // Segmented Nature Selector
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -96,14 +112,14 @@ fun FloatingCommandHud(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     listOf(
-                        MovementNature.OUTFLOW to "Spent",
-                        MovementNature.INFLOW to "Received",
+                        MovementNature.OPERATING_EXPENSE to "Spent",
+                        MovementNature.OPERATING_INCOME to "Received",
                         MovementNature.TRANSFER to "Transfer"
                     ).forEach { (nat, label) ->
                         val isSel = primaryNature == nat
                         val activeColor = when (nat) {
-                            MovementNature.OUTFLOW -> theme.mildRed
-                            MovementNature.INFLOW -> theme.mildGreen
+                            MovementNature.OPERATING_EXPENSE -> theme.mildRed
+                            MovementNature.OPERATING_INCOME -> theme.mildGreen
                             else -> theme.accent
                         }
                         Box(
@@ -125,13 +141,22 @@ fun FloatingCommandHud(
                     }
                 }
 
-                // Amount (Clean, with no distortion chips)
+                // Amount Input
                 Column {
-                    CompactInputField(
+                    OutlinedTextField(
                         value = expression,
                         onValueChange = { expression = it },
-                        placeholder = "Amount (e.g. 150+40)",
-                        modifier = Modifier.fillMaxWidth()
+                        placeholder = { Text("Amount in ₹ (e.g. 150+40)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = theme.surfaceAlt,
+                            unfocusedContainerColor = theme.surfaceAlt,
+                            focusedBorderColor = theme.accent,
+                            unfocusedBorderColor = theme.borderLight,
+                            focusedTextColor = theme.textBright,
+                            unfocusedTextColor = theme.textBright
+                        )
                     )
                     if (computedAmount != null && expression.any { it in "+-*/" }) {
                         Text(
@@ -170,7 +195,7 @@ fun FloatingCommandHud(
                     }
                 } else {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        val sourcePockets = if (primaryNature == MovementNature.OUTFLOW) spendOptions else liquidPockets
+                        val sourcePockets = if (primaryNature == MovementNature.OPERATING_EXPENSE) spendOptions else liquidPockets
                         PillDropdown(
                             label = "Account: ${selectedSpendPocket?.name ?: "Select"}",
                             modifier = Modifier.weight(1f),
@@ -178,7 +203,7 @@ fun FloatingCommandHud(
                             onSelect = { name -> selectedSpendPocket = sourcePockets.firstOrNull { it.name == name } },
                             theme = theme
                         )
-                        val activeList = if (primaryNature == MovementNature.INFLOW) incomeCategories else expenseCategories
+                        val activeList = if (primaryNature == MovementNature.OPERATING_INCOME) incomeCategories else expenseCategories
                         PillDropdown(
                             label = selectedCategory,
                             modifier = Modifier.weight(1f),
@@ -189,16 +214,25 @@ fun FloatingCommandHud(
                     }
                 }
 
-                // Note
-                CompactInputField(
+                // Narration Note
+                OutlinedTextField(
                     value = note,
                     onValueChange = { note = it },
-                    placeholder = "Merchant / Note",
-                    modifier = Modifier.fillMaxWidth()
+                    placeholder = { Text("Merchant / Narration") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = theme.surfaceAlt,
+                        unfocusedContainerColor = theme.surfaceAlt,
+                        focusedBorderColor = theme.accent,
+                        unfocusedBorderColor = theme.borderLight,
+                        focusedTextColor = theme.textBright,
+                        unfocusedTextColor = theme.textBright
+                    )
                 )
 
-                // Date Quick Select
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                // Date Selector
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text("Transaction Date", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -222,8 +256,8 @@ fun FloatingCommandHud(
                     }
                 }
 
-                // REPEAT (Single Line, 4-Pill Horizontal Selector)
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                // Repeat Cadence (Rule 8)
+                Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     Text("Repeat", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -258,53 +292,52 @@ fun FloatingCommandHud(
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(10.dp))
                             .background(theme.mildRed.copy(alpha = 0.2f))
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                            .border(1.dp, theme.mildRed.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                            .padding(horizontal = 12.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(Icons.Default.Warning, contentDescription = null, tint = theme.mildRed, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Warning, contentDescription = null, tint = theme.mildRed, modifier = Modifier.size(17.dp))
                         Text(
                             text = inDialogErrorMessage,
                             color = theme.mildRed,
-                            fontSize = 12.sp,
+                            fontSize = 11.5.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.weight(1f)
                         )
                     }
                 }
 
-                // Commit Button
+                // Commit Button (Rule 10 Account Binding Guard)
                 Button(
                     onClick = {
                         val amt = computedAmount ?: 0.0
+                        val src = selectedSpendPocket ?: return@Button
                         if (amt > 0.0) {
                             val isRec = repeatCadence != "None"
                             val freq = if (isRec) repeatCadence.uppercase() else "NONE"
                             when (primaryNature) {
-                                MovementNature.OUTFLOW -> {
-                                    selectedSpendPocket?.let {
-                                        onSubmit(MovementNature.OUTFLOW, it.id, null, amt, selectedCategory, note, selectedDateMillis, isRec, freq)
-                                    }
+                                MovementNature.OPERATING_EXPENSE -> {
+                                    onSubmit(MovementNature.OPERATING_EXPENSE, src.id, null, amt, selectedCategory, note, selectedDateMillis, isRec, freq)
                                 }
-                                MovementNature.INFLOW -> {
-                                    selectedSpendPocket?.let {
-                                        onSubmit(MovementNature.INFLOW, null, it.id, amt, selectedCategory, note, selectedDateMillis, isRec, freq)
-                                    }
+                                MovementNature.OPERATING_INCOME -> {
+                                    onSubmit(MovementNature.OPERATING_INCOME, src.id, null, amt, selectedCategory, note, selectedDateMillis, isRec, freq)
                                 }
                                 MovementNature.TRANSFER -> {
-                                    if (selectedSpendPocket != null && selectedTransferTarget != null && selectedSpendPocket!!.id != selectedTransferTarget!!.id) {
-                                        onSubmit(MovementNature.TRANSFER, selectedSpendPocket!!.id, selectedTransferTarget!!.id, amt, "Transfer", note, selectedDateMillis, false, "NONE")
+                                    val tgt = selectedTransferTarget
+                                    if (tgt != null && src.id != tgt.id) {
+                                        onSubmit(MovementNature.TRANSFER, src.id, tgt.id, amt, "Transfer", note, selectedDateMillis, false, "NONE")
                                     }
                                 }
                                 else -> Unit
                             }
                         }
                     },
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(10.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
-                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                    modifier = Modifier.fillMaxWidth().height(46.dp)
                 ) {
-                    Text("Commit to Vault", color = theme.bg, fontWeight = FontWeight.Black, fontSize = 14.sp)
+                    Text("Commit to Ledger", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
                 }
             }
         }
@@ -362,11 +395,12 @@ private fun PillDropdown(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(10.dp))
                 .background(theme.surfaceAlt)
+                .border(1.dp, theme.borderLight, RoundedCornerShape(10.dp))
                 .clickable { expanded = true }
                 .padding(horizontal = 10.dp, vertical = 11.dp),
             contentAlignment = Alignment.CenterStart
         ) {
-            Text(label, color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(label, color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, maxLines = 1)
         }
 
         DropdownMenu(
