@@ -9,6 +9,8 @@ import android.provider.MediaStore
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.personal.inout.data.PocketType
+import com.personal.inout.data.StagedStatementLineItem
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -16,11 +18,18 @@ import java.util.regex.Pattern
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
+enum class DocumentIntent {
+    SINGLE_EXPENSE_RECEIPT,
+    FINANCIAL_BALANCE_SHEET_STATEMENT
+}
+
 data class ParsedReceipt(
     val merchant: String,
     val total: Double?,
     val dateEpoch: Long?,
-    val rawText: String
+    val rawText: String,
+    val documentIntent: DocumentIntent = DocumentIntent.SINGLE_EXPENSE_RECEIPT,
+    val stagedLineItems: List<StagedStatementLineItem> = emptyList()
 )
 
 object ReceiptScanner {
@@ -56,9 +65,36 @@ object ReceiptScanner {
         }
     }
 
+    /**
+     * BRD Rule 29: Heuristic Document Classifier Guardrail.
+     * Differentiates a single point-of-sale receipt from a multi-line balance sheet statement.
+     */
     private fun parseReceiptText(rawText: String): ParsedReceipt {
         val lines = rawText.split("\n").map { it.trim() }.filter { it.isNotBlank() }
+        val lowerCaseDocument = rawText.lowercase()
 
+        // 1. Detect Financial Statement / Balance Sheet Markers (Rule 29.3)
+        val statementKeywords = listOf(
+            "balance sheet", "assets and liabilities", "statement of affairs",
+            "schedule iii", "itr-3", "sundry debtors", "sundry creditors",
+            "capital account", "fixed assets", "trial balance"
+        )
+
+        val isBalanceSheetStatement = statementKeywords.count { lowerCaseDocument.contains(it) } >= 2
+
+        if (isBalanceSheetStatement) {
+            val stagedItems = extractStagedBalanceSheetItems(lines)
+            return ParsedReceipt(
+                merchant = "Statutory Balance Sheet",
+                total = stagedItems.sumOf { it.extractedAmount },
+                dateEpoch = System.currentTimeMillis(),
+                rawText = rawText,
+                documentIntent = DocumentIntent.FINANCIAL_BALANCE_SHEET_STATEMENT,
+                stagedLineItems = stagedItems
+            )
+        }
+
+        // 2. Standard Single-Merchant Point-of-Sale Receipt Parsing
         val blacklistedHeaderTokens = listOf(
             "original for recipient",
             "duplicate for recipient",
@@ -84,7 +120,6 @@ object ReceiptScanner {
             }
         }
 
-        // Anchor on the actual settlement row first
         val settlementLabelPattern = Pattern.compile(
             """(?i)(?:total\s*amount|grand\s*total|net\s*amount|amount\s*payable|sub\s*total)[\s:₹rs\.]*([\d,]+\.?\d{0,2})"""
         )
@@ -103,7 +138,7 @@ object ReceiptScanner {
             }
         }
 
-        // Fallback: look for the highest formatted currency value in the document
+        // Fallback: search highest formatted decimal currency candidate
         if (detectedTotal == null) {
             val currencyPattern = Pattern.compile("""(?i)[₹rs\.\s]*([\d,]+\.\d{2})""")
             val candidates = mutableListOf<Double>()
@@ -121,7 +156,60 @@ object ReceiptScanner {
             merchant = merchant,
             total = detectedTotal,
             dateEpoch = System.currentTimeMillis(),
-            rawText = rawText
+            rawText = rawText,
+            documentIntent = DocumentIntent.SINGLE_EXPENSE_RECEIPT,
+            stagedLineItems = emptyList()
         )
+    }
+
+    /**
+     * Extracts multi-line assets and liabilities from statement OCR scans (Rule 29.4).
+     */
+    private fun extractStagedBalanceSheetItems(lines: List<String>): List<StagedStatementLineItem> {
+        val staged = mutableListOf<StagedStatementLineItem>()
+        val lineAmountPattern = Pattern.compile("""(.*?)[\s:₹rs\.]*([\d,]+\.?\d{0,2})$""")
+
+        for (line in lines) {
+            val matcher = lineAmountPattern.matcher(line)
+            if (matcher.find()) {
+                val label = matcher.group(1)?.trim() ?: continue
+                val amountStr = matcher.group(2)?.replace(",", "") ?: continue
+                val amt = amountStr.toDoubleOrNull() ?: continue
+
+                if (label.length in 3..50 && amt > 0.0) {
+                    val inferredType = when {
+                        label.contains("gold", ignoreCase = true) ||
+                                label.contains("property", ignoreCase = true) ||
+                                label.contains("vehicle", ignoreCase = true) ||
+                                label.contains("car", ignoreCase = true) -> PocketType.FIXED_ASSET
+
+                        label.contains("fund", ignoreCase = true) ||
+                                label.contains("share", ignoreCase = true) ||
+                                label.contains("equity", ignoreCase = true) ||
+                                label.contains("ppf", ignoreCase = true) ||
+                                label.contains("fd", ignoreCase = true) -> PocketType.INVESTMENT
+
+                        label.contains("loan", ignoreCase = true) ||
+                                label.contains("borrow", ignoreCase = true) -> PocketType.LIABILITY_LOAN
+
+                        label.contains("card", ignoreCase = true) -> PocketType.CREDIT_CARD
+
+                        label.contains("cash", ignoreCase = true) -> PocketType.LIQUID
+
+                        else -> PocketType.LIQUID
+                    }
+
+                    staged.add(
+                        StagedStatementLineItem(
+                            rawExtractedName = label,
+                            inferredType = inferredType,
+                            extractedAmount = amt,
+                            isSelectedForCommit = true
+                        )
+                    )
+                }
+            }
+        }
+        return staged
     }
 }
