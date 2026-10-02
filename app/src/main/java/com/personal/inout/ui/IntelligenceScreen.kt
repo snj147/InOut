@@ -70,7 +70,6 @@ fun IntelligenceScreen(
                     txYear == lastMonthCal.get(Calendar.YEAR) && txMonth == lastMonthCal.get(Calendar.MONTH)
                 }
                 TimeHorizon.FINANCIAL_YEAR -> {
-                    // Indian Financial Year 2026-27: 01 Apr 2026 to 31 Mar 2027
                     val fyStart = Calendar.getInstance().apply { set(2026, Calendar.APRIL, 1, 0, 0, 0) }.timeInMillis
                     val fyEnd = Calendar.getInstance().apply { set(2027, Calendar.MARCH, 31, 23, 59, 59) }.timeInMillis
                     tx.timestamp in fyStart..fyEnd
@@ -86,13 +85,6 @@ fun IntelligenceScreen(
         periodExpenses.sumOf { it.amount }
     }
 
-    val periodIncomes = remember(filteredRecords) {
-        filteredRecords.filter { it.movementNature == MovementNature.OPERATING_INCOME }
-    }
-    val totalPeriodIncome = remember(periodIncomes) {
-        periodIncomes.sumOf { it.amount }
-    }
-
     val categoryEnvelopes = remember(periodExpenses) {
         periodExpenses
             .groupBy { it.category.ifBlank { "General" } }
@@ -101,7 +93,6 @@ fun IntelligenceScreen(
             .sortedByDescending { it.second }
     }
 
-    // Capital structure calculation
     val grossAssets = remember(pocketBalances) {
         pocketBalances.values.filter { it > 0.0 }.sum()
     }
@@ -113,7 +104,6 @@ fun IntelligenceScreen(
         ((grossAssets / (grossAssets + grossLiabilities)) * 100.0).toFloat().coerceIn(0f, 100f)
     } else 100f
 
-    // Daily pacing metrics
     val calNow = Calendar.getInstance()
     val todayStart = Calendar.getInstance().apply {
         set(Calendar.HOUR_OF_DAY, 0)
@@ -204,7 +194,7 @@ fun IntelligenceScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "NET WORTH & CAPITAL STRUCTURE",
+                            "NET CAPITAL POSITION",
                             color = theme.textMuted,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
@@ -280,7 +270,7 @@ fun IntelligenceScreen(
             }
         }
 
-        // 2. Liquid Burn Pacing & Runway Horizon
+        // 2. Runway Pacing & Velocity
         item {
             Card(
                 shape = RoundedCornerShape(14.dp),
