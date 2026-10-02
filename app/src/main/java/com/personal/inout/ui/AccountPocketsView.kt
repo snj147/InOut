@@ -2,6 +2,7 @@ package com.personal.inout.ui
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
@@ -25,33 +26,51 @@ import androidx.compose.ui.unit.sp
 import com.personal.inout.data.*
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.abs
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AccountPocketsView(
-    pocketBalances: List<PocketBalanceSummary>,
-    rawPockets: List<VaultPocket>,
-    recurringSchedules: List<FlowRecord>,
+    rawPockets: List<LedgerPocket>,
+    pocketBalances: Map<Long, Double>,
+    recurringTransactions: List<LedgerTransaction>,
     isPrivacyMode: Boolean,
-    onTransactPocket: (VaultPocket) -> Unit,
-    onEditPocket: (VaultPocket) -> Unit,
-    onDeletePocketSafe: (VaultPocket, Double?) -> Unit,
-    onTogglePauseRecurring: (FlowRecord) -> Unit,
-    onEditRecurring: (FlowRecord) -> Unit,
-    onDeleteRecurringSafe: (FlowRecord) -> Unit,
+    onTransactPocket: (LedgerPocket) -> Unit,
+    onEditPocket: (LedgerPocket) -> Unit,
+    onDeletePocketSafe: (LedgerPocket, Double) -> Unit,
+    onTogglePauseRecurring: (LedgerTransaction) -> Unit,
+    onEditRecurring: (LedgerTransaction) -> Unit,
+    onDeleteRecurringSafe: (LedgerTransaction) -> Unit,
     onRequestCreateAccount: (PocketType) -> Unit = {}
 ) {
     val theme = LocalThemeColors.current
 
-    val liquidPockets = remember(rawPockets) { rawPockets.filter { it.pocketType == PocketType.LIQUID } }
-    val cardPockets = remember(rawPockets) { rawPockets.filter { it.pocketType == PocketType.CREDIT || it.pocketType == PocketType.CREDIT_LINE } }
-    val goalPockets = remember(rawPockets) { rawPockets.filter { it.pocketType == PocketType.SAVING_GOAL } }
-    val peerPockets = remember(rawPockets) { rawPockets.filter { it.pocketType == PocketType.COUNTERPARTY || it.subType == "PEER" || it.pocketType == PocketType.PEER } }
+    val liquidPockets = remember(rawPockets) {
+        rawPockets.filter { it.type == PocketType.LIQUID || it.type == PocketType.PREPAID_WALLET }
+    }
+    val cardPockets = remember(rawPockets) {
+        rawPockets.filter { it.type == PocketType.CREDIT_CARD }
+    }
+    val investmentPockets = remember(rawPockets) {
+        rawPockets.filter { it.type == PocketType.INVESTMENT }
+    }
+    val fixedAssetPockets = remember(rawPockets) {
+        rawPockets.filter { it.type == PocketType.FIXED_ASSET }
+    }
+    val loanPockets = remember(rawPockets) {
+        rawPockets.filter { it.type == PocketType.LIABILITY_LOAN }
+    }
+    val peerPockets = remember(rawPockets) {
+        rawPockets.filter { it.type == PocketType.PEER_RECEIVABLE || it.type == PocketType.PEER_PAYABLE }
+    }
+    val goalPockets = remember(rawPockets) {
+        rawPockets.filter { it.type == PocketType.GOAL_POT }
+    }
 
     var selectedFilterTab by remember { mutableIntStateOf(0) }
 
-    var activeActionSheetPocket by remember { mutableStateOf<Pair<VaultPocket, Double?>?>(null) }
-    var activeActionSheetSchedule by remember { mutableStateOf<FlowRecord?>(null) }
+    var activeActionSheetPocket by remember { mutableStateOf<Pair<LedgerPocket, Double>?>(null) }
+    var activeActionSheetSchedule by remember { mutableStateOf<LedgerTransaction?>(null) }
 
     LazyColumn(
         modifier = Modifier
@@ -67,10 +86,13 @@ fun AccountPocketsView(
             ) {
                 listOf(
                     "All (${rawPockets.size})",
-                    "Banks (${liquidPockets.size})",
-                    "Goals (${goalPockets.size})",
+                    "Cash & Banks (${liquidPockets.size})",
                     "Cards (${cardPockets.size})",
-                    "People (${peerPockets.size})"
+                    "Portfolio (${investmentPockets.size})",
+                    "Fixed Assets (${fixedAssetPockets.size})",
+                    "Loans & EMIs (${loanPockets.size})",
+                    "People (${peerPockets.size})",
+                    "Goals (${goalPockets.size})"
                 ).forEachIndexed { idx, label ->
                     val isSel = selectedFilterTab == idx
                     item {
@@ -78,6 +100,7 @@ fun AccountPocketsView(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(if (isSel) theme.accent else theme.surface)
+                                .border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(8.dp))
                                 .clickable { selectedFilterTab = idx }
                                 .padding(horizontal = 12.dp, vertical = 7.dp),
                             contentAlignment = Alignment.Center
@@ -94,14 +117,14 @@ fun AccountPocketsView(
             }
         }
 
-        // 1. LIQUID / CASH & BANK
+        // 1. LIQUID / CASH & BANK (Rules 1, 36, 37)
         if (selectedFilterTab == 0 || selectedFilterTab == 1) {
-            item { SectionHeader("Cash & Bank Accounts", liquidPockets.size, theme) }
+            item { SectionHeader("Cash, Bank & Prepaid Wallets", liquidPockets.size, theme) }
             if (liquidPockets.isEmpty()) {
                 item {
                     EmptyActionCard(
-                        title = "No Bank Accounts Found",
-                        message = "Add your primary bank, wallet, or cash account to log income & expenses.",
+                        title = "No Liquid Accounts Found",
+                        message = "Add your primary bank, UPI wallet, or physical cash in hand to maintain your True Safe Liquid.",
                         buttonText = "+ Add Bank / Wallet",
                         theme = theme,
                         onClick = { onRequestCreateAccount(PocketType.LIQUID) }
@@ -109,13 +132,15 @@ fun AccountPocketsView(
                 }
             } else {
                 items(liquidPockets, key = { "liquid_${it.id}" }) { pocket ->
-                    val bal = pocketBalances.firstOrNull { it.pocketId == pocket.id.toString() }?.computedBalance ?: 0.0
+                    val bal = pocketBalances[pocket.id] ?: 0.0
+                    val isCash = pocket.name.equals("Cash in Hand", ignoreCase = true)
+                    val icon = if (isCash) Icons.Default.Payments else if (pocket.type == PocketType.PREPAID_WALLET) Icons.Default.AccountBalanceWallet else Icons.Default.AccountBalance
                     CleanAccountRow(
                         title = pocket.name,
-                        subtitle = "Liquid Asset • Long press for options",
+                        subtitle = if (isCash) "Physical Cash • Rule 36" else if (pocket.type == PocketType.PREPAID_WALLET) "Prepaid Rail • Rule 37" else "Liquid Bank Asset",
                         balanceDisplay = if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", bal)}",
                         balanceColor = theme.textBright,
-                        icon = Icons.Default.AccountBalance,
+                        icon = icon,
                         iconColor = theme.mildGreen,
                         theme = theme,
                         onTransact = { onTransactPocket(pocket) },
@@ -125,26 +150,259 @@ fun AccountPocketsView(
             }
         }
 
-        // 2. GOAL POTS (SAVING TARGETS)
+        // 2. CREDIT CARDS (Rules 4, 5, 21)
         if (selectedFilterTab == 0 || selectedFilterTab == 2) {
-            item { SectionHeader("Goal Pots (Target Savings)", goalPockets.size, theme) }
+            item { SectionHeader("Credit Cards & Pay Later", cardPockets.size, theme) }
+            if (cardPockets.isEmpty()) {
+                item {
+                    EmptyActionCard(
+                        title = "No Credit Cards Linked",
+                        message = "Track card limits, bill generation dates, and grace periods with 1:1 Phantom Ring-fencing.",
+                        buttonText = "+ Add Credit Card",
+                        theme = theme,
+                        onClick = { onRequestCreateAccount(PocketType.CREDIT_CARD) }
+                    )
+                }
+            } else {
+                items(cardPockets, key = { "card_${it.id}" }) { pocket ->
+                    val rawBalance = pocketBalances[pocket.id] ?: 0.0
+                    val limit = pocket.creditLimit
+                    val outstandingDues = if (rawBalance < 0.0) abs(rawBalance) else 0.0
+                    val availableLimit = (limit - outstandingDues).coerceAtLeast(0.0)
+                    val utilization = if (limit > 0.0) (outstandingDues / limit) * 100.0 else 0.0
+                    val dueStr = if (pocket.billDueDay > 0) " • Bill Due: ${pocket.billDueDay}th" else ""
+
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = theme.surface),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, theme.borderLight, RoundedCornerShape(12.dp))
+                            .combinedClickable(
+                                onClick = { onTransactPocket(pocket) },
+                                onLongClick = { activeActionSheetPocket = pocket to rawBalance }
+                            )
+                    ) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(pocket.name, color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        text = "Avail: ₹${String.format("%,.0f", availableLimit)} / Limit: ₹${String.format("%,.0f", limit)}$dueStr",
+                                        color = theme.textMuted,
+                                        fontSize = 11.sp
+                                    )
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text(
+                                        text = if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", outstandingDues)}",
+                                        color = if (outstandingDues > 0.0) theme.mildRed else theme.mildGreen,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Button(
+                                        onClick = { onTransactPocket(pocket) },
+                                        colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                                    ) {
+                                        Text("Transact", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+
+                            if (limit > 0.0) {
+                                LinearProgressIndicator(
+                                    progress = { (utilization / 100.0).toFloat().coerceIn(0f, 1f) },
+                                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                                    color = if (utilization > 75.0) theme.mildRed else if (utilization > 30.0) theme.accent else theme.mildGreen,
+                                    trackColor = theme.surfaceAlt
+                                )
+                                Text(
+                                    text = "Credit Utilization: ${String.format("%.1f", utilization)}% ${if (utilization > 30.0) "(Above 30% advisory)" else ""}",
+                                    color = if (utilization > 30.0) theme.accent else theme.textMuted,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. INVESTMENTS & PORTFOLIO (Rule 31)
+        if (selectedFilterTab == 0 || selectedFilterTab == 3) {
+            item { SectionHeader("Investments & Portfolio Wealth", investmentPockets.size, theme) }
+            if (investmentPockets.isEmpty()) {
+                item {
+                    EmptyActionCard(
+                        title = "No Investment Pockets",
+                        message = "Track Mutual Funds, Equities, FDs, PPF, and Gold with mark-to-market valuations (excluded from daily runway).",
+                        buttonText = "+ Add Investment Asset",
+                        theme = theme,
+                        onClick = { onRequestCreateAccount(PocketType.INVESTMENT) }
+                    )
+                }
+            } else {
+                items(investmentPockets, key = { "inv_${it.id}" }) { pocket ->
+                    val bal = pocketBalances[pocket.id] ?: 0.0
+                    CleanAccountRow(
+                        title = pocket.name,
+                        subtitle = "Mark-to-Market Asset • Safe from Daily Burn",
+                        balanceDisplay = if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", bal)}",
+                        balanceColor = theme.accent,
+                        icon = Icons.Default.TrendingUp,
+                        iconColor = theme.accent,
+                        theme = theme,
+                        onTransact = { onTransactPocket(pocket) },
+                        onLongClick = { activeActionSheetPocket = pocket to bal }
+                    )
+                }
+            }
+        }
+
+        // 4. FIXED CAPITAL ASSETS (Rule 20, 29)
+        if (selectedFilterTab == 0 || selectedFilterTab == 4) {
+            item { SectionHeader("Fixed Capital Assets (WDV)", fixedAssetPockets.size, theme) }
+            if (fixedAssetPockets.isEmpty()) {
+                item {
+                    EmptyActionCard(
+                        title = "No Fixed Assets Registered",
+                        message = "Capitalize real estate, vehicles, and gadgets at Written Down Value (WDV) for statutory balance sheets.",
+                        buttonText = "+ Add Fixed Asset",
+                        theme = theme,
+                        onClick = { onRequestCreateAccount(PocketType.FIXED_ASSET) }
+                    )
+                }
+            } else {
+                items(fixedAssetPockets, key = { "fa_${it.id}" }) { pocket ->
+                    val bal = pocketBalances[pocket.id] ?: 0.0
+                    CleanAccountRow(
+                        title = pocket.name,
+                        subtitle = "Capital Asset • Subject to Periodic WDV",
+                        balanceDisplay = if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", bal)}",
+                        balanceColor = theme.textBright,
+                        icon = Icons.Default.Domain,
+                        iconColor = theme.textMuted,
+                        theme = theme,
+                        onTransact = { onTransactPocket(pocket) },
+                        onLongClick = { activeActionSheetPocket = pocket to bal }
+                    )
+                }
+            }
+        }
+
+        // 5. CONSUMER LOANS & EMIs (Rule 35)
+        if (selectedFilterTab == 0 || selectedFilterTab == 5) {
+            item { SectionHeader("Loans, Mortgages & Consumer EMIs", loanPockets.size, theme) }
+            if (loanPockets.isEmpty()) {
+                item {
+                    EmptyActionCard(
+                        title = "No Debt Liabilities Tracked",
+                        message = "Track home loans, auto loans, and retail consumer EMIs with principal-interest amortization.",
+                        buttonText = "+ Add Loan Account",
+                        theme = theme,
+                        onClick = { onRequestCreateAccount(PocketType.LIABILITY_LOAN) }
+                    )
+                }
+            } else {
+                items(loanPockets, key = { "loan_${it.id}" }) { pocket ->
+                    val bal = pocketBalances[pocket.id] ?: 0.0
+                    val debt = abs(bal)
+                    CleanAccountRow(
+                        title = pocket.name,
+                        subtitle = "Term Debt Liability • Locked in Cash Horizon",
+                        balanceDisplay = if (isPrivacyMode) "₹ •••" else "-₹${String.format("%,.0f", debt)}",
+                        balanceColor = theme.mildRed,
+                        icon = Icons.Default.MoneyOff,
+                        iconColor = theme.mildRed,
+                        theme = theme,
+                        onTransact = { onTransactPocket(pocket) },
+                        onLongClick = { activeActionSheetPocket = pocket to bal }
+                    )
+                }
+            }
+        }
+
+        // 6. COUNTERPARTIES / PEER LEDGER (Rule 7)
+        if (selectedFilterTab == 0 || selectedFilterTab == 6) {
+            item { SectionHeader("People (Sundry Debtors & Creditors)", peerPockets.size, theme) }
+            if (peerPockets.isEmpty()) {
+                item {
+                    EmptyActionCard(
+                        title = "No Peer Advances Tracked",
+                        message = "Track money lent to peers (Sundry Debtors) or borrowed (Sundry Creditors) with zero P&L distortion.",
+                        buttonText = "+ Add Counterparty",
+                        theme = theme,
+                        onClick = { onRequestCreateAccount(PocketType.PEER_RECEIVABLE) }
+                    )
+                }
+            } else {
+                items(peerPockets, key = { "peer_${it.id}" }) { pocket ->
+                    val bal = pocketBalances[pocket.id] ?: 0.0
+                    val isReceivable = pocket.type == PocketType.PEER_RECEIVABLE
+                    Card(
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = theme.surface),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, theme.borderLight, RoundedCornerShape(12.dp))
+                            .combinedClickable(
+                                onClick = { onTransactPocket(pocket) },
+                                onLongClick = { activeActionSheetPocket = pocket to bal }
+                            )
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp).fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(pocket.name, color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    if (isReceivable) "Sundry Debtor • They owe you" else "Sundry Creditor • You owe them",
+                                    color = theme.textMuted,
+                                    fontSize = 11.sp
+                                )
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = if (isPrivacyMode) "₹ •••" else "${if (isReceivable) "+" else "-"}₹${String.format("%,.0f", abs(bal))}",
+                                    color = if (isReceivable) theme.mildGreen else theme.mildRed,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 7. GOAL POTS (Rule 6)
+        if (selectedFilterTab == 0 || selectedFilterTab == 7) {
+            item { SectionHeader("Goal Pots (Quarantined Savings)", goalPockets.size, theme) }
             if (goalPockets.isEmpty()) {
                 item {
                     EmptyActionCard(
                         title = "No Goal Pots Active",
-                        message = "Earmark savings towards specific targets without opening multiple bank accounts.",
+                        message = "Quarantine liquid capital away from True Safe Liquid to prevent accidental wealth leakage.",
                         buttonText = "+ Add Goal Pot",
                         theme = theme,
-                        onClick = { onRequestCreateAccount(PocketType.SAVING_GOAL) }
+                        onClick = { onRequestCreateAccount(PocketType.GOAL_POT) }
                     )
                 }
             } else {
                 items(goalPockets, key = { "goal_${it.id}" }) { pocket ->
-                    val bal = pocketBalances.firstOrNull { it.pocketId == pocket.id.toString() }?.computedBalance ?: 0.0
-                    val target = pocket.targetAmount ?: 0.0
+                    val bal = pocketBalances[pocket.id] ?: 0.0
+                    val target = pocket.targetGoalAmount
                     val shortfall = (target - bal).coerceAtLeast(0.0)
-                    val targetDateStr = if (pocket.targetDateEpoch > 0) {
-                        SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(pocket.targetDateEpoch))
+                    val targetDateStr = if (pocket.goalTargetDate > 0) {
+                        SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(pocket.goalTargetDate))
                     } else "No deadline"
 
                     Card(
@@ -152,6 +410,7 @@ fun AccountPocketsView(
                         colors = CardDefaults.cardColors(containerColor = theme.surface),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .border(1.dp, theme.borderLight, RoundedCornerShape(12.dp))
                             .combinedClickable(
                                 onClick = { onTransactPocket(pocket) },
                                 onLongClick = { activeActionSheetPocket = pocket to bal }
@@ -169,12 +428,12 @@ fun AccountPocketsView(
                             }
                             LinearProgressIndicator(
                                 progress = { if (target > 0) (bal / target).toFloat().coerceIn(0f, 1f) else 0f },
-                                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                                modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)),
                                 color = theme.accent,
                                 trackColor = theme.surfaceAlt
                             )
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text("Due: $targetDateStr • Shortfall: ₹${String.format("%,.0f", shortfall)}", color = theme.textMuted, fontSize = 10.5.sp)
+                                Text("Target: $targetDateStr • Shortfall: ₹${String.format("%,.0f", shortfall)}", color = theme.textMuted, fontSize = 10.5.sp)
                                 Text("Long-press to edit", color = theme.textMuted.copy(alpha = 0.6f), fontSize = 10.sp)
                             }
                         }
@@ -183,134 +442,15 @@ fun AccountPocketsView(
             }
         }
 
-        // 3. CREDIT CARDS & CREDIT LINES
-        if (selectedFilterTab == 0 || selectedFilterTab == 3) {
-            item { SectionHeader("Cards & Credit Lines", cardPockets.size, theme) }
-            if (cardPockets.isEmpty()) {
-                item {
-                    EmptyActionCard(
-                        title = "No Credit Cards Linked",
-                        message = "Track unbilled expenses, credit limits, and bill due dates cleanly.",
-                        buttonText = "+ Add Credit Card",
-                        theme = theme,
-                        onClick = { onRequestCreateAccount(PocketType.CREDIT_LINE) }
-                    )
-                }
-            } else {
-                items(cardPockets, key = { "card_${it.id}" }) { pocket ->
-                    val rawBalance = pocketBalances.firstOrNull { it.pocketId == pocket.id.toString() }?.computedBalance ?: 0.0
-                    val limit = pocket.creditLimit ?: 0.0
-                    val outstandingDues = if (rawBalance < 0.0) Math.abs(rawBalance) else 0.0
-                    val availableLimit = (limit - outstandingDues).coerceIn(0.0, limit)
-                    val dueDateStr = if (pocket.targetDateEpoch > 0) {
-                        " • Due: " + SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(pocket.targetDateEpoch))
-                    } else ""
-
-                    Card(
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = theme.surface),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .combinedClickable(
-                                onClick = { onTransactPocket(pocket) },
-                                onLongClick = { activeActionSheetPocket = pocket to rawBalance }
-                            )
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(14.dp).fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(pocket.name, color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                Text(
-                                    text = "Avail: ₹${String.format("%,.0f", availableLimit)} / Limit: ₹${String.format("%,.0f", limit)}$dueDateStr",
-                                    color = theme.textMuted,
-                                    fontSize = 11.sp
-                                )
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(
-                                    text = if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", outstandingDues)}",
-                                    color = if (outstandingDues > 0.0) theme.mildRed else theme.mildGreen,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Button(
-                                    onClick = { onTransactPocket(pocket) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
-                                    shape = RoundedCornerShape(8.dp),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                                ) {
-                                    Text("Transact", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 4. COUNTERPARTIES / PEER LEDGER
-        if (selectedFilterTab == 0 || selectedFilterTab == 4) {
-            item { SectionHeader("People (Owed & Lent)", peerPockets.size, theme) }
-            if (peerPockets.isEmpty()) {
-                item {
-                    EmptyActionCard(
-                        title = "No Contacts Tracked",
-                        message = "Track borrowed and lent money with counterparty balances.",
-                        buttonText = "+ Add Person",
-                        theme = theme,
-                        onClick = { onRequestCreateAccount(PocketType.COUNTERPARTY) }
-                    )
-                }
-            } else {
-                items(peerPockets, key = { "peer_${it.id}" }) { pocket ->
-                    val bal = pocketBalances.firstOrNull { it.pocketId == pocket.id.toString() }?.computedBalance ?: 0.0
-                    val isReceivable = bal >= 0.0
-
-                    Card(
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = theme.surface),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .combinedClickable(
-                                onClick = { onTransactPocket(pocket) },
-                                onLongClick = { activeActionSheetPocket = pocket to bal }
-                            )
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(14.dp).fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(pocket.name, color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                Text(if (isReceivable) "They owe you" else "You owe them", color = theme.textMuted, fontSize = 11.sp)
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(
-                                    text = if (isPrivacyMode) "₹ •••" else "${if (isReceivable) "+" else "-"}₹${String.format("%,.0f", Math.abs(bal))}",
-                                    color = if (isReceivable) theme.mildGreen else theme.mildRed,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 5. RECURRING AUTOMATION PIPELINE
+        // 8. RECURRING PIPELINE (Rule 8)
         if (selectedFilterTab == 0) {
-            item { SectionHeader("Recurring Automation Pipeline", recurringSchedules.size, theme) }
-            if (recurringSchedules.isEmpty()) {
+            item { SectionHeader("Recurring Automation Rules", recurringTransactions.size, theme) }
+            if (recurringTransactions.isEmpty()) {
                 item {
                     Card(
                         shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = theme.surface.copy(alpha = 0.6f)),
-                        modifier = Modifier.fillMaxWidth()
+                        colors = CardDefaults.cardColors(containerColor = theme.surface),
+                        modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(12.dp))
                     ) {
                         Column(
                             modifier = Modifier.padding(16.dp).fillMaxWidth(),
@@ -318,18 +458,19 @@ fun AccountPocketsView(
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
                             Text("No Recurring Rules Scheduled", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            Text("Select a repeat cadence (Daily, Weekly, Monthly) on any transaction to automate repeating entries.", color = theme.textMuted, fontSize = 11.sp)
+                            Text("Automate subscriptions, salaries, SIPs, and EMIs with zero-drift catch-up execution.", color = theme.textMuted, fontSize = 11.sp)
                         }
                     }
                 }
             } else {
-                items(recurringSchedules, key = { "rec_${it.id}_${it.timestamp}_${it.frequency}" }) { schedule ->
+                items(recurringTransactions, key = { "rec_${it.id}_${it.timestamp}" }) { schedule ->
                     val nextDateStr = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(schedule.timestamp))
                     Card(
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = theme.surface),
                         modifier = Modifier
                             .fillMaxWidth()
+                            .border(1.dp, theme.borderLight, RoundedCornerShape(12.dp))
                             .combinedClickable(
                                 onClick = { onEditRecurring(schedule) },
                                 onLongClick = { activeActionSheetSchedule = schedule }
@@ -341,13 +482,13 @@ fun AccountPocketsView(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column {
-                                Text(schedule.note.ifBlank { schedule.category }, color = theme.textBright, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                                Text("Repeats ${schedule.frequency} (due $nextDateStr) • ₹${(schedule.amount ?: 0.0).toInt()}", color = theme.textMuted, fontSize = 11.sp)
+                                Text(schedule.description.ifBlank { schedule.category }, color = theme.textBright, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
+                                Text("Repeats ${schedule.recurringFrequency} (due $nextDateStr) • ₹${schedule.amount.toInt()}", color = theme.textMuted, fontSize = 11.sp)
                             }
                             IconButton(onClick = { onTogglePauseRecurring(schedule) }) {
                                 Icon(
-                                    imageVector = if (schedule.isPaused) Icons.Default.PlayArrow else Icons.Default.Pause,
-                                    contentDescription = "Toggle Pause",
+                                    imageVector = Icons.Default.Schedule,
+                                    contentDescription = "Cadence",
                                     tint = theme.accent
                                 )
                             }
@@ -358,13 +499,13 @@ fun AccountPocketsView(
         }
     }
 
-    // Modal Actions for Card Long-Press
+    // Modal Actions for Account Long-Press
     activeActionSheetPocket?.let { (pocket, bal) ->
         AlertDialog(
             onDismissRequest = { activeActionSheetPocket = null },
             containerColor = theme.surface,
             title = { Text(pocket.name, color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
-            text = { Text("Choose action for this account", color = theme.textMuted, fontSize = 12.sp) },
+            text = { Text("Manage details, limits, or reconciliation benchmarks for this pocket.", color = theme.textMuted, fontSize = 12.sp) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -390,8 +531,8 @@ fun AccountPocketsView(
         AlertDialog(
             onDismissRequest = { activeActionSheetSchedule = null },
             containerColor = theme.surface,
-            title = { Text(schedule.note.ifBlank { schedule.category }, color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
-            text = { Text("Manage recurring rule", color = theme.textMuted, fontSize = 12.sp) },
+            title = { Text(schedule.description.ifBlank { schedule.category }, color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
+            text = { Text("Modify or delete deterministic recurring automation schedule.", color = theme.textMuted, fontSize = 12.sp) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -432,6 +573,7 @@ private fun CleanAccountRow(
         colors = CardDefaults.cardColors(containerColor = theme.surface),
         modifier = Modifier
             .fillMaxWidth()
+            .border(1.dp, theme.borderLight, RoundedCornerShape(12.dp))
             .combinedClickable(
                 onClick = onTransact,
                 onLongClick = onLongClick
@@ -497,8 +639,8 @@ private fun EmptyActionCard(
 ) {
     Card(
         shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = theme.surface.copy(alpha = 0.6f)),
-        modifier = Modifier.fillMaxWidth()
+        colors = CardDefaults.cardColors(containerColor = theme.surface),
+        modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(12.dp))
     ) {
         Column(
             modifier = Modifier.padding(16.dp).fillMaxWidth(),
