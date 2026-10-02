@@ -72,10 +72,10 @@ fun VaultFloatingTopOverlay(alertManager: VaultAlertManager, theme: ThemeColors)
     ) {
         if (alert != null) {
             val (bgColor, borderColor, textColor, icon) = when (alert.type) {
-                AlertType.ERROR -> Quadruple(Color(0xFF2B1414), theme.mildRed, theme.mildRed, Icons.Default.Warning)
-                AlertType.WARNING -> Quadruple(Color(0xFF261D12), theme.accent, theme.accent, Icons.Default.Warning)
-                AlertType.SUCCESS -> Quadruple(Color(0xFF132517), theme.mildGreen, theme.mildGreen, Icons.Default.CheckCircle)
-                AlertType.INFO -> Quadruple(theme.surface, theme.accent.copy(alpha = 0.5f), theme.textBright, Icons.Default.Info)
+                AlertType.ERROR -> Quadruple(theme.surfaceAlt, theme.mildRed, theme.mildRed, Icons.Default.Warning)
+                AlertType.WARNING -> Quadruple(theme.surfaceAlt, theme.accent, theme.accent, Icons.Default.Warning)
+                AlertType.SUCCESS -> Quadruple(theme.surfaceAlt, theme.mildGreen, theme.mildGreen, Icons.Default.CheckCircle)
+                AlertType.INFO -> Quadruple(theme.surfaceAlt, theme.borderLight, theme.textBright, Icons.Default.Info)
             }
 
             Row(
