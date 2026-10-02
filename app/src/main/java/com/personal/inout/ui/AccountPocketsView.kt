@@ -128,7 +128,7 @@ fun AccountPocketsView(
             }
         }
 
-        // VIEW 1: LIQUID ACCOUNTS
+        // 1. LIQUID ACCOUNTS
         if (activeModeIndex == 0 || activeModeIndex == 1) {
             val totalLiquid = liquidPockets.sumOf { pocketBalances[it.id] ?: 0.0 }
             item {
@@ -172,7 +172,7 @@ fun AccountPocketsView(
             }
         }
 
-        // VIEW 2: LIABILITIES & DEBT
+        // 2. LIABILITIES & DEBT
         if (activeModeIndex == 0 || activeModeIndex == 2) {
             val totalDebt = debtPockets.sumOf { abs(pocketBalances[it.id] ?: 0.0) }
             item {
@@ -216,7 +216,7 @@ fun AccountPocketsView(
             }
         }
 
-        // VIEW 3: CAPITAL & RESERVES
+        // 3. CAPITAL & RESERVES
         if (activeModeIndex == 0 || activeModeIndex == 3) {
             val totalCapital = capitalPockets.sumOf { pocketBalances[it.id] ?: 0.0 }
             item {
@@ -269,7 +269,7 @@ fun AccountPocketsView(
             }
         }
 
-        // VIEW 4: RECURRING MANDATES (AUTO)
+        // 4. RECURRING MANDATES (AUTO)
         if (activeModeIndex == 0 || activeModeIndex == 4) {
             val totalRecurring = recurringTransactions.sumOf { it.amount }
             item {
