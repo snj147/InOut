@@ -190,8 +190,6 @@ fun DashboardScreen(db: AppDatabase) {
     var showClearLedgerConfirmation by remember { mutableStateOf(false) }
     var showNoticesDialog by remember { mutableStateOf(false) }
 
-    val allTransactionsSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-
     var availableUpdateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var isCheckingForUpdate by remember { mutableStateOf(false) }
     var showFeedbackDialog by remember { mutableStateOf(false) }
@@ -1076,7 +1074,6 @@ fun DashboardScreen(db: AppDatabase) {
                         rawPockets = rawPockets,
                         isPrivacyMode = isPrivacyMode,
                         isProUser = isProUnlocked,
-                        sheetState = allTransactionsSheetState,
                         onDismiss = { showAllRecordsSheet = false },
                         onEditRecord = { tx -> editingTransaction = tx },
                         onExportCsv = { CsvExporter.exportAndShareTransactions(context, completedTransactions) },
@@ -1700,7 +1697,7 @@ private fun CenteredMasterPinPurgeModal(
     onPurgeConfirmed: () -> Unit
 ) {
     var enteredPin by remember { mutableStateOf("") }
-    val masterPin = "147258" // Configured default master auth PIN
+    val masterPin = "147258"
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1730,7 +1727,6 @@ private fun CenteredMasterPinPurgeModal(
                     Text("MASTER PIN AUTHORIZATION", color = theme.mildRed, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     Text("Enter Master PIN to authorize ledger purge:", color = theme.textMuted, fontSize = 11.sp, textAlign = TextAlign.Center)
 
-                    // 6 Dots Indicator
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         repeat(6) { idx ->
                             val filled = idx < enteredPin.length
@@ -1744,7 +1740,6 @@ private fun CenteredMasterPinPurgeModal(
                         }
                     }
 
-                    // Numeric Keypad
                     val keys = listOf(
                         listOf("1", "2", "3"),
                         listOf("4", "5", "6"),
@@ -2332,7 +2327,6 @@ private fun CreateAccountDialog(
                 ) {
                     Text(text = "NEW ACCOUNT SETUP", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp)
 
-                    // Type Selector Bar
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -2377,7 +2371,6 @@ private fun CreateAccountDialog(
                         )
                     )
 
-                    // Adaptive Slot Inputs (2 to 3 Insets Maximum)
                     when (type) {
                         PocketType.LIQUID, PocketType.PREPAID_WALLET -> {
                             OutlinedTextField(
