@@ -16,7 +16,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -29,11 +28,11 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 enum class ActiveEntryRail(val label: String, val nature: MovementNature) {
-    EXPENSE("Expense", MovementNature.OPERATING_EXPENSE),
-    INFLOW("Inflow", MovementNature.OPERATING_INCOME),
-    TRANSFER("Transfer", MovementNature.TRANSFER),
-    CARD_BILL("Card Bill", MovementNature.OPERATING_EXPENSE),
-    PEER("Lend / Borrow", MovementNature.TRANSFER)
+    EXPENSE("EXP", MovementNature.OPERATING_EXPENSE),
+    INFLOW("IN", MovementNature.OPERATING_INCOME),
+    TRANSFER("XFER", MovementNature.TRANSFER),
+    CARD_BILL("CARD", MovementNature.OPERATING_EXPENSE),
+    PEER("PEER", MovementNature.TRANSFER)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -69,7 +68,6 @@ fun UnifiedEntrySheet(
 
     var isTaxDeductible by remember { mutableStateOf(false) }
     var isReimbursable by remember { mutableStateOf(false) }
-
     var selectedCadence by remember { mutableStateOf("None") }
 
     val liquidPockets = remember(allPockets) {
@@ -134,7 +132,7 @@ fun UnifiedEntrySheet(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.60f))
+                .background(Color.Black.copy(alpha = 0.65f))
                 .clickable { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
@@ -153,28 +151,15 @@ fun UnifiedEntrySheet(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Title Header
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "NEW LEDGER ENTRY",
-                            color = theme.textMuted,
-                            fontSize = 10.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.2.sp
-                        )
-                        Text(
-                            text = "Precision Monolith",
-                            color = theme.accent,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                    Text(
+                        text = "NEW TRANSACTION",
+                        color = theme.textBright,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
 
-                    // Mode Rail
+                    // Compact, non-wrapping single-word rail with distinct colors
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -188,7 +173,9 @@ fun UnifiedEntrySheet(
                             val activeBg = when (rail) {
                                 ActiveEntryRail.EXPENSE -> theme.mildRed
                                 ActiveEntryRail.INFLOW -> theme.mildGreen
-                                else -> theme.accent
+                                ActiveEntryRail.TRANSFER -> theme.accent
+                                ActiveEntryRail.CARD_BILL -> Color(0xFFD4B08C)
+                                ActiveEntryRail.PEER -> Color(0xFF8BA7C7)
                             }
                             Box(
                                 modifier = Modifier
@@ -196,7 +183,7 @@ fun UnifiedEntrySheet(
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(if (isSel) activeBg else Color.Transparent)
                                     .clickable { selectedRail = rail }
-                                    .padding(vertical = 6.dp),
+                                    .padding(vertical = 7.dp),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
@@ -210,39 +197,28 @@ fun UnifiedEntrySheet(
                         }
                     }
 
-                    // Amount Expression & Date Row
+                    // Symmetrical Amount and Date Row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(modifier = Modifier.weight(1.3f)) {
-                            OutlinedTextField(
-                                value = amountExpression,
-                                onValueChange = { amountExpression = it },
-                                placeholder = { Text("₹ 0", color = theme.textMuted, fontSize = 13.sp) },
-                                singleLine = true,
-                                shape = RoundedCornerShape(8.dp),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = theme.surfaceAlt,
-                                    unfocusedContainerColor = theme.surfaceAlt,
-                                    focusedBorderColor = theme.accent,
-                                    unfocusedBorderColor = theme.borderLight,
-                                    focusedTextColor = theme.textBright,
-                                    unfocusedTextColor = theme.textBright
-                                ),
-                                modifier = Modifier.fillMaxWidth()
+                        OutlinedTextField(
+                            value = amountExpression,
+                            onValueChange = { amountExpression = it },
+                            placeholder = { Text("Amount ₹", color = theme.textMuted, fontSize = 12.sp) },
+                            singleLine = true,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1.2f),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = theme.surfaceAlt,
+                                unfocusedContainerColor = theme.surfaceAlt,
+                                focusedBorderColor = theme.accent,
+                                unfocusedBorderColor = theme.borderLight,
+                                focusedTextColor = theme.textBright,
+                                unfocusedTextColor = theme.textBright
                             )
-                            if (evaluatedAmount != null && amountExpression.any { it in "+-*/" }) {
-                                Text(
-                                    "= ₹ ${String.format("%.0f", evaluatedAmount)}",
-                                    color = theme.accent,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(start = 4.dp, top = 2.dp)
-                                )
-                            }
-                        }
+                        )
 
                         Box(
                             modifier = Modifier
@@ -251,7 +227,7 @@ fun UnifiedEntrySheet(
                                 .background(theme.surfaceAlt)
                                 .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
                                 .clickable { showDatePicker = true }
-                                .padding(horizontal = 8.dp, vertical = 14.dp),
+                                .padding(horizontal = 10.dp, vertical = 14.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Row(
@@ -259,12 +235,22 @@ fun UnifiedEntrySheet(
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(13.dp))
-                                Text(dateFormatted, color = theme.textBright, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
+                                Text(dateFormatted, color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }
 
-                    // Account Selectors
+                    if (evaluatedAmount != null && amountExpression.any { it in "+-*/" }) {
+                        Text(
+                            "= ₹ ${String.format("%.0f", evaluatedAmount)}",
+                            color = theme.accent,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(start = 2.dp)
+                        )
+                    }
+
+                    // Account Selection
                     if (selectedRail in listOf(ActiveEntryRail.TRANSFER, ActiveEntryRail.CARD_BILL, ActiveEntryRail.PEER)) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             SelectorPillTile(
@@ -282,7 +268,7 @@ fun UnifiedEntrySheet(
                         }
                     } else {
                         SelectorPillTile(
-                            label = "Source Account: ${selectedSourcePocket?.name ?: "Tap to Select"}",
+                            label = "Account: ${selectedSourcePocket?.name ?: "Tap to Select"}",
                             modifier = Modifier.fillMaxWidth(),
                             theme = theme,
                             onClick = { showSourcePicker = true }
@@ -290,7 +276,7 @@ fun UnifiedEntrySheet(
                     }
 
                     // Category Inset Flow
-                    Text("Category Allocation", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Text("CATEGORY", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -302,26 +288,28 @@ fun UnifiedEntrySheet(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
                                     .background(if (isSel) theme.accent else theme.surfaceAlt)
+                                    .border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(6.dp))
                                     .clickable { selectedCategory = cat }
                                     .padding(horizontal = 8.dp, vertical = 5.dp)
                             ) {
                                 Text(
                                     cat,
                                     color = if (isSel) theme.bg else theme.textBright,
-                                    fontSize = 10.sp,
+                                    fontSize = 10.5.sp,
                                     fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
                                 )
                             }
                         }
                     }
 
-                    // Narration / Merchant
+                    // Narration / Merchant (Enabled, Unrestricted Input)
                     OutlinedTextField(
                         value = note,
                         onValueChange = { note = it },
                         placeholder = { Text("Narration / Merchant (Optional)", color = theme.textMuted, fontSize = 12.sp) },
                         singleLine = true,
                         shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = theme.surfaceAlt,
                             unfocusedContainerColor = theme.surfaceAlt,
@@ -329,11 +317,10 @@ fun UnifiedEntrySheet(
                             unfocusedBorderColor = theme.borderLight,
                             focusedTextColor = theme.textBright,
                             unfocusedTextColor = theme.textBright
-                        ),
-                        modifier = Modifier.fillMaxWidth()
+                        )
                     )
 
-                    // Repeat Cadence (Persistent Selection Pills: None, Daily, Weekly, Monthly, Yearly)
+                    // Repeat Cadence (Symmetrical 5-Pill Rail)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -368,7 +355,7 @@ fun UnifiedEntrySheet(
                         }
                     }
 
-                    // Statutory Tags (80C / Reimbursable)
+                    // Statutory Tags (Equal 50/50 Proportion)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -384,9 +371,9 @@ fun UnifiedEntrySheet(
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "🏷 80C Tax Tag",
+                                text = "🏷 80C Tag",
                                 color = if (isTaxDeductible) theme.bg else theme.textMuted,
-                                fontSize = 10.sp,
+                                fontSize = 10.5.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
@@ -404,13 +391,13 @@ fun UnifiedEntrySheet(
                             Text(
                                 text = "💼 Reimbursable",
                                 color = if (isReimbursable) theme.bg else theme.textMuted,
-                                fontSize = 10.sp,
+                                fontSize = 10.5.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
                     }
 
-                    // Action Buttons
+                    // Bottom Action Controls
                     val hasAccounts = allPockets.isNotEmpty()
                     val isValid = evaluatedAmount != null && evaluatedAmount > 0.0 && selectedSourcePocket != null
 
@@ -422,14 +409,11 @@ fun UnifiedEntrySheet(
                     ) {
                         OutlinedButton(
                             onClick = onDismiss,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(42.dp),
+                            modifier = Modifier.weight(1f),
                             shape = RoundedCornerShape(8.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
                         ) {
-                            Text("Cancel", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
                         }
 
                         Button(
@@ -468,9 +452,7 @@ fun UnifiedEntrySheet(
                                 )
                                 onDismiss()
                             },
-                            modifier = Modifier
-                                .weight(1.3f)
-                                .height(42.dp),
+                            modifier = Modifier.weight(1.3f),
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = if (isValid && hasAccounts) theme.accent else theme.surfaceAlt
@@ -478,7 +460,7 @@ fun UnifiedEntrySheet(
                             enabled = hasAccounts && isValid
                         ) {
                             Text(
-                                text = if (hasAccounts) "Post to Ledger" else "Add Account First",
+                                text = if (hasAccounts) "Post Entry" else "Add Account",
                                 color = if (isValid && hasAccounts) theme.bg else theme.textMuted,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp
@@ -530,13 +512,13 @@ private fun SelectorPillTile(
             .background(theme.surfaceAlt)
             .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
             .clickable { onClick() }
-            .padding(horizontal = 10.dp, vertical = 10.dp),
+            .padding(horizontal = 10.dp, vertical = 11.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         Text(
             text = label,
             color = theme.textBright,
-            fontSize = 11.sp,
+            fontSize = 11.5.sp,
             fontWeight = FontWeight.Medium,
             maxLines = 1
         )
