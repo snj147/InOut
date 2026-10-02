@@ -39,36 +39,22 @@ abstract class AppDatabase : RoomDatabase() {
                     .addCallback(object : Callback() {
                         override fun onCreate(db: SupportSQLiteDatabase) {
                             super.onCreate(db)
-                            CoroutineScope(Dispatchers.IO).launch {
-                                val dao = getInstance(context).ledgerDao()
-                                // Strict guard: Only insert Cash in Hand if it doesn't already exist
-                                val existing = dao.getDefaultCashInHandPocket()
-                                if (existing == null) {
-                                    dao.insertPocket(
-                                        LedgerPocket(
-                                            name = "Cash in Hand",
-                                            type = PocketType.LIQUID,
-                                            currency = "INR"
-                                        )
-                                    )
-                                }
-                            }
+                            // Clean slate rule: Zero auto-created cash accounts on initialization
                         }
 
                         override fun onOpen(db: SupportSQLiteDatabase) {
                             super.onOpen(db)
                             CoroutineScope(Dispatchers.IO).launch {
                                 val dao = getInstance(context).ledgerDao()
-                                // Deduplicate on open: Ensure only one active "Cash in Hand" exists
+                                // Purge unseeded duplicate or empty cash accounts from previous runs
                                 val pockets = dao.getAllActivePocketsSnapshot()
-                                val cashPockets = pockets.filter { it.name.equals("Cash in Hand", ignoreCase = true) }
-                                if (cashPockets.size > 1) {
-                                    // Keep the first, archive duplicate spares
-                                    cashPockets.drop(1).forEach { dup ->
-                                        val bal = dao.computePocketBalance(dup.id)
-                                        if (bal == 0.0) {
-                                            dao.updatePocket(dup.copy(isArchived = true))
-                                        }
+                                val emptyAutoCash = pockets.filter { 
+                                    it.name.equals("Cash in Hand", ignoreCase = true) 
+                                }
+                                emptyAutoCash.forEach { cashPocket ->
+                                    val bal = dao.computePocketBalance(cashPocket.id)
+                                    if (bal == 0.0) {
+                                        dao.updatePocket(cashPocket.copy(isArchived = true))
                                     }
                                 }
                             }
