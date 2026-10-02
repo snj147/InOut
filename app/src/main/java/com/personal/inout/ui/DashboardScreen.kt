@@ -40,7 +40,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -61,7 +60,6 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
-import kotlin.math.abs
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -264,6 +262,47 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
+    fun processReceiptResult(bitmap: Bitmap) {
+        scope.launch {
+            try {
+                val parsed = ReceiptScanner.processReceiptBitmap(bitmap)
+                ocrPrefilledNote = parsed.merchant
+                ocrPrefilledAmount = parsed.total
+                selectedPocketIdForEntry = rawPockets.firstOrNull { it.type == PocketType.LIQUID }?.id
+                showUnifiedEntrySheet = true
+                alertManager.showAlert("Parsed: ${parsed.merchant} (₹${String.format("%,.0f", parsed.total ?: 0.0)})", AlertType.INFO)
+            } catch (e: Exception) {
+                alertManager.showAlert("OCR Failed: ${e.localizedMessage}", AlertType.ERROR)
+            }
+        }
+    }
+
+    val cameraSnapLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap: Bitmap? ->
+        if (bitmap != null) processReceiptResult(bitmap)
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) cameraSnapLauncher.launch(null)
+        else alertManager.showAlert("Camera permission required for OCR receipts", AlertType.WARNING)
+    }
+
+    val photoPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                try {
+                    val parsed = ReceiptScanner.processReceipt(context, uri)
+                    ocrPrefilledNote = parsed.merchant
+                    ocrPrefilledAmount = parsed.total
+                    selectedPocketIdForEntry = rawPockets.firstOrNull { it.type == PocketType.LIQUID }?.id
+                    showUnifiedEntrySheet = true
+                    alertManager.showAlert("Parsed: ${parsed.merchant} (₹${String.format("%,.0f", parsed.total ?: 0.0)})", AlertType.INFO)
+                } catch (e: Exception) {
+                    alertManager.showAlert("OCR Failed: ${e.localizedMessage}", AlertType.ERROR)
+                }
+            }
+        }
+    }
+
     CompositionLocalProvider(
         LocalThemeColors provides theme,
         LocalVaultAlertManager provides alertManager
@@ -300,7 +339,10 @@ fun DashboardScreen(db: AppDatabase) {
                         ).forEach { (idx, title, icon) ->
                             NavigationBarItem(
                                 selected = selectedTab == idx,
-                                onClick = { selectedTab = idx },
+                                onClick = {
+                                    selectedTab = idx
+                                    isFabExpanded = false
+                                },
                                 icon = { Icon(imageVector = icon, contentDescription = title) },
                                 label = {
                                     Text(
@@ -322,28 +364,95 @@ fun DashboardScreen(db: AppDatabase) {
                 },
                 floatingActionButton = {
                     if (selectedTab == 0 || selectedTab == 1) {
-                        FloatingActionButton(
-                            onClick = {
-                                if (selectedTab == 1) {
-                                    prefilledCreatePocketType = PocketType.LIQUID
-                                    showCreatePocketDialog = true
-                                } else {
-                                    ocrPrefilledNote = ""
-                                    ocrPrefilledAmount = null
-                                    selectedPocketIdForEntry = rawPockets.firstOrNull { it.type == PocketType.LIQUID }?.id
-                                    showUnifiedEntrySheet = true
-                                }
-                            },
-                            containerColor = theme.accent,
-                            contentColor = theme.bg,
-                            shape = CircleShape,
+                        val rotation by animateFloatAsState(
+                            targetValue = if (isFabExpanded) 45f else 0f,
+                            animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+                            label = "fabRotation"
+                        )
+
+                        Column(
+                            horizontalAlignment = Alignment.End,
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
                             modifier = Modifier.navigationBarsPadding()
                         ) {
-                            Icon(
-                                imageVector = if (selectedTab == 1) Icons.Default.AddCard else Icons.Default.Add,
-                                contentDescription = "Add Entry",
-                                modifier = Modifier.size(24.dp)
-                            )
+                            AnimatedVisibility(
+                                visible = isFabExpanded,
+                                enter = fadeIn() + slideInVertically { it / 2 },
+                                exit = fadeOut() + slideOutVertically { it / 2 }
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.End,
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    FloatingActionButton(
+                                        onClick = {
+                                            isFabExpanded = false
+                                            ocrPrefilledNote = ""
+                                            ocrPrefilledAmount = null
+                                            selectedPocketIdForEntry = rawPockets.firstOrNull { it.type == PocketType.LIQUID }?.id
+                                            showUnifiedEntrySheet = true
+                                        },
+                                        modifier = Modifier.size(46.dp),
+                                        containerColor = theme.accent,
+                                        contentColor = theme.bg,
+                                        shape = CircleShape
+                                    ) {
+                                        Icon(imageVector = Icons.Default.EditNote, contentDescription = "Manual Entry", modifier = Modifier.size(22.dp))
+                                    }
+
+                                    FloatingActionButton(
+                                        onClick = {
+                                            isFabExpanded = false
+                                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                                                cameraSnapLauncher.launch(null)
+                                            } else {
+                                                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                            }
+                                        },
+                                        modifier = Modifier.size(46.dp),
+                                        containerColor = theme.accent,
+                                        contentColor = theme.bg,
+                                        shape = CircleShape
+                                    ) {
+                                        Icon(imageVector = Icons.Default.PhotoCamera, contentDescription = "Camera OCR", modifier = Modifier.size(20.dp))
+                                    }
+
+                                    FloatingActionButton(
+                                        onClick = {
+                                            isFabExpanded = false
+                                            photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                        },
+                                        modifier = Modifier.size(46.dp),
+                                        containerColor = theme.accent,
+                                        contentColor = theme.bg,
+                                        shape = CircleShape
+                                    ) {
+                                        Icon(imageVector = Icons.Default.Image, contentDescription = "Gallery OCR", modifier = Modifier.size(20.dp))
+                                    }
+                                }
+                            }
+
+                            FloatingActionButton(
+                                onClick = {
+                                    if (selectedTab == 1) {
+                                        prefilledCreatePocketType = PocketType.LIQUID
+                                        showCreatePocketDialog = true
+                                    } else {
+                                        isFabExpanded = !isFabExpanded
+                                    }
+                                },
+                                containerColor = theme.accent,
+                                contentColor = theme.bg,
+                                shape = CircleShape
+                            ) {
+                                Icon(
+                                    imageVector = if (selectedTab == 1) Icons.Default.AddCard else Icons.Default.Add,
+                                    contentDescription = "Action",
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .rotate(if (selectedTab == 0) rotation else 0f)
+                                )
+                            }
                         }
                     }
                 }
@@ -432,7 +541,6 @@ fun DashboardScreen(db: AppDatabase) {
                                     }
                                 }
 
-                                // Quick Action Pills Card Removed - Clean Minimalist Flow
                                 item {
                                     Row(
                                         modifier = Modifier
@@ -617,6 +725,15 @@ fun DashboardScreen(db: AppDatabase) {
                             onClearLedger = { showClearLedgerConfirmation = true }
                         )
                     }
+                }
+
+                if (isFabExpanded) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.4f))
+                            .clickable { isFabExpanded = false }
+                    )
                 }
 
                 if (showUnifiedEntrySheet) {
@@ -1081,8 +1198,7 @@ private fun CenteredNoticesModal(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.6f))
-                .clickable { onDismiss() },
+                .background(Color.Black.copy(alpha = 0.6f)),
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -1092,7 +1208,6 @@ private fun CenteredNoticesModal(
                     .fillMaxWidth(0.9f)
                     .widthIn(max = 400.dp)
                     .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
-                    .clickable(enabled = false) {}
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -1145,7 +1260,7 @@ private fun CenteredNoticesModal(
 }
 
 /**
- * Perfectly Symmetrical, 3-Column Keypad Master PIN Authorization with Error Banner
+ * Perfectly Symmetrical, 3-Column Keypad Master PIN Authorization with Dedicated Error Banner
  */
 @Composable
 private fun CenteredMasterPinPurgeModal(
@@ -1164,8 +1279,7 @@ private fun CenteredMasterPinPurgeModal(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.65f))
-                .clickable { onDismiss() },
+                .background(Color.Black.copy(alpha = 0.65f)),
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -1175,7 +1289,6 @@ private fun CenteredMasterPinPurgeModal(
                     .fillMaxWidth(0.88f)
                     .widthIn(max = 350.dp)
                     .border(1.dp, if (isError) theme.mildRed else theme.borderLight, RoundedCornerShape(16.dp))
-                    .clickable(enabled = false) {}
             ) {
                 Column(
                     modifier = Modifier.padding(20.dp),
@@ -1185,7 +1298,6 @@ private fun CenteredMasterPinPurgeModal(
                     Text("MASTER PIN AUTHORIZATION", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     Text("Enter Master Security PIN to authorize ledger wipe", color = theme.textMuted, fontSize = 11.sp, textAlign = TextAlign.Center)
 
-                    // Dedicated Animated Error Banner
                     if (isError) {
                         Box(
                             modifier = Modifier
@@ -1199,7 +1311,6 @@ private fun CenteredMasterPinPurgeModal(
                         }
                     }
 
-                    // 6 Dots Indicator
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         repeat(6) { idx ->
                             val filled = idx < enteredPin.length
@@ -1213,7 +1324,6 @@ private fun CenteredMasterPinPurgeModal(
                         }
                     }
 
-                    // Strict 3x4 Balanced Keypad Grid
                     val keys = listOf(
                         listOf("1", "2", "3"),
                         listOf("4", "5", "6"),
@@ -1364,7 +1474,6 @@ private fun SettingsCardsList(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(top = 16.dp, bottom = 96.dp)
     ) {
-        // Group 1: Workspace Aesthetics
         item {
             Card(
                 shape = RoundedCornerShape(14.dp),
@@ -1404,7 +1513,6 @@ private fun SettingsCardsList(
             }
         }
 
-        // Group 2: Automation & Ledger Engine
         item {
             Card(
                 shape = RoundedCornerShape(14.dp),
@@ -1428,7 +1536,6 @@ private fun SettingsCardsList(
 
                     HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
 
-                    // Master Security PIN Management Row
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1447,7 +1554,6 @@ private fun SettingsCardsList(
             }
         }
 
-        // Group 3: Data Portability & Backup
         item {
             Card(
                 shape = RoundedCornerShape(14.dp),
@@ -1499,7 +1605,6 @@ private fun SettingsCardsList(
             }
         }
 
-        // Group 4: System Status & Danger Zone
         item {
             Card(
                 shape = RoundedCornerShape(14.dp),
@@ -1509,7 +1614,6 @@ private fun SettingsCardsList(
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(text = "SYSTEM STATUS & DANGER ZONE", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
 
-                    // Single-Tap Update Tile
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1787,7 +1891,7 @@ private fun EditTransactionDialog(
 }
 
 /**
- * Balanced, Color-Coded Account Creation Form with Full Loan EMI & Interest Fields
+ * Balanced, Lively Color-Coded Account Creation Form with Full 2x2 Loan Specs
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -1836,8 +1940,7 @@ private fun CreateAccountDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.65f))
-                .clickable { onDismiss() },
+                .background(Color.Black.copy(alpha = 0.65f)),
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -1846,8 +1949,7 @@ private fun CreateAccountDialog(
                 modifier = Modifier
                     .fillMaxWidth(0.92f)
                     .widthIn(max = 420.dp)
-                    .border(1.dp, theme.borderLight, RoundedCornerShape(16.dp))
-                    .clickable(enabled = false) {}
+                    .border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
             ) {
                 Column(
                     modifier = Modifier.padding(18.dp),
@@ -1855,59 +1957,59 @@ private fun CreateAccountDialog(
                 ) {
                     Text(text = "NEW ACCOUNT SETUP", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
 
-                    // Strict 2-Row Classification Grid (Balanced 4 on Row 1, 3 on Row 2)
+                    // Strict 2-Row Grid Classification with Distinct Vibrant Colors
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             listOf(
-                                Triple(PocketType.LIQUID, "Bank", theme.mildGreen),
-                                Triple(PocketType.PREPAID_WALLET, "Wallet", theme.mildGreen),
-                                Triple(PocketType.CREDIT_CARD, "Card", theme.mildRed),
-                                Triple(PocketType.GOAL_POT, "Goal", theme.accent)
+                                Triple(PocketType.LIQUID, "Bank", Color(0xFF48BB78)),
+                                Triple(PocketType.PREPAID_WALLET, "Wallet", Color(0xFF38A169)),
+                                Triple(PocketType.CREDIT_CARD, "Card", Color(0xFFF56565)),
+                                Triple(PocketType.GOAL_POT, "Goal", Color(0xFFECC94B))
                             ).forEach { (t, lbl, c) ->
                                 val isSel = type == t
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
                                         .clip(RoundedCornerShape(6.dp))
-                                        .background(if (isSel) c else theme.surfaceAlt)
+                                        .background(if (isSel) c.copy(alpha = 0.25f) else theme.surfaceAlt)
                                         .border(1.dp, if (isSel) c else theme.borderLight, RoundedCornerShape(6.dp))
                                         .clickable { type = t }
-                                        .padding(vertical = 7.dp),
+                                        .padding(vertical = 8.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(lbl, color = if (isSel) theme.bg else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Text(lbl, color = if (isSel) c else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
 
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             listOf(
-                                Triple(PocketType.INVESTMENT, "Invest", theme.accent),
-                                Triple(PocketType.PEER_RECEIVABLE, "Peer", Color(0xFF8BA7C7)),
-                                Triple(PocketType.LIABILITY_LOAN, "Loan", theme.mildRed)
+                                Triple(PocketType.INVESTMENT, "Invest", Color(0xFFED8936)),
+                                Triple(PocketType.PEER_RECEIVABLE, "Peer", Color(0xFF4FD1C5)),
+                                Triple(PocketType.LIABILITY_LOAN, "Loan", Color(0xFFE53E3E))
                             ).forEach { (t, lbl, c) ->
                                 val isSel = type == t
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
                                         .clip(RoundedCornerShape(6.dp))
-                                        .background(if (isSel) c else theme.surfaceAlt)
+                                        .background(if (isSel) c.copy(alpha = 0.25f) else theme.surfaceAlt)
                                         .border(1.dp, if (isSel) c else theme.borderLight, RoundedCornerShape(6.dp))
                                         .clickable { type = t }
-                                        .padding(vertical = 7.dp),
+                                        .padding(vertical = 8.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(lbl, color = if (isSel) theme.bg else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Text(lbl, color = if (isSel) c else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
                     }
 
-                    // Account Name Field (Enabled and interactive)
+                    // Account Name Field (Active & Responsive)
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
-                        placeholder = { Text("Account Name (e.g., HDFC Salary, Home Loan)", fontSize = 12.sp) },
+                        placeholder = { Text("Account Name (e.g. HDFC Salary, SBI Home Loan)", fontSize = 12.sp) },
                         singleLine = true,
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth(),
@@ -1921,7 +2023,7 @@ private fun CreateAccountDialog(
                         )
                     )
 
-                    // Contextual Symmetrical Field Inputs
+                    // Contextual Inputs
                     when (type) {
                         PocketType.LIQUID, PocketType.PREPAID_WALLET -> {
                             OutlinedTextField(
@@ -1950,7 +2052,7 @@ private fun CreateAccountDialog(
                                     placeholder = { Text("Limit ₹", fontSize = 12.sp) },
                                     singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.weight(1.2f),
+                                    modifier = Modifier.weight(1f),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedContainerColor = theme.surfaceAlt,
                                         unfocusedContainerColor = theme.surfaceAlt,
@@ -1966,7 +2068,7 @@ private fun CreateAccountDialog(
                                     placeholder = { Text("Due Day (1-31)", fontSize = 12.sp) },
                                     singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.weight(0.8f),
+                                    modifier = Modifier.weight(1f),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedContainerColor = theme.surfaceAlt,
                                         unfocusedContainerColor = theme.surfaceAlt,
@@ -2015,7 +2117,7 @@ private fun CreateAccountDialog(
                             OutlinedTextField(
                                 value = initialValuation,
                                 onValueChange = { initialValuation = it },
-                                placeholder = { Text("Current Investment / WDV Valuation in ₹", fontSize = 12.sp) },
+                                placeholder = { Text("Current Portfolio / WDV Valuation in ₹", fontSize = 12.sp) },
                                 singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.fillMaxWidth(),
@@ -2049,7 +2151,7 @@ private fun CreateAccountDialog(
                             )
                         }
 
-                        // Full Balanced 2x2 Grid for Loans
+                        // Balanced 2x2 Grid for Loans
                         PocketType.LIABILITY_LOAN -> {
                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -2200,8 +2302,7 @@ private fun EditAccountDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.6f))
-                .clickable { onDismiss() },
+                .background(Color.Black.copy(alpha = 0.6f)),
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -2211,7 +2312,6 @@ private fun EditAccountDialog(
                     .fillMaxWidth(0.9f)
                     .widthIn(max = 400.dp)
                     .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
-                    .clickable(enabled = false) {}
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -2244,7 +2344,7 @@ private fun EditAccountDialog(
                                 placeholder = { Text("Credit Limit") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.weight(1.2f),
+                                modifier = Modifier.weight(1f),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = theme.surfaceAlt,
                                     unfocusedContainerColor = theme.surfaceAlt,
@@ -2260,7 +2360,7 @@ private fun EditAccountDialog(
                                 placeholder = { Text("Due Day (1-31)") },
                                 singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.weight(0.8f),
+                                modifier = Modifier.weight(1f),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = theme.surfaceAlt,
                                     unfocusedContainerColor = theme.surfaceAlt,
