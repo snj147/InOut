@@ -2,9 +2,12 @@ package com.personal.inout.ui
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -47,6 +50,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import com.personal.inout.BuildConfig
 import com.personal.inout.billing.PlayBillingManager
 import com.personal.inout.data.*
@@ -55,6 +59,7 @@ import com.personal.inout.util.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.abs
@@ -79,7 +84,7 @@ fun DashboardScreen(db: AppDatabase) {
 
     val currentInstalledSha = remember {
         val buildSha = BuildConfig.GIT_SHA
-        if (buildSha.isNotBlank() && buildSha != "localdev") buildSha else "98f9b7f"
+        if (buildSha.isNotBlank() && buildSha != "localdev") buildSha else "0d7352d"
     }
 
     val packageInfo = remember {
@@ -100,6 +105,10 @@ fun DashboardScreen(db: AppDatabase) {
     var activeThemeMode by remember {
         val saved = prefs.getString("selected_theme", AppThemeMode.PALE_AMBER.name)
         mutableStateOf(try { AppThemeMode.valueOf(saved ?: AppThemeMode.PALE_AMBER.name) } catch (_: Exception) { AppThemeMode.PALE_AMBER })
+    }
+
+    var masterSecurityPin by remember {
+        mutableStateOf(prefs.getString("master_security_pin", "000000") ?: "000000")
     }
 
     var dailyBurnCeiling by remember {
@@ -189,6 +198,7 @@ fun DashboardScreen(db: AppDatabase) {
     var showBurnEditDialog by remember { mutableStateOf(false) }
     var showClearLedgerConfirmation by remember { mutableStateOf(false) }
     var showNoticesDialog by remember { mutableStateOf(false) }
+    var showSetPinDialog by remember { mutableStateOf(false) }
 
     var availableUpdateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var isCheckingForUpdate by remember { mutableStateOf(false) }
@@ -232,6 +242,36 @@ fun DashboardScreen(db: AppDatabase) {
                 if (res.isSuccess) alertManager.showAlert("Vault restored cleanly", AlertType.SUCCESS)
                 else alertManager.showAlert("Restore failed: ${res.exceptionOrNull()?.message}", AlertType.ERROR)
             }
+        }
+    }
+
+    fun triggerSeamlessApkInstall(apkFile: File) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                if (!context.packageManager.canRequestPackageInstalls()) {
+                    val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    }
+                    context.startActivity(intent)
+                    alertManager.showAlert("Allow app installs from InOut, then tap Install again", AlertType.WARNING)
+                    return
+                }
+            }
+
+            val apkUri: Uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apkFile
+            )
+
+            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            }
+            context.startActivity(installIntent)
+        } catch (e: Exception) {
+            alertManager.showAlert("Install invocation failed: ${e.message}", AlertType.ERROR)
         }
     }
 
@@ -719,12 +759,13 @@ fun DashboardScreen(db: AppDatabase) {
                             theme = theme,
                             currentSha = currentInstalledSha,
                             lastUpdatedDate = lastInstalledTimeFormatted,
+                            masterPin = masterSecurityPin,
                             autoSplitEnabled = autoSplitEnabled,
                             activeThemeMode = activeThemeMode,
-                            isProUnlocked = isProUnlocked,
                             availableUpdate = availableUpdateInfo,
                             isCheckingUpdate = isCheckingForUpdate,
                             downloadState = downloadState,
+                            onOpenSetPinDialog = { showSetPinDialog = true },
                             onCheckUpdate = {
                                 scope.launch {
                                     isCheckingForUpdate = true
@@ -750,7 +791,7 @@ fun DashboardScreen(db: AppDatabase) {
                                 }
                             },
                             onInstallDownloadedApk = { apkFile ->
-                                AppUpdateEngine.triggerPackageInstaller(context, apkFile)
+                                triggerSeamlessApkInstall(apkFile)
                             },
                             onOpenFeedback = { showFeedbackDialog = true },
                             onAutoSplitToggled = {
@@ -773,8 +814,7 @@ fun DashboardScreen(db: AppDatabase) {
                             onRestoreEncryptedBackup = {
                                 backupRestoreLauncher.launch(arrayOf("application/json", "*/*"))
                             },
-                            onClearLedger = { showClearLedgerConfirmation = true },
-                            onOpenPaywall = { showMockPaywall = true }
+                            onClearLedger = { showClearLedgerConfirmation = true }
                         )
                     }
                 }
@@ -876,6 +916,18 @@ fun DashboardScreen(db: AppDatabase) {
                                 }
                                 showNoticesDialog = false
                             }
+                        }
+                    )
+                }
+
+                if (showSetPinDialog) {
+                    ThemeSetPinDialog(
+                        onDismiss = { showSetPinDialog = false },
+                        onSavePin = { newPin ->
+                            masterSecurityPin = newPin
+                            prefs.edit().putString("master_security_pin", newPin).apply()
+                            showSetPinDialog = false
+                            alertManager.showAlert("Master PIN updated successfully", AlertType.SUCCESS)
                         }
                     )
                 }
@@ -992,6 +1044,7 @@ fun DashboardScreen(db: AppDatabase) {
 
                 if (showClearLedgerConfirmation) {
                     CenteredMasterPinPurgeModal(
+                        expectedPin = masterSecurityPin,
                         theme = theme,
                         onDismiss = { showClearLedgerConfirmation = false },
                         onPurgeConfirmed = {
@@ -1692,12 +1745,13 @@ private fun CenteredNoticesModal(
 
 @Composable
 private fun CenteredMasterPinPurgeModal(
+    expectedPin: String,
     theme: ThemeColors,
     onDismiss: () -> Unit,
     onPurgeConfirmed: () -> Unit
 ) {
     var enteredPin by remember { mutableStateOf("") }
-    val masterPin = "147258"
+    var isError by remember { mutableStateOf(false) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1716,7 +1770,7 @@ private fun CenteredMasterPinPurgeModal(
                 modifier = Modifier
                     .fillMaxWidth(0.88f)
                     .widthIn(max = 360.dp)
-                    .border(1.dp, theme.mildRed.copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                    .border(1.dp, if (isError) theme.mildRed else theme.borderLight, RoundedCornerShape(16.dp))
                     .clickable(enabled = false) {}
             ) {
                 Column(
@@ -1724,8 +1778,8 @@ private fun CenteredMasterPinPurgeModal(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text("MASTER PIN AUTHORIZATION", color = theme.mildRed, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    Text("Enter Master PIN to authorize ledger purge:", color = theme.textMuted, fontSize = 11.sp, textAlign = TextAlign.Center)
+                    Text("MASTER PIN AUTHORIZATION", color = if (isError) theme.mildRed else theme.accent, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Text("Enter Master Security PIN to authorize total ledger wipe:", color = theme.textMuted, fontSize = 11.sp, textAlign = TextAlign.Center)
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         repeat(6) { idx ->
@@ -1734,7 +1788,7 @@ private fun CenteredMasterPinPurgeModal(
                                 modifier = Modifier
                                     .size(12.dp)
                                     .clip(CircleShape)
-                                    .background(if (filled) theme.accent else theme.surfaceAlt)
+                                    .background(if (filled) (if (isError) theme.mildRed else theme.accent) else theme.surfaceAlt)
                                     .border(1.dp, if (filled) theme.accent else theme.borderLight, CircleShape)
                             )
                         }
@@ -1758,14 +1812,24 @@ private fun CenteredMasterPinPurgeModal(
                                             .background(theme.surfaceAlt)
                                             .clickable {
                                                 when (k) {
-                                                    "C" -> enteredPin = ""
-                                                    "⌫" -> if (enteredPin.isNotEmpty()) enteredPin = enteredPin.dropLast(1)
+                                                    "C" -> {
+                                                        enteredPin = ""
+                                                        isError = false
+                                                    }
+                                                    "⌫" -> {
+                                                        if (enteredPin.isNotEmpty()) enteredPin = enteredPin.dropLast(1)
+                                                        isError = false
+                                                    }
                                                     else -> {
                                                         if (enteredPin.length < 6) {
                                                             enteredPin += k
+                                                            isError = false
                                                             if (enteredPin.length == 6) {
-                                                                if (enteredPin == masterPin || enteredPin == "000000") {
+                                                                if (enteredPin == expectedPin || enteredPin == "000000") {
                                                                     onPurgeConfirmed()
+                                                                } else {
+                                                                    isError = true
+                                                                    enteredPin = ""
                                                                 }
                                                             }
                                                         }
@@ -1795,15 +1859,16 @@ private fun SettingsCardsList(
     theme: ThemeColors,
     currentSha: String,
     lastUpdatedDate: String,
+    masterPin: String,
     autoSplitEnabled: Boolean,
     activeThemeMode: AppThemeMode,
-    isProUnlocked: Boolean,
     availableUpdate: UpdateInfo?,
     isCheckingUpdate: Boolean,
     downloadState: UpdateDownloadState,
+    onOpenSetPinDialog: () -> Unit,
     onCheckUpdate: () -> Unit,
     onStartStreamDownload: (UpdateInfo) -> Unit,
-    onInstallDownloadedApk: (java.io.File) -> Unit,
+    onInstallDownloadedApk: (File) -> Unit,
     onOpenFeedback: () -> Unit,
     onAutoSplitToggled: (Boolean) -> Unit,
     onThemeSelected: (AppThemeMode) -> Unit,
@@ -1811,31 +1876,14 @@ private fun SettingsCardsList(
     onExportCsv: () -> Unit,
     onExportEncryptedBackup: () -> Unit,
     onRestoreEncryptedBackup: () -> Unit,
-    onClearLedger: () -> Unit,
-    onOpenPaywall: () -> Unit
+    onClearLedger: () -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(top = 16.dp, bottom = 96.dp)
     ) {
-        item {
-            Card(
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = theme.surface),
-                modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
-            ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(text = "ABOUT INOUT", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    Column {
-                        Text(text = "InOut Vault", color = theme.textBright, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                        Text(text = "Build SHA: ${currentSha.take(7)}", color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                        Text(text = "Installed: $lastUpdatedDate", color = theme.textMuted, fontSize = 10.5.sp)
-                    }
-                }
-            }
-        }
-
+        // Group 1: Workspace Aesthetics
         item {
             Card(
                 shape = RoundedCornerShape(14.dp),
@@ -1843,148 +1891,7 @@ private fun SettingsCardsList(
                 modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(text = "APPLICATION UPDATES & SUPPORT", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-
-                    when (val state = downloadState) {
-                        is UpdateDownloadState.Idle -> {
-                            if (availableUpdate != null && availableUpdate.hasUpdate) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(theme.accent.copy(alpha = 0.15f))
-                                        .padding(10.dp)
-                                ) {
-                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                        Text(text = "New Build Available: ${availableUpdate.latestVersion}", color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                        Text(text = availableUpdate.releaseNotes, color = theme.textBright, fontSize = 10.5.sp, maxLines = 2)
-                                    }
-                                }
-
-                                Button(
-                                    onClick = { onStartStreamDownload(availableUpdate) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Icon(imageVector = Icons.Default.Download, contentDescription = null, tint = theme.bg, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(text = "Download Build ${availableUpdate.latestVersion}", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                            } else {
-                                Button(
-                                    onClick = onCheckUpdate,
-                                    enabled = !isCheckingUpdate,
-                                    colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Icon(imageVector = Icons.Default.Refresh, contentDescription = null, tint = theme.textBright, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text(text = if (isCheckingUpdate) "Checking Alpha Releases..." else "Check for App Update", color = theme.textBright, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-                        }
-
-                        is UpdateDownloadState.Downloading -> {
-                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                val percent = (state.progress * 100).toInt()
-                                val mbDownloaded = String.format("%.1f", state.bytesDownloaded / (1024f * 1024f))
-                                val mbTotal = String.format("%.1f", state.totalBytes / (1024f * 1024f))
-
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Text("Streaming Build: $percent%", color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                    Text("$mbDownloaded MB / $mbTotal MB", color = theme.textMuted, fontSize = 11.sp)
-                                }
-                                LinearProgressIndicator(
-                                    progress = { state.progress },
-                                    modifier = Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp)),
-                                    color = theme.accent,
-                                    trackColor = theme.surfaceAlt
-                                )
-                            }
-                        }
-
-                        is UpdateDownloadState.ReadyToInstall -> {
-                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(theme.mildGreen.copy(alpha = 0.15f))
-                                        .padding(10.dp)
-                                ) {
-                                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                        Text("Package Downloaded (Build ${state.versionTag})", color = theme.mildGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                        Text("Tap below to invoke the system package installer.", color = theme.textBright, fontSize = 11.sp)
-                                    }
-                                }
-
-                                Button(
-                                    onClick = { onInstallDownloadedApk(state.apkFile) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = theme.mildGreen),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Icon(imageVector = Icons.Default.InstallMobile, contentDescription = null, tint = theme.bg, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Install Update Now", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-
-                        is UpdateDownloadState.Error -> {
-                            Text(state.message, color = theme.mildRed, fontSize = 11.5.sp)
-                            Button(
-                                onClick = onCheckUpdate,
-                                colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Retry Update Check", color = theme.textBright, fontSize = 12.sp)
-                            }
-                        }
-                    }
-
-                    OutlinedButton(
-                        onClick = onOpenFeedback,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
-                    ) {
-                        Icon(imageVector = Icons.Default.BugReport, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(text = "Send Feedback / Bug Report", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-
-        item {
-            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(text = "AUTOMATION PREFERENCES", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text(text = "Cross-Account Auto-Split", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                            Text(text = "Draw shortfalls automatically from secondary liquid accounts.", color = theme.textMuted, fontSize = 10.5.sp)
-                        }
-                        Switch(
-                            checked = autoSplitEnabled,
-                            onCheckedChange = onAutoSplitToggled,
-                            colors = SwitchDefaults.colors(checkedThumbColor = theme.accent, checkedTrackColor = theme.surfaceAlt)
-                        )
-                    }
-                }
-            }
-        }
-
-        item {
-            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(text = "WORKSPACE PALETTE", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Text(text = "WORKSPACE AESTHETICS", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf(
                             AppThemeMode.PALE_AMBER,
@@ -2016,10 +1923,58 @@ private fun SettingsCardsList(
             }
         }
 
+        // Group 2: Automation & Ledger Engine
         item {
-            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))) {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = theme.surface),
+                modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(text = "AUTOMATION & LEDGER ENGINE", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(text = "Cross-Account Auto-Split", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text(text = "Draw shortfalls automatically from secondary liquid accounts.", color = theme.textMuted, fontSize = 10.5.sp)
+                        }
+                        Switch(
+                            checked = autoSplitEnabled,
+                            onCheckedChange = onAutoSplitToggled,
+                            colors = SwitchDefaults.colors(checkedThumbColor = theme.accent, checkedTrackColor = theme.surfaceAlt)
+                        )
+                    }
+
+                    HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
+
+                    // Master Security PIN Management Row
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenSetPinDialog() }
+                            .padding(vertical = 2.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(text = "Master Security PIN", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Text(text = "Current PIN: ${if (masterPin == "000000") "000000 (Default)" else "••••••"} • Tap to change", color = theme.accent, fontSize = 11.sp)
+                        }
+                        Text(text = "Change ✎", color = theme.accent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
+        // Group 3: Data Portability & Backup
+        item {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = theme.surface),
+                modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
+            ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(text = "DATA PORTABILITY & EXPORT", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Text(text = "DATA PORTABILITY & BACKUP", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
 
                     Button(
                         onClick = onExportEncryptedBackup,
@@ -2059,14 +2014,103 @@ private fun SettingsCardsList(
                     ) {
                         Text(text = "Export TallyPrime / Excel CSV Ledger", color = theme.textBright, fontSize = 12.sp)
                     }
+                }
+            }
+        }
+
+        // Group 4: System Status & Danger Zone
+        item {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = theme.surface),
+                modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(text = "SYSTEM STATUS & DANGER ZONE", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+
+                    // Single-Tap Update Tile
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(theme.surfaceAlt)
+                            .clickable { if (!isCheckingUpdate) onCheckUpdate() }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(text = "InOut Vault Build (${currentSha.take(7)})", color = theme.textBright, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                            Text(text = "Installed: $lastUpdatedDate", color = theme.textMuted, fontSize = 10.sp)
+                        }
+
+                        if (isCheckingUpdate) {
+                            Text(text = "Checking...", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        } else if (availableUpdate != null && availableUpdate.hasUpdate) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(theme.accent)
+                                    .clickable { onStartStreamDownload(availableUpdate) }
+                                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                            ) {
+                                Text(text = "UPDATE", color = theme.bg, fontSize = 11.sp, fontWeight = FontWeight.Black)
+                            }
+                        } else {
+                            Text(text = "Up to Date [✓]", color = theme.mildGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    when (val state = downloadState) {
+                        is UpdateDownloadState.Downloading -> {
+                            val percent = (state.progress * 100).toInt()
+                            Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Text("Downloading update: $percent%", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                                LinearProgressIndicator(
+                                    progress = { state.progress },
+                                    modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                                    color = theme.accent,
+                                    trackColor = theme.surfaceAlt
+                                )
+                            }
+                        }
+                        is UpdateDownloadState.ReadyToInstall -> {
+                            Button(
+                                onClick = { onInstallDownloadedApk(state.apkFile) },
+                                colors = ButtonDefaults.buttonColors(containerColor = theme.mildGreen),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Install Update Now", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        is UpdateDownloadState.Error -> {
+                            Text(state.message, color = theme.mildRed, fontSize = 11.sp)
+                        }
+                        else -> {}
+                    }
+
+                    OutlinedButton(
+                        onClick = onOpenFeedback,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
+                    ) {
+                        Text(text = "Send Feedback / Bug Report", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
 
                     Button(
                         onClick = onClearLedger,
-                        colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed.copy(alpha = 0.2f)),
+                        colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed.copy(alpha = 0.15f)),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(text = "Clear Entire Ledger History", color = theme.mildRed, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(text = "Purge Master Database & Reset Ledger", color = theme.mildRed, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -2327,30 +2371,37 @@ private fun CreateAccountDialog(
                 ) {
                     Text(text = "NEW ACCOUNT SETUP", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp)
 
+                    // Text-only, color-coded classification rail
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(4.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         listOf(
-                            PocketType.LIQUID to "🏦 Bank / Cash",
-                            PocketType.PREPAID_WALLET to "👝 Wallet",
-                            PocketType.CREDIT_CARD to "💳 Card",
-                            PocketType.GOAL_POT to "🎯 Goal",
-                            PocketType.INVESTMENT to "📈 Invest",
-                            PocketType.PEER_RECEIVABLE to "👥 Peer",
-                            PocketType.LIABILITY_LOAN to "🏛 Loan"
-                        ).forEach { (t, lbl) ->
+                            Triple(PocketType.LIQUID, "Bank", theme.mildGreen),
+                            Triple(PocketType.PREPAID_WALLET, "Wallet", theme.mildGreen),
+                            Triple(PocketType.CREDIT_CARD, "Card", theme.mildRed),
+                            Triple(PocketType.GOAL_POT, "Goal", theme.accent),
+                            Triple(PocketType.INVESTMENT, "Invest", theme.accent),
+                            Triple(PocketType.PEER_RECEIVABLE, "Peer", theme.textBright),
+                            Triple(PocketType.LIABILITY_LOAN, "Loan", theme.mildRed)
+                        ).forEach { (t, lbl, pillColor) ->
                             val isSel = type == t
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isSel) theme.accent else theme.surfaceAlt)
+                                    .background(if (isSel) pillColor else theme.surfaceAlt)
+                                    .border(1.dp, if (isSel) pillColor else theme.borderLight, RoundedCornerShape(6.dp))
                                     .clickable { type = t }
-                                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(text = lbl, color = if (isSel) theme.bg else theme.textBright, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = lbl,
+                                    color = if (isSel) theme.bg else theme.textBright,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                     }
@@ -2359,8 +2410,9 @@ private fun CreateAccountDialog(
                         value = name,
                         onValueChange = { name = it },
                         placeholder = { Text("Account Name (e.g. HDFC Salary, Emergency Pot)") },
+                        singleLine = true,
                         shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = theme.surfaceAlt,
                             unfocusedContainerColor = theme.surfaceAlt,
@@ -2377,8 +2429,9 @@ private fun CreateAccountDialog(
                                 value = initialValuation,
                                 onValueChange = { initialValuation = it },
                                 placeholder = { Text("Opening Balance in ₹") },
+                                singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().height(52.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = theme.surfaceAlt,
                                     unfocusedContainerColor = theme.surfaceAlt,
@@ -2390,13 +2443,14 @@ private fun CreateAccountDialog(
                             )
                         }
                         PocketType.CREDIT_CARD -> {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                 OutlinedTextField(
                                     value = limit,
                                     onValueChange = { limit = it },
                                     placeholder = { Text("Credit Limit ₹") },
+                                    singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.weight(1f),
+                                    modifier = Modifier.weight(1.2f).height(52.dp),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedContainerColor = theme.surfaceAlt,
                                         unfocusedContainerColor = theme.surfaceAlt,
@@ -2410,8 +2464,9 @@ private fun CreateAccountDialog(
                                     value = dueDay,
                                     onValueChange = { dueDay = it },
                                     placeholder = { Text("Due Day (1-31)") },
+                                    singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.weight(1f),
+                                    modifier = Modifier.weight(0.8f).height(52.dp),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedContainerColor = theme.surfaceAlt,
                                         unfocusedContainerColor = theme.surfaceAlt,
@@ -2428,8 +2483,9 @@ private fun CreateAccountDialog(
                                 value = targetAmt,
                                 onValueChange = { targetAmt = it },
                                 placeholder = { Text("Target Goal Amount ₹") },
+                                singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().height(52.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = theme.surfaceAlt,
                                     unfocusedContainerColor = theme.surfaceAlt,
@@ -2445,11 +2501,11 @@ private fun CreateAccountDialog(
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(theme.surfaceAlt)
                                     .clickable { showDatePicker = true }
-                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(text = "Target Date: $dateFormatted", color = theme.textBright, fontSize = 11.5.sp)
+                                Text(text = "Target Date: $dateFormatted", color = theme.textBright, fontSize = 12.sp)
                                 Icon(imageVector = Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
                             }
                         }
@@ -2458,8 +2514,9 @@ private fun CreateAccountDialog(
                                 value = initialValuation,
                                 onValueChange = { initialValuation = it },
                                 placeholder = { Text("Current Investment / WDV Valuation in ₹") },
+                                singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().height(52.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = theme.surfaceAlt,
                                     unfocusedContainerColor = theme.surfaceAlt,
@@ -2475,8 +2532,9 @@ private fun CreateAccountDialog(
                                 value = initialValuation,
                                 onValueChange = { initialValuation = it },
                                 placeholder = { Text("Initial Amount Owed in ₹") },
+                                singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().height(52.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = theme.surfaceAlt,
                                     unfocusedContainerColor = theme.surfaceAlt,
@@ -2488,13 +2546,14 @@ private fun CreateAccountDialog(
                             )
                         }
                         PocketType.LIABILITY_LOAN -> {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                 OutlinedTextField(
                                     value = initialValuation,
                                     onValueChange = { initialValuation = it },
                                     placeholder = { Text("Principal ₹") },
+                                    singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.weight(1.2f),
+                                    modifier = Modifier.weight(1.2f).height(52.dp),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedContainerColor = theme.surfaceAlt,
                                         unfocusedContainerColor = theme.surfaceAlt,
@@ -2508,8 +2567,9 @@ private fun CreateAccountDialog(
                                     value = dueDay,
                                     onValueChange = { dueDay = it },
                                     placeholder = { Text("Due Day") },
+                                    singleLine = true,
                                     shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.weight(0.8f),
+                                    modifier = Modifier.weight(0.8f).height(52.dp),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedContainerColor = theme.surfaceAlt,
                                         unfocusedContainerColor = theme.surfaceAlt,
@@ -2619,8 +2679,9 @@ private fun EditAccountDialog(
                         value = name,
                         onValueChange = { name = it },
                         placeholder = { Text("Account Name") },
+                        singleLine = true,
                         shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = theme.surfaceAlt,
                             unfocusedContainerColor = theme.surfaceAlt,
@@ -2632,13 +2693,14 @@ private fun EditAccountDialog(
                     )
 
                     if (pocket.type == PocketType.CREDIT_CARD) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             OutlinedTextField(
                                 value = limit,
                                 onValueChange = { limit = it },
                                 placeholder = { Text("Credit Limit") },
+                                singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(1.2f).height(52.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = theme.surfaceAlt,
                                     unfocusedContainerColor = theme.surfaceAlt,
@@ -2652,8 +2714,9 @@ private fun EditAccountDialog(
                                 value = dueDay,
                                 onValueChange = { dueDay = it },
                                 placeholder = { Text("Due Day (1-31)") },
+                                singleLine = true,
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier.weight(0.8f).height(52.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = theme.surfaceAlt,
                                     unfocusedContainerColor = theme.surfaceAlt,
@@ -2671,8 +2734,9 @@ private fun EditAccountDialog(
                             value = targetAmt,
                             onValueChange = { targetAmt = it },
                             placeholder = { Text("Target Goal Amount") },
+                            singleLine = true,
                             shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().height(52.dp),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedContainerColor = theme.surfaceAlt,
                                 unfocusedContainerColor = theme.surfaceAlt,
