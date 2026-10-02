@@ -4,35 +4,29 @@ import android.content.Context
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
-import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 @Database(
-    entities = [VaultPocket::class, FlowRecord::class, StagedDesire::class, SystemNotice::class],
-    version = 4,
+    entities = [
+        LedgerPocket::class,
+        LedgerTransaction::class,
+        CategoryBudget::class,
+        LedgerAuditEntry::class,
+        SystemNotice::class
+    ],
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
-    abstract fun stateFlowDao(): StateFlowDao
+
+    abstract fun ledgerDao(): LedgerDao
 
     companion object {
         @Volatile
         private var INSTANCE: AppDatabase? = null
-
-        val MIGRATION_3_4 = object : Migration(3, 4) {
-            override fun migrate(database: SupportSQLiteDatabase) {
-                database.execSQL("""
-                    CREATE TABLE IF NOT EXISTS system_notices (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                        title TEXT NOT NULL,
-                        message TEXT NOT NULL,
-                        type TEXT NOT NULL,
-                        timestamp INTEGER NOT NULL,
-                        isRead INTEGER NOT NULL
-                    )
-                """.trimIndent())
-            }
-        }
 
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
@@ -41,8 +35,23 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "inout_vault_database"
                 )
-                    .addMigrations(MIGRATION_3_4)
+                    // Upgrades from legacy version 4 schema to institutional 37-rule v5 schema cleanly
                     .fallbackToDestructiveMigration()
+                    .addCallback(object : Callback() {
+                        override fun onCreate(db: SupportSQLiteDatabase) {
+                            super.onCreate(db)
+                            // Initialize Rule 36 default Cash in Hand pocket atomically
+                            CoroutineScope(Dispatchers.IO).launch {
+                                getInstance(context).ledgerDao().insertPocket(
+                                    LedgerPocket(
+                                        name = "Cash in Hand",
+                                        type = PocketType.LIQUID,
+                                        currency = "INR"
+                                    )
+                                )
+                            }
+                        }
+                    })
                     .build()
                 INSTANCE = instance
                 instance
