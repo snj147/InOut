@@ -15,7 +15,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.personal.inout.data.AppThemeMode
 import com.personal.inout.util.UpdateDownloadState
 import com.personal.inout.util.UpdateInfo
 import java.io.File
