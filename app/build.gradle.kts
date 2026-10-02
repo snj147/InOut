@@ -13,23 +13,36 @@ android {
         applicationId = "com.personal.inout"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.0.0-PROD"
+
+        // Injected dynamically by GitHub Actions workflow, fallback for local dev
+        val passedVersionCode = project.findProperty("VERSION_CODE")?.toString()?.toIntOrNull() ?: 1
+        val passedGitSha = project.findProperty("GIT_SHA")?.toString()?.trim() ?: "localdev"
+
+        versionCode = passedVersionCode
+        versionName = "1.0.0-alpha"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        val gitSha = try {
-            val p = ProcessBuilder("git", "rev-parse", "--short", "HEAD").start()
-            p.inputStream.bufferedReader().readText().trim()
-        } catch (_: Exception) {
-            "v5prod"
+        // Rule: Expose exact Git SHA to AppUpdateEngine without breaking in-app updates
+        buildConfigField("String", "GIT_SHA", "\"$passedGitSha\"")
+    }
+
+    signingConfigs {
+        create("release") {
+            val keystoreFile = file("debug.keystore")
+            if (keystoreFile.exists()) {
+                storeFile = keystoreFile
+                storePassword = "androiddebug"
+                keyAlias = "androiddebugkey"
+                keyPassword = "androiddebug"
+            }
         }
-        buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -38,6 +51,7 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             isDebuggable = true
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
@@ -67,7 +81,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
 
-    // Room Database (v5 Double-Entry Ledger)
+    // Room Database
     val roomVersion = "2.6.1"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
@@ -76,8 +90,11 @@ dependencies {
     // Google Play In-App Billing
     implementation("com.android.billingclient:billing-ktx:7.1.1")
 
-    // ML Kit On-Device OCR (Rule 29: Staged Statement Scanner)
+    // ML Kit On-Device OCR (Rule 29: Statement & Receipt Scanner)
     implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
+
+    // OkHttp (Required for AppUpdateEngine GitHub API rolling release downloads)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Coroutines & Lifecycle
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
