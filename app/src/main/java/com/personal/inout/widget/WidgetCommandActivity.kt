@@ -7,6 +7,7 @@ import android.widget.Toast
 import com.personal.inout.data.AppDatabase
 import com.personal.inout.data.MovementNature
 import com.personal.inout.data.PocketType
+import com.personal.inout.data.VaultExecutionResult
 import com.personal.inout.data.VaultLedgerEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,42 +31,53 @@ class WidgetCommandActivity : Activity() {
 
         val db = AppDatabase.getInstance(applicationContext)
         val prefs = getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE)
-        val ledgerEngine = VaultLedgerEngine(db.stateFlowDao(), prefs)
+        val ledgerEngine = VaultLedgerEngine(db.ledgerDao(), prefs)
 
         CoroutineScope(Dispatchers.IO).launch {
-            val liquidAccounts = db.stateFlowDao().getActivePocketsSync().filter { it.pocketType == PocketType.LIQUID }
+            val allPockets = db.ledgerDao().getAllActivePocketsSnapshot()
+            val liquidAccounts = allPockets.filter { it.type == PocketType.LIQUID }
             val primaryLiquid = liquidAccounts.firstOrNull()
 
             if (primaryLiquid == null) {
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(applicationContext, "No liquid account found. Open app first.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(applicationContext, "No liquid account found. Open InOut first.", Toast.LENGTH_SHORT).show()
                     finish()
                 }
                 return@launch
             }
 
             val nature = when (action) {
-                "INFLOW" -> MovementNature.INFLOW
-                else -> MovementNature.OUTFLOW
+                "INFLOW" -> MovementNature.OPERATING_INCOME
+                else -> MovementNature.OPERATING_EXPENSE
             }
 
-            val srcId = if (nature == MovementNature.OUTFLOW) primaryLiquid.id else null
-            val tgtId = if (nature == MovementNature.INFLOW) primaryLiquid.id else null
+            val autoSplitEnabled = prefs.getBoolean("auto_split_debit", false)
 
-            ledgerEngine.recordMovement(
-                nature = nature,
-                sourcePocketId = srcId,
-                targetPocketId = tgtId,
+            val result = ledgerEngine.recordMovement(
+                movementNature = nature,
+                sourcePocketId = primaryLiquid.id,
+                targetPocketId = null,
                 amount = amount,
                 category = category,
-                note = note,
-                timestamp = System.currentTimeMillis()
+                description = note,
+                timestamp = System.currentTimeMillis(),
+                autoSplitEnabled = autoSplitEnabled
             )
 
             VaultWidgetProvider.updateAllWidgets(applicationContext)
 
             withContext(Dispatchers.Main) {
-                Toast.makeText(applicationContext, "Recorded ₹${amount.toInt()} ($category)", Toast.LENGTH_SHORT).show()
+                when (result) {
+                    is VaultExecutionResult.Success -> {
+                        Toast.makeText(applicationContext, "Logged ₹${amount.toInt()} ($category)", Toast.LENGTH_SHORT).show()
+                    }
+                    is VaultExecutionResult.OverdraftError -> {
+                        Toast.makeText(applicationContext, result.message, Toast.LENGTH_LONG).show()
+                    }
+                    is VaultExecutionResult.DuplicateWarning -> {
+                        Toast.makeText(applicationContext, result.message, Toast.LENGTH_SHORT).show()
+                    }
+                }
                 finish()
             }
         }
