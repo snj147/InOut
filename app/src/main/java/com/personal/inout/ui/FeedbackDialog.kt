@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -56,7 +57,7 @@ fun FeedbackDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Describe what went wrong or suggest an improvement. Attaching a screenshot helps debug immediately.",
+                    text = "Report unexpected behavior or suggest workflow enhancements. Screenshots help diagnose layout or calculation issues immediately.",
                     color = theme.textMuted,
                     fontSize = 11.5.sp
                 )
@@ -64,27 +65,29 @@ fun FeedbackDialog(
                 OutlinedTextField(
                     value = message,
                     onValueChange = { message = it },
-                    placeholder = { Text("What happened?", color = theme.textMuted.copy(alpha = 0.6f), fontSize = 12.sp) },
+                    placeholder = { Text("What happened?", color = theme.textMuted.copy(alpha = 0.5f), fontSize = 12.sp) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(110.dp),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = theme.accent,
-                        unfocusedBorderColor = theme.surfaceAlt,
+                        unfocusedBorderColor = theme.borderLight,
                         focusedTextColor = theme.textBright,
                         unfocusedTextColor = theme.textBright,
-                        cursorColor = theme.accent
+                        cursorColor = theme.accent,
+                        focusedContainerColor = theme.surfaceAlt,
+                        unfocusedContainerColor = theme.surfaceAlt
                     ),
                     shape = RoundedCornerShape(8.dp)
                 )
 
-                // Attachment Pill
                 if (selectedImageUri == null) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
                             .background(theme.surfaceAlt)
+                            .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
                             .clickable {
                                 pickerLauncher.launch(
                                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
@@ -97,7 +100,7 @@ fun FeedbackDialog(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Icon(Icons.Default.AttachFile, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.AttachFile, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
                             Text("Attach Screenshot", color = theme.accent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                         }
                     }
@@ -107,6 +110,7 @@ fun FeedbackDialog(
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
                             .background(theme.mildGreen.copy(alpha = 0.15f))
+                            .border(1.dp, theme.mildGreen.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
                             .padding(horizontal = 10.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
