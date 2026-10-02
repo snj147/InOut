@@ -1,6 +1,7 @@
 package com.personal.inout.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -42,7 +43,7 @@ fun CustomCalendarDialog(
             set(Calendar.DAY_OF_MONTH, 1)
         }
         val maxDay = cal.getActualMaximum(Calendar.DAY_OF_MONTH)
-        val firstDayOfWeek = cal.get(Calendar.DAY_OF_WEEK) // 1 = Sunday, 2 = Monday
+        val firstDayOfWeek = cal.get(Calendar.DAY_OF_WEEK)
         firstDayOfWeek to maxDay
     }
 
@@ -56,17 +57,18 @@ fun CustomCalendarDialog(
 
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = theme.surface),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(12.dp)
+                .border(1.dp, theme.borderLight, RoundedCornerShape(18.dp))
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Header Month & Controls
+                // Header Month & Navigation
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -86,7 +88,7 @@ fun CustomCalendarDialog(
                     Text(
                         text = monthName,
                         color = theme.textBright,
-                        fontSize = 15.sp,
+                        fontSize = 14.5.sp,
                         fontWeight = FontWeight.Bold
                     )
 
@@ -102,13 +104,13 @@ fun CustomCalendarDialog(
                     }
                 }
 
-                // Days of week header
+                // Days of Week Header
                 Row(modifier = Modifier.fillMaxWidth()) {
                     listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat").forEach { day ->
                         Text(
                             text = day,
                             color = theme.textMuted,
-                            fontSize = 11.sp,
+                            fontSize = 10.5.sp,
                             fontWeight = FontWeight.Bold,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.weight(1f)
@@ -116,7 +118,7 @@ fun CustomCalendarDialog(
                     }
                 }
 
-                // Calendar Days Grid
+                // Days Grid
                 val (firstDayOfWeek, totalDays) = daysInMonth
                 val emptySlotsBefore = firstDayOfWeek - 1
                 val totalSlots = emptySlotsBefore + totalDays
@@ -151,9 +153,9 @@ fun CustomCalendarDialog(
                                     ) {
                                         Text(
                                             text = "$dayNumber",
-                                            color = if (isSelected) theme.bg else Color.White,
-                                            fontSize = 13.sp,
-                                            fontWeight = if (isSelected) FontWeight.Black else FontWeight.SemiBold
+                                            color = if (isSelected) theme.bg else theme.textBright,
+                                            fontSize = 12.5.sp,
+                                            fontWeight = if (isSelected) FontWeight.Black else FontWeight.Medium
                                         )
                                     }
                                 } else {
@@ -164,16 +166,18 @@ fun CustomCalendarDialog(
                     }
                 }
 
-                // Actions
+                // Action Buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextButton(onClick = onDismiss) {
                         Text("Cancel", color = theme.textMuted)
                     }
                     Button(
                         onClick = { onDateSelected(selectedDayMillis) },
+                        shape = RoundedCornerShape(8.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
                     ) {
                         Text("Select", color = theme.bg, fontWeight = FontWeight.Bold)
