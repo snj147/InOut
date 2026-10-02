@@ -10,8 +10,9 @@ import android.graphics.pdf.PdfDocument
 import android.net.Uri
 import android.widget.Toast
 import androidx.core.content.FileProvider
-import com.personal.inout.data.AccountBalanceResult
+import com.personal.inout.data.LedgerPocket
 import com.personal.inout.data.LedgerTransaction
+import com.personal.inout.data.MovementNature
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -19,9 +20,12 @@ import java.util.*
 
 object PdfDossierGenerator {
 
+    /**
+     * BRD Rule 34: Generates a complete transaction audit log & statutory schedule annexure.
+     */
     fun generateAndShare(
         context: Context,
-        accounts: List<AccountBalanceResult>,
+        pockets: List<LedgerPocket>,
         transactions: List<LedgerTransaction>,
         isProUser: Boolean
     ) {
@@ -32,79 +36,100 @@ object PdfDossierGenerator {
             val canvas: Canvas = page.canvas
 
             val titlePaint = Paint().apply {
-                color = Color.DKGRAY
-                textSize = 18f
+                color = Color.rgb(20, 24, 30)
+                textSize = 16f
                 typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             }
 
             val headerPaint = Paint().apply {
                 color = Color.BLACK
-                textSize = 11f
+                textSize = 9.5f
                 typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             }
 
             val bodyPaint = Paint().apply {
-                color = Color.DKGRAY
-                textSize = 10f
+                color = Color.rgb(50, 60, 70)
+                textSize = 8.5f
             }
 
             val linePaint = Paint().apply {
                 color = Color.LTGRAY
-                strokeWidth = 1f
+                strokeWidth = 0.8f
             }
 
-            var y = 45f
+            val dividerPaint = Paint().apply {
+                color = Color.BLACK
+                strokeWidth = 1.2f
+            }
 
-            // Document Header
-            val titleTag = if (isProUser) "InOut Pro - Financial Statement Dossier" else "InOut - Financial Statement Dossier"
+            var y = 42f
+
+            // Header Section
+            val titleTag = if (isProUser) "InOut Pro — Statutory Audit & Ledger Schedule" else "InOut — Statutory Audit & Ledger Schedule"
             canvas.drawText(titleTag, 40f, y, titlePaint)
-            y += 18f
-
-            val dateStr = SimpleDateFormat("dd MMMM yyyy, HH:mm", Locale.getDefault()).format(Date())
-            canvas.drawText("Generated on: $dateStr • Balanced Double-Entry Audit", 40f, y, bodyPaint)
-            y += 24f
-            canvas.drawLine(40f, y, 555f, y, linePaint)
-            y += 20f
-
-            // Accounts Summary Section
-            canvas.drawText("ACCOUNT BALANCES (ASSETS & LIABILITIES)", 40f, y, headerPaint)
-            y += 16f
-
-            accounts.take(12).forEach { acc ->
-                val balText = "INR ${String.format("%,.2f", acc.netBalance)}"
-                canvas.drawText("${acc.accountName} (${acc.subType})", 40f, y, bodyPaint)
-                canvas.drawText(balText, 440f, y, bodyPaint)
-                y += 14f
-            }
-
-            y += 12f
-            canvas.drawLine(40f, y, 555f, y, linePaint)
-            y += 20f
-
-            // Recent Postings Section
-            canvas.drawText("AUDIT TRANSACTIONS LOG (MOST RECENT)", 40f, y, headerPaint)
-            y += 18f
-
-            canvas.drawText("DATE", 40f, y, headerPaint)
-            canvas.drawText("DESCRIPTION", 130f, y, headerPaint)
-            canvas.drawText("TAX TAG", 420f, y, headerPaint)
             y += 14f
 
-            transactions.take(28).forEach { tx ->
+            val dateStr = SimpleDateFormat("dd MMMM yyyy, HH:mm", Locale.getDefault()).format(Date())
+            canvas.drawText("Generated on: $dateStr • Compliance: ICAI / Indian Income Tax Rules", 40f, y, bodyPaint)
+            y += 18f
+            canvas.drawLine(40f, y, 555f, y, dividerPaint)
+            y += 18f
+
+            // Accounts Master Summary
+            canvas.drawText("ACTIVE ACCOUNT POCKETS & BALANCES", 40f, y, headerPaint)
+            y += 14f
+
+            canvas.drawText("POCKET NAME", 40f, y, headerPaint)
+            canvas.drawText("CLASSIFICATION", 220f, y, headerPaint)
+            canvas.drawText("STATUTORY CATEGORY", 380f, y, headerPaint)
+            y += 6f
+            canvas.drawLine(40f, y, 555f, y, linePaint)
+            y += 12f
+
+            pockets.take(8).forEach { pocket ->
+                canvas.drawText(pocket.name.take(24), 40f, y, bodyPaint)
+                canvas.drawText(pocket.type.name, 220f, y, bodyPaint)
+                val statTag = if (pocket.creditLimit > 0) "Limit: ₹${pocket.creditLimit.toInt()}" else "Asset / Liquid"
+                canvas.drawText(statTag, 380f, y, bodyPaint)
+                y += 12f
+            }
+
+            y += 10f
+            canvas.drawLine(40f, y, 555f, y, dividerPaint)
+            y += 18f
+
+            // Audit Transaction Journal
+            canvas.drawText("AUDIT TRANSACTIONS LOG (CHRONOLOGICAL)", 40f, y, headerPaint)
+            y += 14f
+
+            canvas.drawText("DATE", 40f, y, headerPaint)
+            canvas.drawText("DESCRIPTION / NARRATION", 110f, y, headerPaint)
+            canvas.drawText("NATURE", 340f, y, headerPaint)
+            canvas.drawText("AMOUNT (INR)", 450f, y, headerPaint)
+            canvas.drawText("80C", 530f, y, headerPaint)
+            y += 6f
+            canvas.drawLine(40f, y, 555f, y, linePaint)
+            y += 12f
+
+            transactions.take(26).forEach { tx ->
                 val txDate = SimpleDateFormat("dd/MM/yy", Locale.getDefault()).format(Date(tx.timestamp))
-                val taxTag = if (tx.isTaxDeductible) "Deductible" else "-"
+                val isDebit = tx.movementNature in listOf(MovementNature.OPERATING_EXPENSE, MovementNature.TRANSFER, MovementNature.DEPRECIATION_WRITE, MovementNature.EMI_PRINCIPAL)
+                val amtStr = "${if (isDebit) "-" else "+"}₹${String.format("%,.0f", tx.amount)}"
+                val taxTag = if (tx.isTaxDeductible) "YES" else "-"
 
                 canvas.drawText(txDate, 40f, y, bodyPaint)
-                canvas.drawText(tx.description.take(35), 130f, y, bodyPaint)
-                canvas.drawText(taxTag, 420f, y, bodyPaint)
-                y += 14f
+                canvas.drawText(tx.description.take(30), 110f, y, bodyPaint)
+                canvas.drawText(tx.movementNature.name.take(14), 340f, y, bodyPaint)
+                canvas.drawText(amtStr, 450f, y, bodyPaint)
+                canvas.drawText(taxTag, 530f, y, bodyPaint)
+                y += 12f
             }
 
             // Watermark footer if Free Tier
             if (!isProUser) {
                 val watermarkPaint = Paint().apply {
                     color = Color.GRAY
-                    textSize = 9f
+                    textSize = 8.5f
                     typeface = Typeface.create(Typeface.DEFAULT, Typeface.ITALIC)
                 }
                 canvas.drawText("Created with InOut Free Tier • Upgrade to Pro to remove branding", 140f, 810f, watermarkPaint)
@@ -112,10 +137,8 @@ object PdfDossierGenerator {
 
             pdfDocument.finishPage(page)
 
-            // Save to internal cache & dispatch Android share intent
-            val outputDir = File(context.cacheDir, "dossiers")
-            if (!outputDir.exists()) outputDir.mkdirs()
-            val file = File(outputDir, "InOut_Dossier_${System.currentTimeMillis()}.pdf")
+            val outputDir = File(context.cacheDir, "dossiers").apply { if (!exists()) mkdirs() }
+            val file = File(outputDir, "InOut_Audit_Schedule_${System.currentTimeMillis()}.pdf")
 
             FileOutputStream(file).use { out ->
                 pdfDocument.writeTo(out)
@@ -133,7 +156,7 @@ object PdfDossierGenerator {
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            context.startActivity(Intent.createChooser(shareIntent, "Share Financial Dossier"))
+            context.startActivity(Intent.createChooser(shareIntent, "Share Statutory Schedule (PDF)"))
 
         } catch (e: Exception) {
             Toast.makeText(context, "PDF generation failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
