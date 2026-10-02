@@ -7,7 +7,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -21,8 +20,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.personal.inout.data.*
 import java.text.SimpleDateFormat
 import java.util.*
@@ -51,182 +53,118 @@ fun AccountPocketsView(
     val cardPockets = remember(rawPockets) {
         rawPockets.filter { it.type == PocketType.CREDIT_CARD }
     }
-    val investmentPockets = remember(rawPockets) {
-        rawPockets.filter { it.type == PocketType.INVESTMENT }
+    val capitalPockets = remember(rawPockets) {
+        rawPockets.filter {
+            it.type in listOf(
+                PocketType.INVESTMENT,
+                PocketType.FIXED_ASSET,
+                PocketType.GOAL_POT,
+                PocketType.PEER_RECEIVABLE
+            )
+        }
     }
-    val fixedAssetPockets = remember(rawPockets) {
-        rawPockets.filter { it.type == PocketType.FIXED_ASSET }
-    }
-    val loanPockets = remember(rawPockets) {
-        rawPockets.filter { it.type == PocketType.LIABILITY_LOAN }
-    }
-    val peerPockets = remember(rawPockets) {
-        rawPockets.filter { it.type == PocketType.PEER_RECEIVABLE || it.type == PocketType.PEER_PAYABLE }
-    }
-    val goalPockets = remember(rawPockets) {
-        rawPockets.filter { it.type == PocketType.GOAL_POT }
+    val debtPockets = remember(rawPockets) {
+        rawPockets.filter {
+            it.type in listOf(
+                PocketType.CREDIT_CARD,
+                PocketType.LIABILITY_LOAN,
+                PocketType.PEER_PAYABLE
+            )
+        }
     }
 
-    var selectedFilterTab by remember { mutableIntStateOf(0) }
+    // 0: ALL, 1: LIQUID, 2: DEBT, 3: CAPITAL, 4: AUTO
+    var activeModeIndex by remember { mutableIntStateOf(0) }
 
-    var activeActionSheetPocket by remember { mutableStateOf<Pair<LedgerPocket, Double>?>(null) }
-    var activeActionSheetSchedule by remember { mutableStateOf<LedgerTransaction?>(null) }
+    var selectedContextPocket by remember { mutableStateOf<Pair<LedgerPocket, Double>?>(null) }
+    var selectedContextRecurring by remember { mutableStateOf<LedgerTransaction?>(null) }
+    var pendingSafeDeactivatePocket by remember { mutableStateOf<Pair<LedgerPocket, Double>?>(null) }
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
-        contentPadding = PaddingValues(top = 12.dp, bottom = 96.dp)
+        contentPadding = PaddingValues(top = 10.dp, bottom = 96.dp)
     ) {
+        // Universal 5-Pill Rail (Zero Horizontal Scroll)
         item {
-            LazyRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(theme.surfaceAlt)
+                    .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
+                    .padding(2.dp),
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 listOf(
-                    "All (${rawPockets.size})",
-                    "Cash & Banks (${liquidPockets.size})",
-                    "Cards (${cardPockets.size})",
-                    "Portfolio (${investmentPockets.size})",
-                    "Fixed Assets (${fixedAssetPockets.size})",
-                    "Loans & EMIs (${loanPockets.size})",
-                    "People (${peerPockets.size})",
-                    "Goals (${goalPockets.size})"
+                    "ALL ${rawPockets.size}",
+                    "💧 LIQ ${liquidPockets.size}",
+                    "💳 DEBT ${debtPockets.size}",
+                    "🏛 CAP ${capitalPockets.size}",
+                    "🔄 AUTO ${recurringTransactions.size}"
                 ).forEachIndexed { idx, label ->
-                    val isSel = selectedFilterTab == idx
-                    item {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (isSel) theme.accent else theme.surface)
-                                .border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(8.dp))
-                                .clickable { selectedFilterTab = idx }
-                                .padding(horizontal = 12.dp, vertical = 7.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = label,
-                                color = if (isSel) theme.bg else theme.textMuted,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+                    val isSel = activeModeIndex == idx
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (isSel) theme.accent else Color.Transparent)
+                            .clickable { activeModeIndex = idx }
+                            .padding(vertical = 7.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = label,
+                            color = if (isSel) theme.bg else theme.textMuted,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            textAlign = TextAlign.Center
+                        )
                     }
                 }
             }
         }
 
-        // 1. LIQUID / CASH & BANK
-        if (selectedFilterTab == 0 || selectedFilterTab == 1) {
-            item { SectionHeader("Cash, Bank & Prepaid Wallets", liquidPockets.size, theme) }
+        // VIEW 1: LIQUID ACCOUNTS
+        if (activeModeIndex == 0 || activeModeIndex == 1) {
+            val totalLiquid = liquidPockets.sumOf { pocketBalances[it.id] ?: 0.0 }
+            item {
+                SectionSummaryHeader("SPENDABLE LIQUID", totalLiquid, isPrivacyMode, theme)
+            }
+
             if (liquidPockets.isEmpty()) {
                 item {
-                    EmptyActionCard(
-                        title = "No Liquid Accounts Found",
-                        message = "Add your primary bank, UPI wallet, or physical cash in hand to maintain your True Safe Liquid.",
-                        buttonText = "+ Add Bank / Wallet",
+                    CompactAddActionRow(
+                        title = "No Liquid Bank Accounts",
                         theme = theme,
-                        onClick = { onRequestCreateAccount(PocketType.LIQUID) }
+                        onAdd = { onRequestCreateAccount(PocketType.LIQUID) }
                     )
                 }
             } else {
-                items(liquidPockets, key = { "liquid_${it.id}" }) { pocket ->
-                    val bal = pocketBalances[pocket.id] ?: 0.0
-                    val isCash = pocket.name.equals("Cash in Hand", ignoreCase = true)
-                    val icon = if (isCash) Icons.Default.Payments else if (pocket.type == PocketType.PREPAID_WALLET) Icons.Default.AccountBalanceWallet else Icons.Default.AccountBalance
-                    CleanAccountRow(
-                        title = pocket.name,
-                        subtitle = if (isCash) "Physical Cash Reserve" else if (pocket.type == PocketType.PREPAID_WALLET) "Prepaid Stored-Value Rail" else "Liquid Bank Asset",
-                        balanceDisplay = if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", bal)}",
-                        balanceColor = theme.textBright,
-                        icon = icon,
-                        iconColor = theme.mildGreen,
-                        theme = theme,
-                        onTransact = { onTransactPocket(pocket) },
-                        onLongClick = { activeActionSheetPocket = pocket to bal }
-                    )
-                }
-            }
-        }
-
-        // 2. CREDIT CARDS
-        if (selectedFilterTab == 0 || selectedFilterTab == 2) {
-            item { SectionHeader("Credit Cards & Pay Later", cardPockets.size, theme) }
-            if (cardPockets.isEmpty()) {
                 item {
-                    EmptyActionCard(
-                        title = "No Credit Cards Linked",
-                        message = "Track card limits, bill generation dates, and grace periods with 1:1 Phantom Ring-fencing.",
-                        buttonText = "+ Add Credit Card",
-                        theme = theme,
-                        onClick = { onRequestCreateAccount(PocketType.CREDIT_CARD) }
-                    )
-                }
-            } else {
-                items(cardPockets, key = { "card_${it.id}" }) { pocket ->
-                    val rawBalance = pocketBalances[pocket.id] ?: 0.0
-                    val limit = pocket.creditLimit
-                    val outstandingDues = if (rawBalance < 0.0) abs(rawBalance) else 0.0
-                    val availableLimit = (limit - outstandingDues).coerceAtLeast(0.0)
-                    val utilization = if (limit > 0.0) (outstandingDues / limit) * 100.0 else 0.0
-                    val dueStr = if (pocket.billDueDay > 0) " • Bill Due: ${pocket.billDueDay}th" else ""
+                    UnifiedStatementGroup(theme = theme) {
+                        liquidPockets.forEachIndexed { index, pocket ->
+                            val bal = pocketBalances[pocket.id] ?: 0.0
+                            val isCash = pocket.name.equals("Cash in Hand", ignoreCase = true)
+                            val icon = if (isCash) Icons.Default.Payments else if (pocket.type == PocketType.PREPAID_WALLET) Icons.Default.AccountBalanceWallet else Icons.Default.AccountBalance
 
-                    Card(
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = theme.surface),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(1.dp, theme.borderLight, RoundedCornerShape(12.dp))
-                            .combinedClickable(
-                                onClick = { onTransactPocket(pocket) },
-                                onLongClick = { activeActionSheetPocket = pocket to rawBalance }
+                            UnifiedAccountRow(
+                                title = pocket.name,
+                                sub = if (isCash) "Physical Cash Reserve" else if (pocket.type == PocketType.PREPAID_WALLET) "Prepaid Stored-Value" else "Liquid Bank Asset",
+                                balanceDisplay = if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", bal)}",
+                                balanceColor = theme.textBright,
+                                icon = icon,
+                                iconColor = theme.mildGreen,
+                                theme = theme,
+                                onTap = { onTransactPocket(pocket) },
+                                onLongPress = { selectedContextPocket = pocket to bal }
                             )
-                    ) {
-                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(pocket.name, color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                    Text(
-                                        text = "Avail: ₹${String.format("%,.0f", availableLimit)} / Limit: ₹${String.format("%,.0f", limit)}$dueStr",
-                                        color = theme.textMuted,
-                                        fontSize = 11.sp
-                                    )
-                                }
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text(
-                                        text = if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", outstandingDues)}",
-                                        color = if (outstandingDues > 0.0) theme.mildRed else theme.mildGreen,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Button(
-                                        onClick = { onTransactPocket(pocket) },
-                                        colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
-                                        shape = RoundedCornerShape(8.dp),
-                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                                    ) {
-                                        Text("Transact", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
 
-                            if (limit > 0.0) {
-                                LinearProgressIndicator(
-                                    progress = { (utilization / 100.0).toFloat().coerceIn(0f, 1f) },
-                                    modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
-                                    color = if (utilization > 75.0) theme.mildRed else if (utilization > 30.0) theme.accent else theme.mildGreen,
-                                    trackColor = theme.surfaceAlt
-                                )
-                                Text(
-                                    text = "Credit Utilization: ${String.format("%.1f", utilization)}% ${if (utilization > 30.0) "(Above 30% advisory)" else ""}",
-                                    color = if (utilization > 30.0) theme.accent else theme.textMuted,
-                                    fontSize = 10.sp
-                                )
+                            if (index < liquidPockets.lastIndex) {
+                                HorizontalDivider(color = theme.borderLight.copy(alpha = 0.4f), thickness = 0.5.dp)
                             }
                         }
                     }
@@ -234,148 +172,43 @@ fun AccountPocketsView(
             }
         }
 
-        // 3. INVESTMENTS & PORTFOLIO
-        if (selectedFilterTab == 0 || selectedFilterTab == 3) {
-            item { SectionHeader("Investments & Portfolio Wealth", investmentPockets.size, theme) }
-            if (investmentPockets.isEmpty()) {
-                item {
-                    EmptyActionCard(
-                        title = "No Investment Pockets",
-                        message = "Track Mutual Funds, Equities, FDs, PPF, and Gold with mark-to-market valuations (excluded from daily runway).",
-                        buttonText = "+ Add Investment Asset",
-                        theme = theme,
-                        onClick = { onRequestCreateAccount(PocketType.INVESTMENT) }
-                    )
-                }
-            } else {
-                items(investmentPockets, key = { "inv_${it.id}" }) { pocket ->
-                    val bal = pocketBalances[pocket.id] ?: 0.0
-                    CleanAccountRow(
-                        title = pocket.name,
-                        subtitle = "Mark-to-Market Asset • Safe from Daily Burn",
-                        balanceDisplay = if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", bal)}",
-                        balanceColor = theme.accent,
-                        icon = Icons.Default.TrendingUp,
-                        iconColor = theme.accent,
-                        theme = theme,
-                        onTransact = { onTransactPocket(pocket) },
-                        onLongClick = { activeActionSheetPocket = pocket to bal }
-                    )
-                }
+        // VIEW 2: LIABILITIES & DEBT
+        if (activeModeIndex == 0 || activeModeIndex == 2) {
+            val totalDebt = debtPockets.sumOf { abs(pocketBalances[it.id] ?: 0.0) }
+            item {
+                SectionSummaryHeader("LIABILITIES & BORROWINGS", -totalDebt, isPrivacyMode, theme)
             }
-        }
 
-        // 4. FIXED CAPITAL ASSETS
-        if (selectedFilterTab == 0 || selectedFilterTab == 4) {
-            item { SectionHeader("Fixed Capital Assets (WDV)", fixedAssetPockets.size, theme) }
-            if (fixedAssetPockets.isEmpty()) {
+            if (debtPockets.isEmpty()) {
                 item {
-                    EmptyActionCard(
-                        title = "No Fixed Assets Registered",
-                        message = "Capitalize real estate, vehicles, and gadgets at Written Down Value (WDV) for statutory balance sheets.",
-                        buttonText = "+ Add Fixed Asset",
+                    CompactAddActionRow(
+                        title = "No Active Debt or Credit Lines",
                         theme = theme,
-                        onClick = { onRequestCreateAccount(PocketType.FIXED_ASSET) }
+                        onAdd = { onRequestCreateAccount(PocketType.CREDIT_CARD) }
                     )
                 }
             } else {
-                items(fixedAssetPockets, key = { "fa_${it.id}" }) { pocket ->
-                    val bal = pocketBalances[pocket.id] ?: 0.0
-                    CleanAccountRow(
-                        title = pocket.name,
-                        subtitle = "Capital Asset • Subject to Periodic WDV",
-                        balanceDisplay = if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", bal)}",
-                        balanceColor = theme.textBright,
-                        icon = Icons.Default.Domain,
-                        iconColor = theme.textMuted,
-                        theme = theme,
-                        onTransact = { onTransactPocket(pocket) },
-                        onLongClick = { activeActionSheetPocket = pocket to bal }
-                    )
-                }
-            }
-        }
-
-        // 5. CONSUMER LOANS & EMIs
-        if (selectedFilterTab == 0 || selectedFilterTab == 5) {
-            item { SectionHeader("Loans, Mortgages & Consumer EMIs", loanPockets.size, theme) }
-            if (loanPockets.isEmpty()) {
                 item {
-                    EmptyActionCard(
-                        title = "No Debt Liabilities Tracked",
-                        message = "Track home loans, auto loans, and retail consumer EMIs with principal-interest amortization.",
-                        buttonText = "+ Add Loan Account",
-                        theme = theme,
-                        onClick = { onRequestCreateAccount(PocketType.LIABILITY_LOAN) }
-                    )
-                }
-            } else {
-                items(loanPockets, key = { "loan_${it.id}" }) { pocket ->
-                    val bal = pocketBalances[pocket.id] ?: 0.0
-                    val debt = abs(bal)
-                    CleanAccountRow(
-                        title = pocket.name,
-                        subtitle = "Term Debt Liability • Locked in Cash Horizon",
-                        balanceDisplay = if (isPrivacyMode) "₹ •••" else "-₹${String.format("%,.0f", debt)}",
-                        balanceColor = theme.mildRed,
-                        icon = Icons.Default.MoneyOff,
-                        iconColor = theme.mildRed,
-                        theme = theme,
-                        onTransact = { onTransactPocket(pocket) },
-                        onLongClick = { activeActionSheetPocket = pocket to bal }
-                    )
-                }
-            }
-        }
+                    UnifiedStatementGroup(theme = theme) {
+                        debtPockets.forEachIndexed { index, pocket ->
+                            val bal = pocketBalances[pocket.id] ?: 0.0
+                            val outstanding = if (bal < 0.0) abs(bal) else 0.0
+                            val dueStr = if (pocket.billDueDay > 0) "Due ${pocket.billDueDay}th" else "Statement Balance"
 
-        // 6. COUNTERPARTIES / PEER LEDGER
-        if (selectedFilterTab == 0 || selectedFilterTab == 6) {
-            item { SectionHeader("People (Sundry Debtors & Creditors)", peerPockets.size, theme) }
-            if (peerPockets.isEmpty()) {
-                item {
-                    EmptyActionCard(
-                        title = "No Peer Advances Tracked",
-                        message = "Track money lent to peers (Sundry Debtors) or borrowed (Sundry Creditors) with zero P&L distortion.",
-                        buttonText = "+ Add Counterparty",
-                        theme = theme,
-                        onClick = { onRequestCreateAccount(PocketType.PEER_RECEIVABLE) }
-                    )
-                }
-            } else {
-                items(peerPockets, key = { "peer_${it.id}" }) { pocket ->
-                    val bal = pocketBalances[pocket.id] ?: 0.0
-                    val isReceivable = pocket.type == PocketType.PEER_RECEIVABLE
-                    Card(
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = theme.surface),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(1.dp, theme.borderLight, RoundedCornerShape(12.dp))
-                            .combinedClickable(
-                                onClick = { onTransactPocket(pocket) },
-                                onLongClick = { activeActionSheetPocket = pocket to bal }
+                            UnifiedAccountRow(
+                                title = pocket.name,
+                                sub = if (pocket.type == PocketType.CREDIT_CARD) "Limit: ₹${String.format("%,.0f", pocket.creditLimit)} • $dueStr" else "Liability Loan",
+                                balanceDisplay = if (isPrivacyMode) "₹ •••" else "- ₹ ${String.format("%,.0f", outstanding)}",
+                                balanceColor = theme.mildRed,
+                                icon = Icons.Default.CreditCard,
+                                iconColor = theme.mildRed,
+                                theme = theme,
+                                onTap = { onTransactPocket(pocket) },
+                                onLongPress = { selectedContextPocket = pocket to bal }
                             )
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(14.dp).fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(pocket.name, color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                Text(
-                                    if (isReceivable) "Sundry Debtor • They owe you" else "Sundry Creditor • You owe them",
-                                    color = theme.textMuted,
-                                    fontSize = 11.sp
-                                )
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(
-                                    text = if (isPrivacyMode) "₹ •••" else "${if (isReceivable) "+" else "-"}₹${String.format("%,.0f", abs(bal))}",
-                                    color = if (isReceivable) theme.mildGreen else theme.mildRed,
-                                    fontSize = 14.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+
+                            if (index < debtPockets.lastIndex) {
+                                HorizontalDivider(color = theme.borderLight.copy(alpha = 0.4f), thickness = 0.5.dp)
                             }
                         }
                     }
@@ -383,58 +216,52 @@ fun AccountPocketsView(
             }
         }
 
-        // 7. GOAL POTS
-        if (selectedFilterTab == 0 || selectedFilterTab == 7) {
-            item { SectionHeader("Goal Pots (Quarantined Savings)", goalPockets.size, theme) }
-            if (goalPockets.isEmpty()) {
+        // VIEW 3: CAPITAL & RESERVES
+        if (activeModeIndex == 0 || activeModeIndex == 3) {
+            val totalCapital = capitalPockets.sumOf { pocketBalances[it.id] ?: 0.0 }
+            item {
+                SectionSummaryHeader("CAPITAL RESERVES & WEALTH", totalCapital, isPrivacyMode, theme)
+            }
+
+            if (capitalPockets.isEmpty()) {
                 item {
-                    EmptyActionCard(
-                        title = "No Goal Pots Active",
-                        message = "Quarantine liquid capital away from True Safe Liquid to prevent accidental wealth leakage.",
-                        buttonText = "+ Add Goal Pot",
+                    CompactAddActionRow(
+                        title = "No Capital Holdings or Goal Reserves",
                         theme = theme,
-                        onClick = { onRequestCreateAccount(PocketType.GOAL_POT) }
+                        onAdd = { onRequestCreateAccount(PocketType.INVESTMENT) }
                     )
                 }
             } else {
-                items(goalPockets, key = { "goal_${it.id}" }) { pocket ->
-                    val bal = pocketBalances[pocket.id] ?: 0.0
-                    val target = pocket.targetGoalAmount
-                    val shortfall = (target - bal).coerceAtLeast(0.0)
-                    val targetDateStr = if (pocket.goalTargetDate > 0) {
-                        SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(pocket.goalTargetDate))
-                    } else "No deadline"
-
-                    Card(
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = theme.surface),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(1.dp, theme.borderLight, RoundedCornerShape(12.dp))
-                            .combinedClickable(
-                                onClick = { onTransactPocket(pocket) },
-                                onLongClick = { activeActionSheetPocket = pocket to bal }
-                            )
-                    ) {
-                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text(pocket.name, color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                Text(
-                                    text = if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", bal)} / ₹${String.format("%,.0f", target)}",
-                                    color = theme.accent,
-                                    fontSize = 13.5.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
+                item {
+                    UnifiedStatementGroup(theme = theme) {
+                        capitalPockets.forEachIndexed { index, pocket ->
+                            val bal = pocketBalances[pocket.id] ?: 0.0
+                            val icon = when (pocket.type) {
+                                PocketType.INVESTMENT -> Icons.Default.TrendingUp
+                                PocketType.GOAL_POT -> Icons.Default.Adjust
+                                PocketType.FIXED_ASSET -> Icons.Default.Domain
+                                else -> Icons.Default.People
                             }
-                            LinearProgressIndicator(
-                                progress = { if (target > 0) (bal / target).toFloat().coerceIn(0f, 1f) else 0f },
-                                modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)),
-                                color = theme.accent,
-                                trackColor = theme.surfaceAlt
+
+                            UnifiedAccountRow(
+                                title = pocket.name,
+                                sub = when (pocket.type) {
+                                    PocketType.INVESTMENT -> "Mark-to-Market Portfolio Asset"
+                                    PocketType.GOAL_POT -> "Quarantined Target: ₹${String.format("%,.0f", pocket.targetGoalAmount)}"
+                                    PocketType.FIXED_ASSET -> "WDV Capital Asset"
+                                    else -> "Sundry Debtor (Receivable)"
+                                },
+                                balanceDisplay = if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", bal)}",
+                                balanceColor = theme.accent,
+                                icon = icon,
+                                iconColor = theme.accent,
+                                theme = theme,
+                                onTap = { onTransactPocket(pocket) },
+                                onLongPress = { selectedContextPocket = pocket to bal }
                             )
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text("Target: $targetDateStr • Shortfall: ₹${String.format("%,.0f", shortfall)}", color = theme.textMuted, fontSize = 10.5.sp)
-                                Text("Long-press to edit", color = theme.textMuted.copy(alpha = 0.6f), fontSize = 10.sp)
+
+                            if (index < capitalPockets.lastIndex) {
+                                HorizontalDivider(color = theme.borderLight.copy(alpha = 0.4f), thickness = 0.5.dp)
                             }
                         }
                     }
@@ -442,55 +269,51 @@ fun AccountPocketsView(
             }
         }
 
-        // 8. RECURRING PIPELINE
-        if (selectedFilterTab == 0) {
-            item { SectionHeader("Recurring Automation Rules", recurringTransactions.size, theme) }
+        // VIEW 4: RECURRING MANDATES (AUTO)
+        if (activeModeIndex == 0 || activeModeIndex == 4) {
+            val totalRecurring = recurringTransactions.sumOf { it.amount }
+            item {
+                SectionSummaryHeader("ACTIVE AUTOMATION MANDATES", totalRecurring, isPrivacyMode, theme)
+            }
+
             if (recurringTransactions.isEmpty()) {
                 item {
                     Card(
                         shape = RoundedCornerShape(12.dp),
                         colors = CardDefaults.cardColors(containerColor = theme.surface),
-                        modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(12.dp))
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .border(1.dp, theme.borderLight, RoundedCornerShape(12.dp))
                     ) {
                         Column(
                             modifier = Modifier.padding(16.dp).fillMaxWidth(),
                             verticalArrangement = Arrangement.spacedBy(4.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Text("No Recurring Rules Scheduled", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            Text("Automate subscriptions, salaries, SIPs, and EMIs with zero-drift catch-up execution.", color = theme.textMuted, fontSize = 11.sp)
+                            Text("No Recurring Mandates Scheduled", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Automate subscriptions, SIPs, and bills with zero-drift execution.", color = theme.textMuted, fontSize = 11.sp)
                         }
                     }
                 }
             } else {
-                items(recurringTransactions, key = { "rec_${it.id}_${it.timestamp}" }) { schedule ->
-                    val nextDateStr = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(schedule.timestamp))
-                    Card(
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = theme.surface),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .border(1.dp, theme.borderLight, RoundedCornerShape(12.dp))
-                            .combinedClickable(
-                                onClick = { onEditRecurring(schedule) },
-                                onLongClick = { activeActionSheetSchedule = schedule }
+                item {
+                    UnifiedStatementGroup(theme = theme) {
+                        recurringTransactions.forEachIndexed { index, schedule ->
+                            val dateStr = SimpleDateFormat("dd MMM", Locale.getDefault()).format(Date(schedule.timestamp))
+                            UnifiedAccountRow(
+                                title = schedule.description.ifBlank { schedule.category },
+                                sub = "Repeats ${schedule.recurringFrequency} • Next: $dateStr",
+                                balanceDisplay = if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", schedule.amount)}",
+                                balanceColor = theme.accent,
+                                icon = Icons.Default.Schedule,
+                                iconColor = theme.accent,
+                                theme = theme,
+                                onTap = { onEditRecurring(schedule) },
+                                onLongPress = { selectedContextRecurring = schedule }
                             )
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(14.dp).fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(schedule.description.ifBlank { schedule.category }, color = theme.textBright, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                                Text("Repeats ${schedule.recurringFrequency} (due $nextDateStr) • ₹${schedule.amount.toInt()}", color = theme.textMuted, fontSize = 11.sp)
-                            }
-                            IconButton(onClick = { onTogglePauseRecurring(schedule) }) {
-                                Icon(
-                                    imageVector = Icons.Default.Schedule,
-                                    contentDescription = "Cadence",
-                                    tint = theme.accent
-                                )
+
+                            if (index < recurringTransactions.lastIndex) {
+                                HorizontalDivider(color = theme.borderLight.copy(alpha = 0.4f), thickness = 0.5.dp)
                             }
                         }
                     }
@@ -499,165 +322,444 @@ fun AccountPocketsView(
         }
     }
 
-    // Modal Actions for Account Long-Press
-    activeActionSheetPocket?.let { (pocket, bal) ->
-        AlertDialog(
-            onDismissRequest = { activeActionSheetPocket = null },
-            containerColor = theme.surface,
-            title = { Text(pocket.name, color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
-            text = { Text("Manage details, limits, or reconciliation benchmarks for this pocket.", color = theme.textMuted, fontSize = 12.sp) },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        activeActionSheetPocket = null
-                        onEditPocket(pocket)
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-                ) { Text("Edit Details", color = theme.bg, fontWeight = FontWeight.Bold) }
+    // Centered Context Action Voucher Modal
+    selectedContextPocket?.let { (pocket, bal) ->
+        CenteredAccountVoucherModal(
+            pocket = pocket,
+            balance = bal,
+            theme = theme,
+            onDismiss = { selectedContextPocket = null },
+            onQuickAction = {
+                selectedContextPocket = null
+                onTransactPocket(pocket)
             },
-            dismissButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = {
-                        activeActionSheetPocket = null
-                        onDeletePocketSafe(pocket, bal)
-                    }) { Text("Delete", color = theme.mildRed) }
-                    TextButton(onClick = { activeActionSheetPocket = null }) { Text("Cancel", color = theme.textMuted) }
-                }
+            onEdit = {
+                selectedContextPocket = null
+                onEditPocket(pocket)
+            },
+            onArchiveDelete = {
+                selectedContextPocket = null
+                pendingSafeDeactivatePocket = pocket to bal
             }
         )
     }
 
-    activeActionSheetSchedule?.let { schedule ->
-        AlertDialog(
-            onDismissRequest = { activeActionSheetSchedule = null },
-            containerColor = theme.surface,
-            title = { Text(schedule.description.ifBlank { schedule.category }, color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
-            text = { Text("Modify or delete deterministic recurring automation schedule.", color = theme.textMuted, fontSize = 12.sp) },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        activeActionSheetSchedule = null
-                        onEditRecurring(schedule)
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-                ) { Text("Edit Rule", color = theme.bg, fontWeight = FontWeight.Bold) }
+    // Centered Safe Deactivation Guard Modal
+    pendingSafeDeactivatePocket?.let { (pocket, bal) ->
+        CenteredSafePurgeGuardModal(
+            pocket = pocket,
+            balance = bal,
+            theme = theme,
+            onDismiss = { pendingSafeDeactivatePocket = null },
+            onConfirm = {
+                pendingSafeDeactivatePocket = null
+                onDeletePocketSafe(pocket, bal)
+            }
+        )
+    }
+
+    // Centered Recurring Mandate Context Modal
+    selectedContextRecurring?.let { schedule ->
+        CenteredRecurringVoucherModal(
+            rule = schedule,
+            theme = theme,
+            onDismiss = { selectedContextRecurring = null },
+            onEdit = {
+                selectedContextRecurring = null
+                onEditRecurring(schedule)
             },
-            dismissButton = {
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = {
-                        activeActionSheetSchedule = null
-                        onDeleteRecurringSafe(schedule)
-                    }) { Text("Delete", color = theme.mildRed) }
-                    TextButton(onClick = { activeActionSheetSchedule = null }) { Text("Cancel", color = theme.textMuted) }
-                }
+            onDelete = {
+                selectedContextRecurring = null
+                onDeleteRecurringSafe(schedule)
             }
         )
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun CleanAccountRow(
-    title: String,
-    subtitle: String,
-    balanceDisplay: String,
-    balanceColor: Color,
-    icon: ImageVector,
-    iconColor: Color,
-    theme: ThemeColors,
-    onTransact: () -> Unit,
-    onLongClick: () -> Unit
-) {
+private fun SectionSummaryHeader(title: String, totalAmt: Double, isPrivacy: Boolean, theme: ThemeColors) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 6.dp, bottom = 2.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(title, color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+        Text(
+            text = if (isPrivacy) "₹ •••" else "₹ ${String.format("%,.0f", totalAmt)}",
+            color = theme.textBright,
+            fontSize = 11.5.sp,
+            fontWeight = FontWeight.Bold
+        )
+    }
+}
+
+@Composable
+private fun UnifiedStatementGroup(theme: ThemeColors, content: @Composable ColumnScope.() -> Unit) {
     Card(
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = theme.surface),
         modifier = Modifier
             .fillMaxWidth()
             .border(1.dp, theme.borderLight, RoundedCornerShape(12.dp))
-            .combinedClickable(
-                onClick = onTransact,
-                onLongClick = onLongClick
-            )
     ) {
-        Row(
-            modifier = Modifier.padding(14.dp).fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Box(
-                    modifier = Modifier.clip(CircleShape).background(iconColor.copy(alpha = 0.15f)).padding(8.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(imageVector = icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(18.dp))
-                }
-                Column {
-                    Text(title, color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    Text(subtitle, color = theme.textMuted, fontSize = 10.5.sp)
-                }
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = balanceDisplay,
-                    color = balanceColor,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Button(
-                    onClick = onTransact,
-                    colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                ) {
-                    Text("Transact", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                }
-            }
-        }
+        Column(modifier = Modifier.fillMaxWidth(), content = content)
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun SectionHeader(title: String, count: Int, theme: ThemeColors) {
+private fun UnifiedAccountRow(
+    title: String,
+    sub: String,
+    balanceDisplay: String,
+    balanceColor: Color,
+    icon: ImageVector,
+    iconColor: Color,
+    theme: ThemeColors,
+    onTap: () -> Unit,
+    onLongPress: () -> Unit
+) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onTap,
+                onLongClick = onLongPress
+            )
+            .padding(horizontal = 14.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(title, color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-        Text(count.toString(), color = theme.textMuted, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Row(
+            modifier = Modifier.weight(1f),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(iconColor.copy(alpha = 0.12f))
+                    .padding(7.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(imageVector = icon, contentDescription = null, tint = iconColor, modifier = Modifier.size(16.dp))
+            }
+            Column {
+                Text(title, color = theme.textBright, fontSize = 13.5.sp, fontWeight = FontWeight.SemiBold)
+                Text(sub, color = theme.textMuted, fontSize = 10.5.sp, maxLines = 1)
+            }
+        }
+
+        Text(
+            text = balanceDisplay,
+            color = balanceColor,
+            fontSize = 13.5.sp,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
 
 @Composable
-private fun EmptyActionCard(
-    title: String,
-    message: String,
-    buttonText: String,
+private fun CompactAddActionRow(title: String, theme: ThemeColors, onAdd: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(theme.surfaceAlt)
+            .border(1.dp, theme.borderLight, RoundedCornerShape(10.dp))
+            .clickable { onAdd() }
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(title, color = theme.textMuted, fontSize = 11.5.sp)
+        Text("+ Create", color = theme.accent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun CenteredAccountVoucherModal(
+    pocket: LedgerPocket,
+    balance: Double,
+    theme: ThemeColors,
+    onDismiss: () -> Unit,
+    onQuickAction: () -> Unit,
+    onEdit: () -> Unit,
+    onArchiveDelete: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.6f))
+                .clickable { onDismiss() },
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = theme.surface),
+                modifier = Modifier
+                    .fillMaxWidth(0.88f)
+                    .widthIn(max = 380.dp)
+                    .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
+                    .clickable(enabled = false) {}
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(pocket.name, color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            pocket.type.name.replace("_", " "),
+                            color = theme.accent,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Text(
+                        text = "Current Book Balance: ₹ ${String.format("%,.2f", balance)}",
+                        color = theme.textMuted,
+                        fontSize = 11.sp
+                    )
+
+                    HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
+
+                    TactileActionButton(
+                        label = when (pocket.type) {
+                            PocketType.CREDIT_CARD -> "💳 Settle Card Dues"
+                            PocketType.GOAL_POT -> "🎯 Sweep Savings (In / Out)"
+                            PocketType.INVESTMENT -> "📈 Revalue / Liquidate Holding"
+                            PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE -> "🤝 Settle Peer Balance"
+                            PocketType.LIABILITY_LOAN -> "🏛 Log Monthly EMI Principal"
+                            else -> "⚡ Quick Transact"
+                        },
+                        isPrimary = true,
+                        theme = theme,
+                        onClick = onQuickAction
+                    )
+
+                    TactileActionButton(
+                        label = "✎ Edit Name & Configuration",
+                        isPrimary = false,
+                        theme = theme,
+                        onClick = onEdit
+                    )
+
+                    TactileActionButton(
+                        label = "✕ Deactivate / Archive Account",
+                        isPrimary = false,
+                        isDanger = true,
+                        theme = theme,
+                        onClick = onArchiveDelete
+                    )
+
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Close", color = theme.textMuted, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CenteredSafePurgeGuardModal(
+    pocket: LedgerPocket,
+    balance: Double,
+    theme: ThemeColors,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    val canDeactivate = balance == 0.0
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.6f))
+                .clickable { onDismiss() },
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = theme.surface),
+                modifier = Modifier
+                    .fillMaxWidth(0.88f)
+                    .widthIn(max = 380.dp)
+                    .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
+                    .clickable(enabled = false) {}
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("DEACTIVATE ACCOUNT", color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "Are you sure you want to deactivate \"${pocket.name}\"?",
+                        color = theme.textMuted,
+                        fontSize = 12.sp
+                    )
+
+                    if (!canDeactivate) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(theme.mildRed.copy(alpha = 0.15f))
+                                .padding(10.dp)
+                        ) {
+                            Text(
+                                text = "Active balance is ₹${String.format("%,.0f", balance)}. Settle balance to ₹0 first before deactivating.",
+                                color = theme.mildRed,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    } else {
+                        Text(
+                            text = "Balance is zero. All historical entries will remain safely in the audit register.",
+                            color = theme.mildGreen,
+                            fontSize = 11.5.sp
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Cancel", color = theme.textMuted)
+                        }
+
+                        Button(
+                            onClick = onConfirm,
+                            modifier = Modifier.weight(1.2f),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed),
+                            enabled = canDeactivate
+                        ) {
+                            Text("Deactivate", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CenteredRecurringVoucherModal(
+    rule: LedgerTransaction,
+    theme: ThemeColors,
+    onDismiss: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.6f))
+                .clickable { onDismiss() },
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = theme.surface),
+                modifier = Modifier
+                    .fillMaxWidth(0.88f)
+                    .widthIn(max = 380.dp)
+                    .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
+                    .clickable(enabled = false) {}
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(rule.description.ifBlank { rule.category }, color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("Cadence: ${rule.recurringFrequency} • Scheduled: ₹${rule.amount.toInt()}", color = theme.textMuted, fontSize = 11.sp)
+
+                    HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
+
+                    TactileActionButton(
+                        label = "✎ Edit Mandate Amount & Dates",
+                        isPrimary = true,
+                        theme = theme,
+                        onClick = onEdit
+                    )
+
+                    TactileActionButton(
+                        label = "✕ Terminate & Remove Mandate",
+                        isPrimary = false,
+                        isDanger = true,
+                        theme = theme,
+                        onClick = onDelete
+                    )
+
+                    TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                        Text("Close", color = theme.textMuted, fontSize = 12.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TactileActionButton(
+    label: String,
+    isPrimary: Boolean = false,
+    isDanger: Boolean = false,
     theme: ThemeColors,
     onClick: () -> Unit
 ) {
-    Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = theme.surface),
-        modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(12.dp))
+    val bg = when {
+        isPrimary -> theme.accent
+        isDanger -> theme.mildRed.copy(alpha = 0.12f)
+        else -> theme.surfaceAlt
+    }
+    val fg = when {
+        isPrimary -> theme.bg
+        isDanger -> theme.mildRed
+        else -> theme.textBright
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(bg)
+            .border(1.dp, if (isDanger) theme.mildRed.copy(alpha = 0.3f) else theme.borderLight, RoundedCornerShape(8.dp))
+            .clickable { onClick() }
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalAlignment = Alignment.Start
-        ) {
-            Text(text = title, color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-            Text(text = message, color = theme.textMuted, fontSize = 11.sp)
-            OutlinedButton(
-                onClick = onClick,
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent),
-                border = androidx.compose.foundation.BorderStroke(1.dp, theme.accent.copy(alpha = 0.5f)),
-                shape = RoundedCornerShape(8.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-            ) {
-                Text(text = buttonText, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-            }
-        }
+        Text(text = label, color = fg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        Text(text = "→", color = fg.copy(alpha = 0.6f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
 }
