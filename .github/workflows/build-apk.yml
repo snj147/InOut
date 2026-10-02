@@ -27,12 +27,11 @@ jobs:
         with:
           gradle-version: '8.8'
 
-      # Generate keystore in the root workspace AND in app/ directory so both paths are covered
+      # Match the exact password expected by Gradle's signing block
       - name: Setup Stable Debug Keystore
         run: |
           mkdir -p app
-          keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" -noprompt
-          cp debug.keystore app/debug.keystore
+          keytool -genkeypair -v -keystore app/debug.keystore -storepass androiddebug -alias androiddebugkey -keypass androiddebug -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" -noprompt
 
       - name: Build Debug APK
         run: gradle assembleDebug -PGIT_SHA=${{ github.sha }} -PVERSION_CODE=${{ github.run_number }}
