@@ -3,6 +3,7 @@ package com.personal.inout.util
 import android.content.Context
 import android.net.Uri
 import android.os.Build
+import com.personal.inout.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -25,15 +26,17 @@ object TelegramFeedbackSender {
         runCatching {
             val appVersion = runCatching {
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName
-            }.getOrDefault("1.0")
+            }.getOrDefault("1.0.0-alpha")
+
+            val gitSha = BuildConfig.GIT_SHA.take(7)
 
             val caption = buildString {
-                append("📢 *InOut Feedback Report*\n\n")
+                append("📢 *InOut Feedback & Bug Report*\n\n")
                 append("💬 *Message:* $userMessage\n\n")
-                append("📱 *Device:* ${Build.MANUFACTURER.uppercase()} ${Build.MODEL} (Android ${Build.VERSION.RELEASE})\n")
-                append("🏷️ *App Version:* v$appVersion\n")
+                append("📱 *Device:* ${Build.MANUFACTURER.uppercase()} ${Build.MODEL} (Android${Build.VERSION.RELEASE})\n")
+                append("🏷️ *App Version:* v$appVersion (`$gitSha`)\n")
                 if (extraContext.isNotBlank()) {
-                    append("⚙️ *Context:* $extraContext\n")
+                    append("⚙️️ *Context:* $extraContext\n")
                 }
             }
 
@@ -61,7 +64,7 @@ object TelegramFeedbackSender {
         conn.outputStream.use { it.write(json.toString().toByteArray()) }
         if (conn.responseCode !in 200..299) {
             val err = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-            error("Telegram API error: ${conn.responseCode} $err")
+            error("Telegram API error: ${conn.responseCode}$err")
         }
     }
 
@@ -115,7 +118,7 @@ object TelegramFeedbackSender {
 
         if (conn.responseCode !in 200..299) {
             val err = conn.errorStream?.bufferedReader()?.use { it.readText() } ?: ""
-            error("Telegram API error: ${conn.responseCode} $err")
+            error("Telegram API error: ${conn.responseCode}$err")
         }
     }
 }
