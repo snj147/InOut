@@ -59,10 +59,18 @@ fun MockPaywallBottomSheet(
                             .background(theme.accent.copy(alpha = 0.18f)),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.WorkspacePremium, contentDescription = null, tint = theme.accent, modifier = Modifier.size(22.dp))
+                        Icon(
+                            imageVector = Icons.Default.WorkspacePremium,
+                            contentDescription = null,
+                            tint = theme.accent,
+                            modifier = Modifier.size(22.dp)
+                        )
                     }
                     Column {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                             Text("InOut Pro", color = theme.textBright, fontSize = 17.sp, fontWeight = FontWeight.Black)
                             Box(
                                 modifier = Modifier
@@ -73,7 +81,7 @@ fun MockPaywallBottomSheet(
                                 Text("LIFETIME", color = theme.bg, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold)
                             }
                         }
-                        Text("Institutional Sovereign Ledger & Reporting", color = theme.textMuted, fontSize = 11.sp)
+                        Text("Institutional Double-Entry Accounting", color = theme.textMuted, fontSize = 11.sp)
                     }
                 }
 
@@ -90,32 +98,32 @@ fun MockPaywallBottomSheet(
 
             HorizontalDivider(color = theme.surfaceAlt, thickness = 0.8.dp)
 
-            // Features aligned with the 37-rule specs
+            // Clean, user-facing feature descriptions
             Column(verticalArrangement = Arrangement.spacedBy(13.dp)) {
                 ProFeatureRow(
                     icon = Icons.Outlined.AccountBalance,
-                    title = "Statutory Balance Sheet & ITR Schedules (Rule 28)",
-                    desc = "Generates ICAI T-format Balance Sheets, Schedule AL, and Section 80C/80D tax deduction dossiers without watermarks."
+                    title = "Statutory Balance Sheet & Tax Reports",
+                    desc = "Generate clean ICAI-compliant Balance Sheets, Profit & Loss statements, and Section 80C/80D deduction summaries with zero watermarks."
                 )
                 ProFeatureRow(
                     icon = Icons.Outlined.ReceiptLong,
-                    title = "TallyPrime XML & Indian Multi-Column Journals (Rule 34)",
-                    desc = "Direct XML voucher imports for TallyPrime and multi-column debit/credit journals for CA audits and spreadsheets."
+                    title = "TallyPrime XML & Accounting Exports",
+                    desc = "Export native XML vouchers for direct import into TallyPrime, alongside multi-column journals for CAs and spreadsheets."
                 )
                 ProFeatureRow(
                     icon = Icons.Outlined.DocumentScanner,
-                    title = "Document Intent Gate OCR (Rule 29)",
-                    desc = "On-device ML classifier identifying whether a document is a retail receipt or a multi-line statutory statement."
+                    title = "Intelligent Receipt & Statement OCR",
+                    desc = "On-device ML automatically reads retail receipts and complex financial statements with zero cloud data sharing."
                 )
                 ProFeatureRow(
                     icon = Icons.Outlined.Lock,
-                    title = "Credit Card Phantom Lock (Rules 3 & 4)",
-                    desc = "Automatic 1:1 phantom ring-fencing separating unbilled card liabilities from your spendable liquid runway."
+                    title = "Credit Card Phantom Lock",
+                    desc = "Protects your real runway by automatically ring-fencing unbilled credit card liabilities from spendable bank cash."
                 )
                 ProFeatureRow(
                     icon = Icons.Outlined.Shield,
-                    title = "Cryptographic Archive Engine (Rules 24 & 34.4)",
-                    desc = "Hardware-backed AES-256-GCM encryption with SHA-256 integrity verification for local ledger backups."
+                    title = "Encrypted Vault Cold Backups",
+                    desc = "Hardware-backed AES-256 encrypted backups with cryptographic checksums to keep your financial ledger private and portable."
                 )
             }
 
@@ -133,8 +141,18 @@ fun MockPaywallBottomSheet(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Icon(Icons.Default.Shop, contentDescription = null, tint = theme.textMuted, modifier = Modifier.size(16.dp))
-                        Text("Google Play Billing Sandbox", color = theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Icon(
+                            imageVector = Icons.Default.Shop,
+                            contentDescription = null,
+                            tint = theme.textMuted,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = "Google Play Billing Sandbox",
+                            color = theme.textMuted,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     }
                     Text("SANDBOX ENGINE", color = theme.accent, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                 }
@@ -153,9 +171,14 @@ fun MockPaywallBottomSheet(
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
                 ) {
-                    Icon(Icons.Default.LockOpen, contentDescription = null, tint = theme.bg, modifier = Modifier.size(16.dp))
+                    Icon(
+                        imageVector = Icons.Default.LockOpen,
+                        contentDescription = null,
+                        tint = theme.bg,
+                        modifier = Modifier.size(16.dp)
+                    )
                     Spacer(Modifier.width(8.dp))
-                    Text("Simulate ₹21 Purchase (Unlock Pro)", color = theme.bg, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
+                    Text("Unlock Lifetime Pro (₹21)", color = theme.bg, fontWeight = FontWeight.ExtraBold, fontSize = 13.sp)
                 }
             } else {
                 OutlinedButton(
@@ -196,7 +219,7 @@ private fun ProFeatureRow(icon: androidx.compose.ui.graphics.vector.ImageVector,
                 .border(1.dp, theme.borderLight, CircleShape),
             contentAlignment = Alignment.Center
         ) {
-            Icon(icon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
+            Icon(imageVector = icon, contentDescription = null, tint = theme.accent, modifier = Modifier.size(16.dp))
         }
         Column(modifier = Modifier.weight(1f)) {
             Text(title, color = theme.textBright, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
