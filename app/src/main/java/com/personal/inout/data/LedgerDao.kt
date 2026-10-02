@@ -26,8 +26,14 @@ interface LedgerDao {
     @Query("SELECT * FROM ledger_pockets WHERE id = :id LIMIT 1")
     suspend fun getPocketById(id: Long): LedgerPocket?
 
-    @Query("SELECT * FROM ledger_pockets WHERE type = 'LIQUID' AND name = 'Cash in Hand' LIMIT 1")
+    @Query("SELECT * FROM ledger_pockets WHERE type = 'LIQUID' AND LOWER(name) = LOWER(:name) AND isArchived = 0 LIMIT 1")
+    suspend fun getLiquidPocketByName(name: String): LedgerPocket?
+
+    @Query("SELECT * FROM ledger_pockets WHERE type = 'LIQUID' AND name = 'Cash in Hand' AND isArchived = 0 LIMIT 1")
     suspend fun getDefaultCashInHandPocket(): LedgerPocket?
+
+    @Query("SELECT COUNT(*) FROM ledger_pockets WHERE isArchived = 0")
+    suspend fun getActivePocketCount(): Int
 
     // --- Transactions & Double Entry ---
 
@@ -42,6 +48,9 @@ interface LedgerDao {
 
     @Query("SELECT * FROM ledger_transactions WHERE id = :id LIMIT 1")
     suspend fun getTransactionById(id: Long): LedgerTransaction?
+
+    @Query("SELECT COUNT(*) FROM ledger_transactions")
+    suspend fun getTransactionCount(): Int
 
     @Query("SELECT * FROM ledger_transactions ORDER BY timestamp DESC")
     fun observeAllTransactions(): Flow<List<LedgerTransaction>>
@@ -61,7 +70,6 @@ interface LedgerDao {
     @Query("SELECT * FROM ledger_transactions WHERE isTaxDeductible = 1 AND timestamp BETWEEN :startEpoch AND :endEpoch")
     suspend fun getTaxDeductibleTransactions(startEpoch: Long, endEpoch: Long): List<LedgerTransaction>
 
-    // --- BRD Rule 27: Deduplication Collision Interceptor ---
     @Query("""
         SELECT * FROM ledger_transactions 
         WHERE sourcePocketId = :pocketId 
@@ -91,7 +99,7 @@ interface LedgerDao {
     """)
     suspend fun computePocketBalance(pocketId: Long, asOfEpoch: Long = System.currentTimeMillis()): Double
 
-    // --- BRD Rule 24: Forensic Audit Trail ---
+    // --- Forensic Audit Trail ---
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAuditEntry(auditEntry: LedgerAuditEntry)
@@ -99,7 +107,7 @@ interface LedgerDao {
     @Query("SELECT * FROM ledger_audit_journal ORDER BY timestamp DESC LIMIT 500")
     fun observeAuditJournal(): Flow<List<LedgerAuditEntry>>
 
-    // --- System Notices (Rules 25, 26) ---
+    // --- System Notices ---
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertNotice(notice: SystemNotice)
