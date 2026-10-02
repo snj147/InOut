@@ -37,7 +37,6 @@ fun AllTransactionsSearchSheet(
     rawPockets: List<LedgerPocket>,
     isPrivacyMode: Boolean,
     isProUser: Boolean,
-    sheetState: SheetState? = null,
     onDismiss: () -> Unit,
     onEditRecord: (LedgerTransaction) -> Unit,
     onExportCsv: () -> Unit,
@@ -138,7 +137,7 @@ fun AllTransactionsSearchSheet(
                         shape = RoundedCornerShape(8.dp)
                     )
 
-                    // Dual-Rail live filters
+                    // Dual-Rail Filters
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
