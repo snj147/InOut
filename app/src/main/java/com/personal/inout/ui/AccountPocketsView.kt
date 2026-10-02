@@ -117,7 +117,7 @@ fun AccountPocketsView(
             }
         }
 
-        // 1. LIQUID / CASH & BANK (Rules 1, 36, 37)
+        // 1. LIQUID / CASH & BANK
         if (selectedFilterTab == 0 || selectedFilterTab == 1) {
             item { SectionHeader("Cash, Bank & Prepaid Wallets", liquidPockets.size, theme) }
             if (liquidPockets.isEmpty()) {
@@ -137,7 +137,7 @@ fun AccountPocketsView(
                     val icon = if (isCash) Icons.Default.Payments else if (pocket.type == PocketType.PREPAID_WALLET) Icons.Default.AccountBalanceWallet else Icons.Default.AccountBalance
                     CleanAccountRow(
                         title = pocket.name,
-                        subtitle = if (isCash) "Physical Cash • Rule 36" else if (pocket.type == PocketType.PREPAID_WALLET) "Prepaid Rail • Rule 37" else "Liquid Bank Asset",
+                        subtitle = if (isCash) "Physical Cash Reserve" else if (pocket.type == PocketType.PREPAID_WALLET) "Prepaid Stored-Value Rail" else "Liquid Bank Asset",
                         balanceDisplay = if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", bal)}",
                         balanceColor = theme.textBright,
                         icon = icon,
@@ -150,7 +150,7 @@ fun AccountPocketsView(
             }
         }
 
-        // 2. CREDIT CARDS (Rules 4, 5, 21)
+        // 2. CREDIT CARDS
         if (selectedFilterTab == 0 || selectedFilterTab == 2) {
             item { SectionHeader("Credit Cards & Pay Later", cardPockets.size, theme) }
             if (cardPockets.isEmpty()) {
@@ -234,7 +234,7 @@ fun AccountPocketsView(
             }
         }
 
-        // 3. INVESTMENTS & PORTFOLIO (Rule 31)
+        // 3. INVESTMENTS & PORTFOLIO
         if (selectedFilterTab == 0 || selectedFilterTab == 3) {
             item { SectionHeader("Investments & Portfolio Wealth", investmentPockets.size, theme) }
             if (investmentPockets.isEmpty()) {
@@ -265,7 +265,7 @@ fun AccountPocketsView(
             }
         }
 
-        // 4. FIXED CAPITAL ASSETS (Rule 20, 29)
+        // 4. FIXED CAPITAL ASSETS
         if (selectedFilterTab == 0 || selectedFilterTab == 4) {
             item { SectionHeader("Fixed Capital Assets (WDV)", fixedAssetPockets.size, theme) }
             if (fixedAssetPockets.isEmpty()) {
@@ -296,7 +296,7 @@ fun AccountPocketsView(
             }
         }
 
-        // 5. CONSUMER LOANS & EMIs (Rule 35)
+        // 5. CONSUMER LOANS & EMIs
         if (selectedFilterTab == 0 || selectedFilterTab == 5) {
             item { SectionHeader("Loans, Mortgages & Consumer EMIs", loanPockets.size, theme) }
             if (loanPockets.isEmpty()) {
@@ -328,7 +328,7 @@ fun AccountPocketsView(
             }
         }
 
-        // 6. COUNTERPARTIES / PEER LEDGER (Rule 7)
+        // 6. COUNTERPARTIES / PEER LEDGER
         if (selectedFilterTab == 0 || selectedFilterTab == 6) {
             item { SectionHeader("People (Sundry Debtors & Creditors)", peerPockets.size, theme) }
             if (peerPockets.isEmpty()) {
@@ -383,7 +383,7 @@ fun AccountPocketsView(
             }
         }
 
-        // 7. GOAL POTS (Rule 6)
+        // 7. GOAL POTS
         if (selectedFilterTab == 0 || selectedFilterTab == 7) {
             item { SectionHeader("Goal Pots (Quarantined Savings)", goalPockets.size, theme) }
             if (goalPockets.isEmpty()) {
@@ -442,7 +442,7 @@ fun AccountPocketsView(
             }
         }
 
-        // 8. RECURRING PIPELINE (Rule 8)
+        // 8. RECURRING PIPELINE
         if (selectedFilterTab == 0) {
             item { SectionHeader("Recurring Automation Rules", recurringTransactions.size, theme) }
             if (recurringTransactions.isEmpty()) {
