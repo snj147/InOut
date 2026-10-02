@@ -1,46 +1,30 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.kapt)
+    alias(libs.plugins.kotlin.compose)
+    id("kotlin-kapt")
 }
-
-val runNumber = (project.findProperty("VERSION_CODE") as? String)?.toIntOrNull() ?: 1
-val gitSha = (project.findProperty("GIT_SHA") as? String) ?: "localdev"
 
 android {
     namespace = "com.personal.inout"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.personal.inout"
         minSdk = 26
-        targetSdk = 34
-        versionCode = runNumber
-        versionName = "1.0.$runNumber"
+        targetSdk = 35
+        versionCode = 5
+        versionName = "1.0.0-PROD"
 
-        vectorDrawables {
-            useSupportLibrary = true
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        val gitSha = try {
+            val p = ProcessBuilder("git", "rev-parse", "--short", "HEAD").start()
+            p.inputStream.bufferedReader().readText().trim()
+        } catch (_: Exception) {
+            "v5prod"
         }
-        
         buildConfigField("String", "GIT_SHA", "\"$gitSha\"")
-    }
-
-    signingConfigs {
-        getByName("debug") {
-            val localDebugKeystore = file("debug.keystore")
-            val defaultHomeKeystore = file("${System.getProperty("user.home")}/.android/debug.keystore")
-            if (localDebugKeystore.exists()) {
-                storeFile = localDebugKeystore
-                storePassword = "androiddebug"
-                keyAlias = "androiddebugkey"
-                keyPassword = "androiddebug"
-            } else if (defaultHomeKeystore.exists()) {
-                storeFile = defaultHomeKeystore
-                storePassword = "android"
-                keyAlias = "androiddebugkey"
-                keyPassword = "android"
-            }
-        }
     }
 
     buildTypes {
@@ -51,25 +35,24 @@ android {
                 "proguard-rules.pro"
             )
         }
+        debug {
+            applicationIdSuffix = ".debug"
+            isDebuggable = true
+        }
     }
+
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_1_8
-        targetCompatibility = JavaVersion.VERSION_1_8
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
+
     kotlinOptions {
-        jvmTarget = "1.8"
+        jvmTarget = "17"
     }
+
     buildFeatures {
         compose = true
         buildConfig = true
-    }
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14"
-    }
-    packaging {
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        }
     }
 }
 
@@ -78,15 +61,31 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.ui)
-    implementation(libs.androidx.ui.graphics)
-    implementation(libs.androidx.ui.tooling.preview)
-    implementation(libs.androidx.material3)
-    implementation(libs.androidx.room.runtime)
-    implementation(libs.androidx.room.ktx)
-    kapt(libs.androidx.room.compiler)
-    implementation(libs.androidx.material.icons.extended)
-    implementation(libs.mlkit.text.recognition)
-    implementation(libs.play.billing.ktx)
-    implementation(libs.okhttp)
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.androidx.compose.ui.tooling.preview)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.extended)
+
+    // Room Database (v5 Double-Entry Ledger)
+    val roomVersion = "2.6.1"
+    implementation("androidx.room:room-runtime:$roomVersion")
+    implementation("androidx.room:room-ktx:$roomVersion")
+    kapt("androidx.room:room-compiler:$roomVersion")
+
+    // Google Play In-App Billing
+    implementation("com.android.billingclient:billing-ktx:7.1.1")
+
+    // ML Kit On-Device OCR (Rule 29: Staged Statement Scanner)
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
+
+    // Coroutines & Lifecycle
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
+
+    // Android App Widget & Core RemoteViews
+    implementation("androidx.core:core-remoteviews:1.1.0")
+
+    debugImplementation(libs.androidx.compose.ui.tooling)
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }
