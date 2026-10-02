@@ -36,6 +36,10 @@ data class ParsedReceipt(
 
 object ReceiptScanner {
 
+    suspend fun processReceipt(context: Context, imageUri: Uri): ParsedReceipt {
+        return processDocumentUri(context, imageUri)
+    }
+
     suspend fun processDocumentUri(context: Context, uri: Uri): ParsedReceipt = withContext(Dispatchers.IO) {
         val mimeType = context.contentResolver.getType(uri) ?: ""
         if (mimeType.contains("pdf", ignoreCase = true) || uri.toString().endsWith(".pdf", ignoreCase = true)) {
@@ -130,7 +134,6 @@ object ReceiptScanner {
             )
         }
 
-        // Single Point-of-Sale Extraction
         val blacklistedHeaderTokens = listOf(
             "original for recipient", "duplicate for recipient", "tax invoice",
             "retail invoice", "invoice no", "cash memo", "gstin", "phone:", "email:"
