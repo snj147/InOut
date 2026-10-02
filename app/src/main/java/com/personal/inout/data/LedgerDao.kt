@@ -3,153 +3,110 @@ package com.personal.inout.data
 import androidx.room.*
 import kotlinx.coroutines.flow.Flow
 
-data class TransactionDisplayRow(
-    val id: Long,
-    val timestamp: Long,
-    val description: String,
-    val amount: Double,
-    val categoryOrAccount: String,
-    val isRecurring: Boolean,
-    val recurringFrequency: String
-)
-
 @Dao
 interface LedgerDao {
 
+    // --- Pockets Management ---
+
     @Insert(onConflict = OnConflictStrategy.ABORT)
-    suspend fun insertAccount(account: LedgerAccount): Long
+    suspend fun insertPocket(pocket: LedgerPocket): Long
 
     @Update
-    suspend fun updateAccount(account: LedgerAccount)
+    suspend fun updatePocket(pocket: LedgerPocket)
 
-    @Query("SELECT * FROM ledger_accounts WHERE isArchived = 0 ORDER BY name ASC")
-    fun getAllActiveAccounts(): Flow<List<LedgerAccount>>
+    @Delete
+    suspend fun deletePocket(pocket: LedgerPocket)
 
-    @Query("SELECT * FROM ledger_accounts WHERE subType = :subType AND isArchived = 0")
-    fun getAccountsBySubType(subType: String): Flow<List<LedgerAccount>>
+    @Query("SELECT * FROM ledger_pockets WHERE isArchived = 0 ORDER BY type ASC, name ASC")
+    fun getAllActivePockets(): Flow<List<LedgerPocket>>
 
-    @Query("SELECT * FROM ledger_accounts WHERE name = :name LIMIT 1")
-    suspend fun getAccountByName(name: String): LedgerAccount?
+    @Query("SELECT * FROM ledger_pockets WHERE isArchived = 0")
+    suspend fun getAllActivePocketsSnapshot(): List<LedgerPocket>
+
+    @Query("SELECT * FROM ledger_pockets WHERE id = :id LIMIT 1")
+    suspend fun getPocketById(id: Long): LedgerPocket?
+
+    @Query("SELECT * FROM ledger_pockets WHERE type = 'LIQUID' AND name = 'Cash in Hand' LIMIT 1")
+    suspend fun getDefaultCashInHandPocket(): LedgerPocket?
+
+    // --- Transactions & Double Entry ---
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
-    suspend fun insertTransactionRecord(tx: LedgerTransaction): Long
+    suspend fun insertTransaction(tx: LedgerTransaction): Long
 
-    @Insert(onConflict = OnConflictStrategy.ABORT)
-    suspend fun insertEntries(entries: List<LedgerEntry>)
+    @Update
+    suspend fun updateTransaction(tx: LedgerTransaction)
 
-    @androidx.room.Transaction
-    suspend fun recordBalancedPosting(
-        transaction: LedgerTransaction,
-        debitAccountId: Long,
-        creditAccountId: Long,
-        amount: Double,
-        memo: String = ""
-    ): Long {
-        if (amount <= 0.0) return -1L
-        if (debitAccountId == creditAccountId || debitAccountId == 0L || creditAccountId == 0L) {
-            return -1L
-        }
+    @Delete
+    suspend fun deleteTransaction(tx: LedgerTransaction)
 
-        val txId = insertTransactionRecord(transaction)
-        val debitEntry = LedgerEntry(
-            transactionId = txId,
-            accountId = debitAccountId,
-            direction = EntryDirection.DEBIT,
-            amount = amount,
-            memo = memo
-        )
-        val creditEntry = LedgerEntry(
-            transactionId = txId,
-            accountId = creditAccountId,
-            direction = EntryDirection.CREDIT,
-            amount = amount,
-            memo = memo
-        )
-        insertEntries(listOf(debitEntry, creditEntry))
-        return txId
-    }
-
-    @androidx.room.Transaction
-    suspend fun postExpenseOrIncome(
-        title: String,
-        amount: Double,
-        timestamp: Long,
-        assetAccountId: Long,
-        categoryName: String,
-        isExpense: Boolean,
-        isRecurring: Boolean,
-        frequency: String
-    ): Long {
-        val catType = if (isExpense) AccountClassification.EXPENSE else AccountClassification.REVENUE
-        var catAccount = getAccountByName(categoryName)
-        if (catAccount == null) {
-            val newId = insertAccount(
-                LedgerAccount(
-                    name = categoryName,
-                    classification = catType,
-                    subType = "CATEGORY"
-                )
-            )
-            catAccount = LedgerAccount(
-                id = newId,
-                name = categoryName,
-                classification = catType,
-                subType = "CATEGORY"
-            )
-        }
-
-        val debitId = if (isExpense) catAccount.id else assetAccountId
-        val creditId = if (isExpense) assetAccountId else catAccount.id
-
-        val tx = LedgerTransaction(
-            timestamp = timestamp,
-            description = title.ifBlank { categoryName },
-            isRecurring = isRecurring,
-            recurringFrequency = frequency
-        )
-        return recordBalancedPosting(tx, debitId, creditId, amount, categoryName)
-    }
-
-    @Query("""
-        SELECT 
-            a.id AS accountId,
-            a.name AS accountName,
-            a.classification AS classification,
-            a.subType AS subType,
-            COALESCE(SUM(CASE WHEN e.direction = 'DEBIT' THEN e.amount ELSE 0.0 END), 0.0) AS totalDebit,
-            COALESCE(SUM(CASE WHEN e.direction = 'CREDIT' THEN e.amount ELSE 0.0 END), 0.0) AS totalCredit,
-            CASE 
-                WHEN a.classification IN ('ASSET', 'EXPENSE') 
-                THEN COALESCE(SUM(CASE WHEN e.direction = 'DEBIT' THEN e.amount ELSE -e.amount END), 0.0)
-                ELSE COALESCE(SUM(CASE WHEN e.direction = 'CREDIT' THEN e.amount ELSE -e.amount END), 0.0)
-            END AS netBalance
-        FROM ledger_accounts a
-        LEFT JOIN ledger_entries e ON a.id = e.accountId
-        WHERE a.isArchived = 0
-        GROUP BY a.id
-    """)
-    fun observeAccountBalances(): Flow<List<AccountBalanceResult>>
+    @Query("SELECT * FROM ledger_transactions WHERE id = :id LIMIT 1")
+    suspend fun getTransactionById(id: Long): LedgerTransaction?
 
     @Query("SELECT * FROM ledger_transactions ORDER BY timestamp DESC")
     fun observeAllTransactions(): Flow<List<LedgerTransaction>>
 
-    @Query("""
-        SELECT 
-            t.id AS id,
-            t.timestamp AS timestamp,
-            t.description AS description,
-            e.amount AS amount,
-            a.name AS categoryOrAccount,
-            t.isRecurring AS isRecurring,
-            t.recurringFrequency AS recurringFrequency
-        FROM ledger_transactions t
-        JOIN ledger_entries e ON t.id = e.transactionId
-        JOIN ledger_accounts a ON e.accountId = a.id
-        WHERE e.direction = 'DEBIT'
-        ORDER BY t.timestamp DESC
-    """)
-    fun observeTransactionDisplayRows(): Flow<List<TransactionDisplayRow>>
+    @Query("SELECT * FROM ledger_transactions WHERE timestamp <= :nowEpoch ORDER BY timestamp DESC")
+    fun observeHistoricalTransactions(nowEpoch: Long = System.currentTimeMillis()): Flow<List<LedgerTransaction>>
 
-    @Query("DELETE FROM ledger_transactions WHERE id = :txId")
-    suspend fun deleteTransactionById(txId: Long)
+    @Query("SELECT * FROM ledger_transactions WHERE timestamp > :nowEpoch ORDER BY timestamp ASC")
+    fun observeScheduledHorizonTransactions(nowEpoch: Long = System.currentTimeMillis()): Flow<List<LedgerTransaction>>
+
+    @Query("SELECT * FROM ledger_transactions WHERE timestamp BETWEEN :startEpoch AND :endEpoch ORDER BY timestamp ASC")
+    suspend fun getTransactionsBetween(startEpoch: Long, endEpoch: Long): List<LedgerTransaction>
+
+    @Query("SELECT * FROM ledger_transactions WHERE isSubscription = 1 ORDER BY timestamp ASC")
+    fun observeActiveSubscriptions(): Flow<List<LedgerTransaction>>
+
+    @Query("SELECT * FROM ledger_transactions WHERE isTaxDeductible = 1 AND timestamp BETWEEN :startEpoch AND :endEpoch")
+    suspend fun getTaxDeductibleTransactions(startEpoch: Long, endEpoch: Long): List<LedgerTransaction>
+
+    // --- BRD Rule 27: Deduplication Collision Interceptor ---
+    @Query("""
+        SELECT * FROM ledger_transactions 
+        WHERE sourcePocketId = :pocketId 
+          AND amount = :amount 
+          AND timestamp BETWEEN (:timestamp - 172800000) AND (:timestamp + 172800000)
+        LIMIT 1
+    """)
+    suspend fun findPotentialDuplicate(pocketId: Long, amount: Double, timestamp: Long): LedgerTransaction?
+
+    // --- Dynamic Balance Engine Computations ---
+
+    @Query("""
+        SELECT COALESCE(
+            SUM(
+                CASE 
+                    WHEN targetPocketId = :pocketId THEN amount
+                    WHEN sourcePocketId = :pocketId AND movementNature IN ('OPERATING_INCOME', 'OPENING_BASELINE', 'VALUATION_MARK') THEN amount
+                    WHEN sourcePocketId = :pocketId AND movementNature IN ('OPERATING_EXPENSE', 'TRANSFER', 'DEPRECIATION_WRITE', 'EMI_PRINCIPAL') THEN -amount
+                    ELSE 0.0 
+                END
+            ), 0.0
+        )
+        FROM ledger_transactions
+        WHERE (sourcePocketId = :pocketId OR targetPocketId = :pocketId)
+          AND timestamp <= :asOfEpoch
+          AND status = 'CLEARED'
+    """)
+    suspend fun computePocketBalance(pocketId: Long, asOfEpoch: Long = System.currentTimeMillis()): Double
+
+    // --- BRD Rule 24: Forensic Audit Trail ---
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAuditEntry(auditEntry: LedgerAuditEntry)
+
+    @Query("SELECT * FROM ledger_audit_journal ORDER BY timestamp DESC LIMIT 500")
+    fun observeAuditJournal(): Flow<List<LedgerAuditEntry>>
+
+    // --- System Notices (Rules 25, 26) ---
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNotice(notice: SystemNotice)
+
+    @Query("SELECT * FROM system_notices WHERE isRead = 0 ORDER BY timestamp DESC")
+    fun observeUnreadNotices(): Flow<List<SystemNotice>>
+
+    @Query("UPDATE system_notices SET isRead = 1 WHERE id = :id")
+    suspend fun markNoticeAsRead(id: Long)
 }
