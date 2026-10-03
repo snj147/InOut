@@ -3,6 +3,7 @@ package com.personal.inout.util
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Environment
 import androidx.core.content.FileProvider
 import com.personal.inout.BuildConfig
@@ -18,6 +19,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 
 data class UpdateInfo(
     val hasUpdate: Boolean,
@@ -93,18 +95,20 @@ object AppUpdateEngine {
     }
 
     suspend fun startStreamDownload(context: Context, downloadUrl: String, versionTag: String) = withContext(Dispatchers.IO) {
-        // Prevent duplicate download triggers if already completed
         val currentState = _downloadState.value
-        if (currentState is UpdateDownloadState.ReadyToInstall && currentState.versionTag == versionTag && currentState.apkFile.exists()) {
+        
+        // Guard against duplicate network calls if the exact file is already downloading or ready
+        if (currentState is UpdateDownloadState.Downloading) {
             return@withContext
         }
-        if (currentState is UpdateDownloadState.Downloading) {
+        if (currentState is UpdateDownloadState.ReadyToInstall && currentState.versionTag == versionTag && currentState.apkFile.exists()) {
+            triggerPackageInstaller(context, currentState.apkFile)
             return@withContext
         }
 
         try {
-            // Use external files dir so the system installer has guaranteed read permissions
-            val downloadDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.cacheDir
+            // Write directly to app-specific external Downloads directory to ensure the Package Installer daemon has access
+            val downloadDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
             val targetFile = File(downloadDir, "InOut-alpha-$versionTag.apk")
             if (targetFile.exists()) targetFile.delete()
 
@@ -122,7 +126,8 @@ object AppUpdateEngine {
 
                 val totalBytes = responseBody.contentLength()
                 var bytesCopied = 0L
-                val buffer = ByteArray(16 * 1024)
+                val buffer = ByteArray(32 * 1024)
+                var lastEmittedProgress = -1
 
                 responseBody.byteStream().use { input ->
                     FileOutputStream(targetFile).use { output ->
@@ -130,14 +135,27 @@ object AppUpdateEngine {
                         while (read != -1) {
                             output.write(buffer, 0, read)
                             bytesCopied += read
-                            val progress = if (totalBytes > 0) bytesCopied.toFloat() / totalBytes.toFloat() else 0f
-                            _downloadState.value = UpdateDownloadState.Downloading(progress, bytesCopied, totalBytes)
+                            
+                            val progressFloat = if (totalBytes > 0) bytesCopied.toFloat() / totalBytes.toFloat() else 0f
+                            val currentPercent = (progressFloat * 100).roundToInt()
+                            
+                            // Throttle UI emissions to 1% intervals to eliminate Compose jittering
+                            if (currentPercent > lastEmittedProgress) {
+                                _downloadState.value = UpdateDownloadState.Downloading(progressFloat, bytesCopied, totalBytes)
+                                lastEmittedProgress = currentPercent
+                            }
+                            
                             read = input.read(buffer)
                         }
                     }
                 }
 
                 _downloadState.value = UpdateDownloadState.ReadyToInstall(targetFile, versionTag)
+                
+                // Auto-trigger the installation intent immediately after download completes
+                withContext(Dispatchers.Main) {
+                    triggerPackageInstaller(context, targetFile)
+                }
             }
         } catch (e: Exception) {
             _downloadState.value = UpdateDownloadState.Error("Download failed: ${e.localizedMessage}")
