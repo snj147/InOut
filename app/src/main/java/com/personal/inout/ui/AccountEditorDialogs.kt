@@ -6,6 +6,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -76,7 +77,6 @@ fun CreateAccountDialog(
     var targetDateEpoch by remember { mutableStateOf(System.currentTimeMillis() + (30L * 24 * 3600 * 1000L)) }
     var showDatePicker by remember { mutableStateOf(false) }
 
-    // Peer Specific State: Lend vs Borrow toggle & linked funding account
     var peerIsLendMode by remember { mutableStateOf(true) }
     var peerFundingPocketId by remember(allLiquidPockets) {
         mutableStateOf(allLiquidPockets.firstOrNull()?.id)
@@ -125,7 +125,7 @@ fun CreateAccountDialog(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.65f))
-                .clickable { onDismiss() },
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -135,7 +135,7 @@ fun CreateAccountDialog(
                     .fillMaxWidth(0.92f)
                     .widthIn(max = 420.dp)
                     .border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
-                    .clickable(enabled = false) {}
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
             ) {
                 if (stagedBatchItems != null) {
                     BatchBalanceSheetStagingView(
@@ -183,7 +183,6 @@ fun CreateAccountDialog(
                             }
                         }
 
-                        // Symmetrical Classification Grid (Balanced 4 on Row 1, 3 on Row 2)
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 listOf(
@@ -231,155 +230,66 @@ fun CreateAccountDialog(
                             }
                         }
 
-                        // Account Name Field (Slick 44dp height)
-                        OutlinedTextField(
+                        CompactInputField(
                             value = name,
                             onValueChange = { name = it },
-                            placeholder = {
-                                Text(
-                                    if (type == PocketType.PEER_RECEIVABLE || type == PocketType.PEER_PAYABLE) "Contact Name (e.g. Rahul Sharma)"
-                                    else "Account Name (e.g. HDFC Salary, SBI Home Loan)",
-                                    fontSize = 12.sp,
-                                    color = theme.textMuted
-                                )
-                            },
-                            singleLine = true,
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(46.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = theme.surfaceAlt,
-                                unfocusedContainerColor = theme.surfaceAlt,
-                                focusedBorderColor = theme.accent,
-                                unfocusedBorderColor = theme.borderLight,
-                                focusedTextColor = theme.textBright,
-                                unfocusedTextColor = theme.textBright
-                            )
+                            placeholder = if (type == PocketType.PEER_RECEIVABLE || type == PocketType.PEER_PAYABLE) "Contact Name (e.g. Rahul Sharma)"
+                                          else "Account Name (e.g. HDFC Salary, SBI Home Loan)",
+                            modifier = Modifier.fillMaxWidth()
                         )
 
                         when (type) {
                             PocketType.LIQUID, PocketType.PREPAID_WALLET -> {
-                                OutlinedTextField(
+                                CompactInputField(
                                     value = initialValuation,
-                                    onValueChange = { input ->
-                                        if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input
-                                    },
-                                    placeholder = { Text("Opening Balance ₹ (Optional)", fontSize = 12.sp, color = theme.textMuted) },
-                                    singleLine = true,
+                                    onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input },
+                                    placeholder = "Opening Balance ₹ (Optional)",
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(46.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedContainerColor = theme.surfaceAlt,
-                                        unfocusedContainerColor = theme.surfaceAlt,
-                                        focusedBorderColor = theme.accent,
-                                        unfocusedBorderColor = theme.borderLight,
-                                        focusedTextColor = theme.textBright,
-                                        unfocusedTextColor = theme.textBright
-                                    )
+                                    modifier = Modifier.fillMaxWidth()
                                 )
                             }
 
                             PocketType.CREDIT_CARD -> {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    OutlinedTextField(
+                                    CompactInputField(
                                         value = limit,
-                                        onValueChange = { input ->
-                                            if (input.all { c -> c.isDigit() || c == '.' }) limit = input
-                                        },
-                                        placeholder = { Text("Credit Limit ₹", fontSize = 12.sp, color = theme.textMuted) },
-                                        singleLine = true,
+                                        onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) limit = input },
+                                        placeholder = "Credit Limit ₹",
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(46.dp),
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedContainerColor = theme.surfaceAlt,
-                                            unfocusedContainerColor = theme.surfaceAlt,
-                                            focusedBorderColor = theme.accent,
-                                            unfocusedBorderColor = theme.borderLight,
-                                            focusedTextColor = theme.textBright,
-                                            unfocusedTextColor = theme.textBright
-                                        )
+                                        modifier = Modifier.fillMaxWidth()
                                     )
 
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                                        OutlinedTextField(
+                                        CompactInputField(
                                             value = statementCycleDay,
-                                            onValueChange = { input ->
-                                                if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) statementCycleDay = input
-                                            },
-                                            placeholder = { Text("Bill Date (1-31)", fontSize = 12.sp, color = theme.textMuted) },
-                                            singleLine = true,
+                                            onValueChange = { input -> if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) statementCycleDay = input },
+                                            placeholder = "Bill Date (1-31)",
                                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .height(46.dp),
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedContainerColor = theme.surfaceAlt,
-                                                unfocusedContainerColor = theme.surfaceAlt,
-                                                focusedBorderColor = theme.accent,
-                                                unfocusedBorderColor = theme.borderLight,
-                                                focusedTextColor = theme.textBright,
-                                                unfocusedTextColor = theme.textBright
-                                            )
+                                            modifier = Modifier.weight(1f)
                                         )
-                                        OutlinedTextField(
+                                        CompactInputField(
                                             value = dueDay,
-                                            onValueChange = { input ->
-                                                if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) dueDay = input
-                                            },
-                                            placeholder = { Text("Due Date (1-31)", fontSize = 12.sp, color = theme.textMuted) },
-                                            singleLine = true,
+                                            onValueChange = { input -> if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) dueDay = input },
+                                            placeholder = "Due Date (1-31)",
                                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .height(46.dp),
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedContainerColor = theme.surfaceAlt,
-                                                unfocusedContainerColor = theme.surfaceAlt,
-                                                focusedBorderColor = theme.accent,
-                                                unfocusedBorderColor = theme.borderLight,
-                                                focusedTextColor = theme.textBright,
-                                                unfocusedTextColor = theme.textBright
-                                            )
+                                            modifier = Modifier.weight(1f)
                                         )
                                     }
                                 }
                             }
 
                             PocketType.GOAL_POT -> {
-                                OutlinedTextField(
+                                CompactInputField(
                                     value = targetAmt,
-                                    onValueChange = { input ->
-                                        if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input
-                                    },
-                                    placeholder = { Text("Target Goal Amount ₹", fontSize = 12.sp, color = theme.textMuted) },
-                                    singleLine = true,
+                                    onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input },
+                                    placeholder = "Target Goal Amount ₹",
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(46.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedContainerColor = theme.surfaceAlt,
-                                        unfocusedContainerColor = theme.surfaceAlt,
-                                        focusedBorderColor = theme.accent,
-                                        unfocusedBorderColor = theme.borderLight,
-                                        focusedTextColor = theme.textBright,
-                                        unfocusedTextColor = theme.textBright
-                                    )
+                                    modifier = Modifier.fillMaxWidth()
                                 )
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .height(46.dp)
+                                        .height(44.dp)
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(theme.surfaceAlt)
                                         .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
@@ -393,36 +303,21 @@ fun CreateAccountDialog(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(text = "Target Date: $dateFormatted", color = theme.textBright, fontSize = 12.sp)
-                                        Icon(imageVector = Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(14.dp))
+                                        Icon(imageVector = Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
                                     }
                                 }
                             }
 
                             PocketType.INVESTMENT, PocketType.FIXED_ASSET -> {
-                                OutlinedTextField(
+                                CompactInputField(
                                     value = initialValuation,
-                                    onValueChange = { input ->
-                                        if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input
-                                    },
-                                    placeholder = { Text("Current Valuation ₹", fontSize = 12.sp, color = theme.textMuted) },
-                                    singleLine = true,
+                                    onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input },
+                                    placeholder = "Current Valuation ₹",
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(46.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedContainerColor = theme.surfaceAlt,
-                                        unfocusedContainerColor = theme.surfaceAlt,
-                                        focusedBorderColor = theme.accent,
-                                        unfocusedBorderColor = theme.borderLight,
-                                        focusedTextColor = theme.textBright,
-                                        unfocusedTextColor = theme.textBright
-                                    )
+                                    modifier = Modifier.fillMaxWidth()
                                 )
                             }
 
-                            // Dynamic Peer Lending / Borrowing Workflow
                             PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE -> {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -431,17 +326,12 @@ fun CreateAccountDialog(
                                                 .weight(1f)
                                                 .clip(RoundedCornerShape(6.dp))
                                                 .background(if (peerIsLendMode) theme.mildGreen.copy(alpha = 0.25f) else theme.surfaceAlt)
-                                            .border(1.dp, if (peerIsLendMode) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp))
-                                            .clickable { peerIsLendMode = true }
-                                            .padding(vertical = 8.dp),
+                                                .border(1.dp, if (peerIsLendMode) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp))
+                                                .clickable { peerIsLendMode = true }
+                                                .padding(vertical = 8.dp),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Text(
-                                                "I Lent (They Owe)",
-                                                color = if (peerIsLendMode) theme.mildGreen else theme.textBright,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
+                                            Text("I Lent (They Owe)", color = if (peerIsLendMode) theme.mildGreen else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
 
                                         Box(
@@ -449,47 +339,28 @@ fun CreateAccountDialog(
                                                 .weight(1f)
                                                 .clip(RoundedCornerShape(6.dp))
                                                 .background(if (!peerIsLendMode) theme.mildRed.copy(alpha = 0.25f) else theme.surfaceAlt)
-                                            .border(1.dp, if (!peerIsLendMode) theme.mildRed else theme.borderLight, RoundedCornerShape(6.dp))
-                                            .clickable { peerIsLendMode = false }
-                                            .padding(vertical = 8.dp),
+                                                .border(1.dp, if (!peerIsLendMode) theme.mildRed else theme.borderLight, RoundedCornerShape(6.dp))
+                                                .clickable { peerIsLendMode = false }
+                                                .padding(vertical = 8.dp),
                                             contentAlignment = Alignment.Center
                                         ) {
-                                            Text(
-                                                "I Borrowed (I Owe)",
-                                                color = if (!peerIsLendMode) theme.mildRed else theme.textBright,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
+                                            Text("I Borrowed (I Owe)", color = if (!peerIsLendMode) theme.mildRed else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
                                     }
 
-                                    OutlinedTextField(
+                                    CompactInputField(
                                         value = initialValuation,
-                                        onValueChange = { input ->
-                                            if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input
-                                        },
-                                        placeholder = { Text("Amount ₹", fontSize = 12.sp, color = theme.textMuted) },
-                                        singleLine = true,
+                                        onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input },
+                                        placeholder = "Amount ₹",
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(46.dp),
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedContainerColor = theme.surfaceAlt,
-                                            unfocusedContainerColor = theme.surfaceAlt,
-                                            focusedBorderColor = theme.accent,
-                                            unfocusedBorderColor = theme.borderLight,
-                                            focusedTextColor = theme.textBright,
-                                            unfocusedTextColor = theme.textBright
-                                        )
+                                        modifier = Modifier.fillMaxWidth()
                                     )
 
                                     val activeFundingPocket = allLiquidPockets.firstOrNull { it.id == peerFundingPocketId }
                                     Box(
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .height(46.dp)
+                                            .height(44.dp)
                                             .clip(RoundedCornerShape(8.dp))
                                             .background(theme.surfaceAlt)
                                             .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
@@ -531,103 +402,45 @@ fun CreateAccountDialog(
                                 }
                             }
 
-                            // Strict Symmetrical 2x2 Numeric Grid for Loans
                             PocketType.LIABILITY_LOAN -> {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                                        OutlinedTextField(
+                                        CompactInputField(
                                             value = initialValuation,
-                                            onValueChange = { input ->
-                                                if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input
-                                            },
-                                            placeholder = { Text("Principal Debt ₹", fontSize = 12.sp, color = theme.textMuted) },
-                                            singleLine = true,
+                                            onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input },
+                                            placeholder = "Principal Debt ₹",
                                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                            shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .height(46.dp),
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedContainerColor = theme.surfaceAlt,
-                                                unfocusedContainerColor = theme.surfaceAlt,
-                                                focusedBorderColor = theme.accent,
-                                                unfocusedBorderColor = theme.borderLight,
-                                                focusedTextColor = theme.textBright,
-                                                unfocusedTextColor = theme.textBright
-                                            )
+                                            modifier = Modifier.weight(1f)
                                         )
-                                        OutlinedTextField(
+                                        CompactInputField(
                                             value = targetAmt,
-                                            onValueChange = { input ->
-                                                if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input
-                                            },
-                                            placeholder = { Text("Monthly EMI ₹", fontSize = 12.sp, color = theme.textMuted) },
-                                            singleLine = true,
+                                            onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input },
+                                            placeholder = "Monthly EMI ₹",
                                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                            shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .height(46.dp),
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedContainerColor = theme.surfaceAlt,
-                                                unfocusedContainerColor = theme.surfaceAlt,
-                                                focusedBorderColor = theme.accent,
-                                                unfocusedBorderColor = theme.borderLight,
-                                                focusedTextColor = theme.textBright,
-                                                unfocusedTextColor = theme.textBright
-                                            )
+                                            modifier = Modifier.weight(1f)
                                         )
                                     }
 
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                                        OutlinedTextField(
+                                        CompactInputField(
                                             value = dueDay,
-                                            onValueChange = { input ->
-                                                if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) dueDay = input
-                                            },
-                                            placeholder = { Text("Due Day (1-31)", fontSize = 12.sp, color = theme.textMuted) },
-                                            singleLine = true,
+                                            onValueChange = { input -> if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) dueDay = input },
+                                            placeholder = "Due Day (1-31)",
                                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                            shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .height(46.dp),
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedContainerColor = theme.surfaceAlt,
-                                                unfocusedContainerColor = theme.surfaceAlt,
-                                                focusedBorderColor = theme.accent,
-                                                unfocusedBorderColor = theme.borderLight,
-                                                focusedTextColor = theme.textBright,
-                                                unfocusedTextColor = theme.textBright
-                                            )
+                                            modifier = Modifier.weight(1f)
                                         )
-                                        OutlinedTextField(
+                                        CompactInputField(
                                             value = interestRate,
-                                            onValueChange = { input ->
-                                                if (input.all { c -> c.isDigit() || c == '.' }) interestRate = input
-                                            },
-                                            placeholder = { Text("Interest Rate %", fontSize = 12.sp, color = theme.textMuted) },
-                                            singleLine = true,
+                                            onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) interestRate = input },
+                                            placeholder = "Interest Rate %",
                                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                            shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .height(46.dp),
-                                            colors = OutlinedTextFieldDefaults.colors(
-                                                focusedContainerColor = theme.surfaceAlt,
-                                                unfocusedContainerColor = theme.surfaceAlt,
-                                                focusedBorderColor = theme.accent,
-                                                unfocusedBorderColor = theme.borderLight,
-                                                focusedTextColor = theme.textBright,
-                                                unfocusedTextColor = theme.textBright
-                                            )
+                                            modifier = Modifier.weight(1f)
                                         )
                                     }
                                 }
                             }
                         }
 
-                        // Validation Check for Form Submission
                         val isFormValid = when (type) {
                             PocketType.LIABILITY_LOAN -> {
                                 name.isNotBlank() &&
@@ -644,14 +457,10 @@ fun CreateAccountDialog(
                             else -> name.isNotBlank()
                         }
 
-                        // Action Controls: Indian Layout Standard (Action on Left, Cancel on Right)
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp),
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            // Left Button: Confirm / Save
                             Button(
                                 onClick = {
                                     if (type == PocketType.PEER_RECEIVABLE || type == PocketType.PEER_PAYABLE) {
@@ -671,34 +480,21 @@ fun CreateAccountDialog(
                                         )
                                     }
                                 },
-                                modifier = Modifier
-                                    .weight(1.3f)
-                                    .height(42.dp),
+                                modifier = Modifier.weight(1.3f).height(44.dp),
                                 shape = RoundedCornerShape(8.dp),
-                                border = androidx.compose.foundation.BorderStroke(
-                                    1.dp,
-                                    if (isFormValid) theme.accent else theme.borderLight
-                                ),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, if (isFormValid) theme.accent else theme.borderLight),
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (isFormValid) theme.accent else theme.surfaceAlt.copy(alpha = 0.5f),
-                                    disabledContainerColor = theme.surfaceAlt.copy(alpha = 0.5f)
+                                    containerColor = if (isFormValid) theme.accent else Color.Transparent,
+                                    disabledContainerColor = Color.Transparent
                                 ),
                                 enabled = isFormValid
                             ) {
-                                Text(
-                                    "Save Account",
-                                    color = if (isFormValid) theme.bg else theme.textMuted.copy(alpha = 0.38f),
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 12.sp
-                                )
+                                Text("Save Account", color = if (isFormValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
 
-                            // Right Button: Cancel
                             OutlinedButton(
                                 onClick = onDismiss,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(42.dp),
+                                modifier = Modifier.weight(1f).height(44.dp),
                                 shape = RoundedCornerShape(8.dp),
                                 border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
                                 colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)
@@ -714,7 +510,7 @@ fun CreateAccountDialog(
 }
 
 @Composable
-private fun BatchBalanceSheetStagingView(
+fun BatchBalanceSheetStagingView(
     stagedItems: List<StagedStatementLineItem>,
     theme: ThemeColors,
     onDismissStaging: () -> Unit,
@@ -773,29 +569,31 @@ private fun BatchBalanceSheetStagingView(
             }
         }
 
+        val isValid = itemsList.any { it.isSelectedForCommit }
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Button(
                 onClick = { onConfirmBatch(itemsList.filter { it.isSelectedForCommit }) },
-                modifier = Modifier
-                    .weight(1.3f)
-                    .height(42.dp),
+                modifier = Modifier.weight(1.3f).height(44.dp),
                 shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
-                enabled = itemsList.any { it.isSelectedForCommit }
+                border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isValid) theme.accent else Color.Transparent,
+                    disabledContainerColor = Color.Transparent
+                ),
+                enabled = isValid
             ) {
-                Text("Import Selected", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text("Import Selected", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
 
             OutlinedButton(
                 onClick = onDismissStaging,
-                modifier = Modifier
-                    .weight(1f)
-                    .height(42.dp),
+                modifier = Modifier.weight(1f).height(44.dp),
                 shape = RoundedCornerShape(8.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
+                border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)
             ) {
                 Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
             }
@@ -838,17 +636,17 @@ fun EditAccountDialog(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.65f))
-                .clickable { onDismiss() },
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(containerColor = theme.surface),
                 modifier = Modifier
                     .fillMaxWidth(0.9f)
                     .widthIn(max = 400.dp)
-                    .border(1.dp, theme.borderLight, RoundedCornerShape(16.dp))
-                    .clickable(enabled = false) {}
+                    .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
             ) {
                 Column(
                     modifier = Modifier.padding(18.dp),
@@ -861,105 +659,50 @@ fun EditAccountDialog(
                         fontSize = 13.5.sp
                     )
 
-                    OutlinedTextField(
+                    CompactInputField(
                         value = name,
                         onValueChange = { name = it },
-                        placeholder = { Text("Account Name", color = theme.textMuted, fontSize = 12.sp) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(46.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = theme.surfaceAlt,
-                            unfocusedContainerColor = theme.surfaceAlt,
-                            focusedBorderColor = theme.accent,
-                            unfocusedBorderColor = theme.borderLight,
-                            focusedTextColor = theme.textBright,
-                            unfocusedTextColor = theme.textBright
-                        )
+                        placeholder = "Account Name",
+                        modifier = Modifier.fillMaxWidth()
                     )
 
                     if (pocket.type == PocketType.CREDIT_CARD) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            OutlinedTextField(
+                            CompactInputField(
                                 value = limit,
-                                onValueChange = { input ->
-                                    if (input.all { c -> c.isDigit() || c == '.' }) limit = input
-                                },
-                                placeholder = { Text("Limit ₹", color = theme.textMuted, fontSize = 12.sp) },
-                                singleLine = true,
+                                onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) limit = input },
+                                placeholder = "Limit ₹",
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(46.dp),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = theme.surfaceAlt,
-                                    unfocusedContainerColor = theme.surfaceAlt,
-                                    focusedBorderColor = theme.accent,
-                                    unfocusedBorderColor = theme.borderLight,
-                                    focusedTextColor = theme.textBright,
-                                    unfocusedTextColor = theme.textBright
-                                )
+                                modifier = Modifier.weight(1f)
                             )
-                            OutlinedTextField(
+                            CompactInputField(
                                 value = dueDay,
-                                onValueChange = { input ->
-                                    if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) dueDay = input
-                                },
-                                placeholder = { Text("Due Day (1-31)", color = theme.textMuted, fontSize = 12.sp) },
-                                singleLine = true,
+                                onValueChange = { input -> if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) dueDay = input },
+                                placeholder = "Due Day (1-31)",
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier
-                                    .weight(0.9f)
-                                    .height(46.dp),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = theme.surfaceAlt,
-                                    unfocusedContainerColor = theme.surfaceAlt,
-                                    focusedBorderColor = theme.accent,
-                                    unfocusedBorderColor = theme.borderLight,
-                                    focusedTextColor = theme.textBright,
-                                    unfocusedTextColor = theme.textBright
-                                )
+                                modifier = Modifier.weight(0.9f)
                             )
                         }
                     }
 
                     if (pocket.type == PocketType.GOAL_POT) {
-                        OutlinedTextField(
+                        CompactInputField(
                             value = targetAmt,
-                            onValueChange = { input ->
-                                if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input
-                            },
-                            placeholder = { Text("Target Goal Amount ₹", color = theme.textMuted, fontSize = 12.sp) },
-                            singleLine = true,
+                            onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input },
+                            placeholder = "Target Goal Amount ₹",
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(46.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = theme.surfaceAlt,
-                                unfocusedContainerColor = theme.surfaceAlt,
-                                focusedBorderColor = theme.accent,
-                                unfocusedBorderColor = theme.borderLight,
-                                focusedTextColor = theme.textBright,
-                                unfocusedTextColor = theme.textBright
-                            )
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
 
+                    val isValid = name.isNotBlank()
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 4.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Button(
                             onClick = {
-                                if (name.isNotBlank()) onSave(
+                                if (isValid) onSave(
                                     name,
                                     limit.toDoubleOrNull() ?: pocket.creditLimit,
                                     dueDay.toIntOrNull() ?: pocket.billDueDay,
@@ -967,23 +710,24 @@ fun EditAccountDialog(
                                     targetDateEpoch
                                 )
                             },
-                            modifier = Modifier
-                                .weight(1.3f)
-                                .height(42.dp),
+                            modifier = Modifier.weight(1.3f).height(44.dp),
                             shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
-                            enabled = name.isNotBlank()
+                            border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isValid) theme.accent else Color.Transparent,
+                                disabledContainerColor = Color.Transparent
+                            ),
+                            enabled = isValid
                         ) {
-                            Text("Save Changes", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text("Save Changes", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
 
                         OutlinedButton(
                             onClick = onDismiss,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(42.dp),
+                            modifier = Modifier.weight(1f).height(44.dp),
                             shape = RoundedCornerShape(8.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)
                         ) {
                             Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
                         }
