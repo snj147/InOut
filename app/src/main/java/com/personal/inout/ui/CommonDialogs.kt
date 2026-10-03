@@ -3,12 +3,14 @@ package com.personal.inout.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -23,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -105,16 +108,18 @@ fun CompactInputField(
     value: String,
     onValueChange: (String) -> Unit,
     placeholder: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default
 ) {
     val theme = LocalThemeColors.current
     Box(
         modifier = modifier
+            .height(44.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(theme.surfaceAlt)
             .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        contentAlignment = Alignment.TopStart
+            .padding(horizontal = 12.dp),
+        contentAlignment = Alignment.CenterStart
     ) {
         if (value.isEmpty()) {
             Text(placeholder, color = theme.textMuted, fontSize = 12.sp)
@@ -124,6 +129,8 @@ fun CompactInputField(
             onValueChange = onValueChange,
             textStyle = TextStyle(color = theme.textBright, fontSize = 13.sp),
             cursorBrush = SolidColor(theme.accent),
+            keyboardOptions = keyboardOptions,
+            singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
     }
@@ -142,9 +149,6 @@ fun ThemedDatePickerDialog(
     )
 }
 
-/**
- * Perfectly Symmetrical, 3-Column Keypad Master PIN Authorization with Dedicated Error Banner
- */
 @Composable
 fun CenteredMasterPinPurgeModal(
     expectedPin: String,
@@ -163,7 +167,7 @@ fun CenteredMasterPinPurgeModal(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.65f))
-                .clickable { onDismiss() },
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -173,6 +177,7 @@ fun CenteredMasterPinPurgeModal(
                     .fillMaxWidth(0.88f)
                     .widthIn(max = 350.dp)
                     .border(1.dp, if (isError) theme.mildRed else theme.borderLight, RoundedCornerShape(16.dp))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
             ) {
                 Column(
                     modifier = Modifier.padding(20.dp),
@@ -275,9 +280,6 @@ fun CenteredMasterPinPurgeModal(
     }
 }
 
-/**
- * Set Master Security PIN Dialog
- */
 @Composable
 fun ThemeSetPinDialog(
     onDismiss: () -> Unit,
@@ -286,45 +288,69 @@ fun ThemeSetPinDialog(
     val theme = LocalThemeColors.current
     var pin by remember { mutableStateOf("") }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(containerColor = theme.surface),
-            modifier = Modifier.fillMaxWidth().padding(16.dp).border(1.dp, theme.borderLight, RoundedCornerShape(16.dp))
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.65f))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
+            contentAlignment = Alignment.Center
         ) {
-            Column(
-                modifier = Modifier.padding(18.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = theme.surface),
+                modifier = Modifier
+                    .fillMaxWidth(0.9f)
+                    .widthIn(max = 400.dp)
+                    .border(1.dp, theme.borderLight, RoundedCornerShape(16.dp))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
             ) {
-                Text("Set Master Security PIN", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
-                Text("Enter a 6-digit code to authorize critical ledger actions.", color = theme.textMuted, fontSize = 11.sp, textAlign = TextAlign.Center)
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text("Set Master Security PIN", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
+                    Text("Enter a 6-digit code to authorize critical ledger actions.", color = theme.textMuted, fontSize = 11.sp, textAlign = TextAlign.Center)
 
-                OutlinedTextField(
-                    value = pin,
-                    onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) pin = it },
-                    placeholder = { Text("6-digit PIN", fontSize = 12.sp) },
-                    singleLine = true,
-                    shape = RoundedCornerShape(8.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = theme.surfaceAlt,
-                        unfocusedContainerColor = theme.surfaceAlt,
-                        focusedBorderColor = theme.accent,
-                        unfocusedBorderColor = theme.borderLight,
-                        focusedTextColor = theme.textBright,
-                        unfocusedTextColor = theme.textBright
+                    CompactInputField(
+                        value = pin,
+                        onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) pin = it },
+                        placeholder = "6-digit PIN",
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth()
                     )
-                )
 
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted) }
-                    Button(
-                        onClick = { if (pin.length == 6) onSavePin(pin) },
-                        colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
-                        enabled = pin.length == 6,
-                        shape = RoundedCornerShape(8.dp)
+                    val isValid = pin.length == 6
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("Save PIN", color = theme.bg, fontWeight = FontWeight.Bold)
+                        Button(
+                            onClick = { if (isValid) onSavePin(pin) },
+                            modifier = Modifier.weight(1.3f).height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isValid) theme.accent else Color.Transparent,
+                                disabledContainerColor = Color.Transparent
+                            ),
+                            enabled = isValid
+                        ) {
+                            Text("Save PIN", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f).height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
+                        ) {
+                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
+                        }
                     }
                 }
             }
@@ -332,9 +358,6 @@ fun ThemeSetPinDialog(
     }
 }
 
-/**
- * Centered System Notices Modal
- */
 @Composable
 fun CenteredNoticesModal(
     notices: List<SystemNotice>,
@@ -349,8 +372,8 @@ fun CenteredNoticesModal(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.6f))
-                .clickable { onDismiss() },
+                .background(Color.Black.copy(alpha = 0.65f))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -360,6 +383,7 @@ fun CenteredNoticesModal(
                     .fillMaxWidth(0.9f)
                     .widthIn(max = 400.dp)
                     .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -411,9 +435,6 @@ fun CenteredNoticesModal(
     }
 }
 
-/**
- * Centered Passbook Balance Reconciliation Cockpit
- */
 @Composable
 fun ReconcileBalanceCockpitModal(
     pocket: LedgerPocket,
@@ -435,8 +456,8 @@ fun ReconcileBalanceCockpitModal(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.6f))
-                .clickable { onDismiss() },
+                .background(Color.Black.copy(alpha = 0.65f))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -446,6 +467,7 @@ fun ReconcileBalanceCockpitModal(
                     .fillMaxWidth(0.9f)
                     .widthIn(max = 380.dp)
                     .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -458,20 +480,12 @@ fun ReconcileBalanceCockpitModal(
 
                     Column {
                         Text("Actual Bank Statement Balance", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
-                        OutlinedTextField(
+                        CompactInputField(
                             value = statementInput,
-                            onValueChange = { statementInput = it },
-                            singleLine = true,
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = theme.surfaceAlt,
-                                unfocusedContainerColor = theme.surfaceAlt,
-                                focusedBorderColor = theme.accent,
-                                unfocusedBorderColor = theme.borderLight,
-                                focusedTextColor = theme.textBright,
-                                unfocusedTextColor = theme.textBright
-                            )
+                            onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' || c == '-' }) statementInput = input },
+                            placeholder = "0.0",
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
                         )
                     }
 
@@ -493,42 +507,33 @@ fun ReconcileBalanceCockpitModal(
                         }
                     }
 
-                    OutlinedTextField(
+                    CompactInputField(
                         value = reasonNote,
                         onValueChange = { reasonNote = it },
-                        placeholder = { Text("Audit Note") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = theme.surfaceAlt,
-                            unfocusedContainerColor = theme.surfaceAlt,
-                            focusedBorderColor = theme.accent,
-                            unfocusedBorderColor = theme.borderLight,
-                            focusedTextColor = theme.textBright,
-                            unfocusedTextColor = theme.textBright
-                        )
+                        placeholder = "Audit Note",
+                        modifier = Modifier.fillMaxWidth()
                     )
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text("Cancel", color = theme.textMuted)
-                        }
-
                         Button(
                             onClick = { onApplyDiscrepancy(actualAmt, drift, reasonNote) },
-                            modifier = Modifier.weight(1.3f),
+                            modifier = Modifier.weight(1.3f).height(44.dp),
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
                         ) {
-                            Text("Apply Checkpoint", color = theme.bg, fontWeight = FontWeight.Bold)
+                            Text("Apply Checkpoint", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                        
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f).height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
+                        ) {
+                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
                         }
                     }
                 }
