@@ -24,6 +24,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -312,15 +313,12 @@ fun DashboardScreen(db: AppDatabase) {
             Scaffold(
                 containerColor = theme.bg,
                 topBar = {
-                    CleanVaultHeader(
-                        totalInflow = totalInflowLifetime,
-                        totalSpent = totalOutflowLifetime,
+                    DashboardHeader(
+                        totalIn = totalInflowLifetime,
+                        totalOut = totalOutflowLifetime,
                         isProUser = isProUnlocked,
                         isPrivacyMode = isPrivacyMode,
-                        unreadNoticeCount = unreadNotices.size,
-                        theme = theme,
-                        onTogglePrivacy = { isPrivacyMode = !isPrivacyMode },
-                        onOpenNotices = { showNoticesDialog = true }
+                        onTogglePrivacy = { isPrivacyMode = !isPrivacyMode }
                     )
                 },
                 bottomBar = {
@@ -849,7 +847,6 @@ fun DashboardScreen(db: AppDatabase) {
 
                                 if (amount > 0.0 && fundingPocketId != null) {
                                     if (isLend) {
-                                        // Lending Money: Bank decreases (Debit Peer Asset, Credit Bank)
                                         ledgerEngine.recordMovement(
                                             movementNature = MovementNature.TRANSFER,
                                             sourcePocketId = fundingPocketId,
@@ -859,7 +856,6 @@ fun DashboardScreen(db: AppDatabase) {
                                             description = "Lent to $contactName"
                                         )
                                     } else {
-                                        // Borrowing Money: Bank increases (Debit Bank, Credit Peer Liability)
                                         ledgerEngine.recordMovement(
                                             movementNature = MovementNature.TRANSFER,
                                             sourcePocketId = peerPocketId,
@@ -920,44 +916,61 @@ fun DashboardScreen(db: AppDatabase) {
 
                 if (showBurnEditDialog) {
                     var burnInput by remember { mutableStateOf(dailyBurnCeiling.toInt().toString()) }
-                    AlertDialog(
-                        onDismissRequest = { showBurnEditDialog = false },
-                        containerColor = theme.surface,
-                        title = { Text(text = "Update Daily Burn Target", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
-                        text = {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text(text = "Configure baseline daily operational burn ceiling.", color = theme.textMuted, fontSize = 12.sp)
-                                OutlinedTextField(
+                    Dialog(onDismissRequest = { showBurnEditDialog = false }) {
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = theme.surface),
+                            modifier = Modifier.fillMaxWidth().padding(16.dp).border(1.dp, theme.borderLight, RoundedCornerShape(16.dp))
+                        ) {
+                            Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                Text("Update Daily Burn Target", color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                Text("Configure baseline daily operational burn ceiling.", color = theme.textMuted, fontSize = 11.sp)
+                                
+                                CompactInputField(
                                     value = burnInput,
-                                    onValueChange = { burnInput = it },
-                                    placeholder = { Text("500") },
-                                    shape = RoundedCornerShape(8.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedContainerColor = theme.surfaceAlt,
-                                        unfocusedContainerColor = theme.surfaceAlt,
-                                        focusedBorderColor = theme.accent,
-                                        unfocusedBorderColor = theme.borderLight,
-                                        focusedTextColor = theme.textBright,
-                                        unfocusedTextColor = theme.textBright
-                                    )
+                                    onValueChange = { input -> if (input.all { c -> c.isDigit() }) burnInput = input },
+                                    placeholder = "500",
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.fillMaxWidth()
                                 )
-                            }
-                        },
-                        confirmButton = {
-                            Button(
-                                onClick = {
-                                    val parsed = burnInput.toDoubleOrNull()
-                                    if (parsed != null && parsed > 0) {
-                                        dailyBurnCeiling = parsed
-                                        prefs.edit().putFloat("daily_burn_ceiling", parsed.toFloat()).apply()
+
+                                val isValid = (burnInput.toDoubleOrNull() ?: 0.0) > 0.0
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            if (isValid) {
+                                                dailyBurnCeiling = burnInput.toDouble()
+                                                prefs.edit().putFloat("daily_burn_ceiling", burnInput.toFloat()).apply()
+                                                showBurnEditDialog = false
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1.3f).height(44.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight),
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = if (isValid) theme.accent else Color.Transparent,
+                                            disabledContainerColor = Color.Transparent
+                                        ),
+                                        enabled = isValid
+                                    ) {
+                                        Text("Save", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                     }
-                                    showBurnEditDialog = false
-                                },
-                                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-                            ) { Text(text = "Save", color = theme.bg, fontWeight = FontWeight.Bold) }
-                        },
-                        dismissButton = { TextButton(onClick = { showBurnEditDialog = false }) { Text(text = "Cancel", color = theme.textMuted) } }
-                    )
+
+                                    OutlinedButton(
+                                        onClick = { showBurnEditDialog = false },
+                                        modifier = Modifier.weight(1f).height(44.dp),
+                                        shape = RoundedCornerShape(8.dp),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
+                                    ) {
+                                        Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if (showClearLedgerConfirmation) {
@@ -1069,9 +1082,6 @@ fun DashboardScreen(db: AppDatabase) {
     }
 }
 
-/**
- * Secondary Screen: Full Ledger Entry Editor
- */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun EditLedgerEntryModal(
@@ -1114,7 +1124,7 @@ private fun EditLedgerEntryModal(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.65f))
-                .clickable { onDismiss() },
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -1124,7 +1134,7 @@ private fun EditLedgerEntryModal(
                     .fillMaxWidth(0.92f)
                     .widthIn(max = 420.dp)
                     .border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
-                    .clickable(enabled = false) {}
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
             ) {
                 Column(
                     modifier = Modifier.padding(18.dp),
@@ -1136,47 +1146,26 @@ private fun EditLedgerEntryModal(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text("EDIT TRANSACTION ENTRY", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
-                        Text(
-                            "Delete 🗑",
-                            color = theme.mildRed,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.clickable { onDelete() }
-                        )
+                        Text("Delete 🗑", color = theme.mildRed, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { onDelete() })
                     }
 
-                    // Symmetrical Amount and Date Row
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        OutlinedTextField(
+                        CompactInputField(
                             value = rawAmount,
-                            onValueChange = { input ->
-                                if (input.all { c -> c.isDigit() || c == '.' }) rawAmount = input
-                            },
-                            placeholder = { Text("Amount ₹", fontSize = 12.sp, color = theme.textMuted) },
-                            singleLine = true,
+                            onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) rawAmount = input },
+                            placeholder = "Amount ₹",
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(46.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = theme.surfaceAlt,
-                                unfocusedContainerColor = theme.surfaceAlt,
-                                focusedBorderColor = theme.accent,
-                                unfocusedBorderColor = theme.borderLight,
-                                focusedTextColor = theme.textBright,
-                                unfocusedTextColor = theme.textBright
-                            )
+                            modifier = Modifier.weight(1f)
                         )
 
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .height(46.dp)
+                                .height(44.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(theme.surfaceAlt)
                                 .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
@@ -1195,29 +1184,17 @@ private fun EditLedgerEntryModal(
                         }
                     }
 
-                    OutlinedTextField(
+                    CompactInputField(
                         value = description,
                         onValueChange = { description = it },
-                        placeholder = { Text("Merchant / Narration", fontSize = 12.sp, color = theme.textMuted) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(46.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = theme.surfaceAlt,
-                            unfocusedContainerColor = theme.surfaceAlt,
-                            focusedBorderColor = theme.accent,
-                            unfocusedBorderColor = theme.borderLight,
-                            focusedTextColor = theme.textBright,
-                            unfocusedTextColor = theme.textBright
-                        )
+                        placeholder = "Merchant / Narration",
+                        modifier = Modifier.fillMaxWidth()
                     )
 
                     Text("CATEGORY", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
                         verticalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         categories.forEach { cat ->
@@ -1268,9 +1245,7 @@ private fun EditLedgerEntryModal(
 
                     val isValid = (rawAmount.toDoubleOrNull() ?: 0.0) > 0.0
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 4.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Button(
@@ -1278,27 +1253,24 @@ private fun EditLedgerEntryModal(
                                 val amt = rawAmount.toDoubleOrNull() ?: return@Button
                                 onSave(amt, description, selectedCategory, selectedDateEpoch, isTaxDeductible, isReimbursable)
                             },
-                            modifier = Modifier
-                                .weight(1.3f)
-                                .height(42.dp),
+                            modifier = Modifier.weight(1.3f).height(44.dp),
                             shape = RoundedCornerShape(8.dp),
                             border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isValid) theme.accent else theme.surfaceAlt.copy(alpha = 0.5f),
-                                disabledContainerColor = theme.surfaceAlt.copy(alpha = 0.5f)
+                                containerColor = if (isValid) theme.accent else Color.Transparent,
+                                disabledContainerColor = Color.Transparent
                             ),
                             enabled = isValid
                         ) {
-                            Text("Update Entry", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.38f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text("Update Entry", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
 
                         OutlinedButton(
                             onClick = onDismiss,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(42.dp),
+                            modifier = Modifier.weight(1f).height(44.dp),
                             shape = RoundedCornerShape(8.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)
                         ) {
                             Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
                         }
@@ -1309,9 +1281,6 @@ private fun EditLedgerEntryModal(
     }
 }
 
-/**
- * Secondary Screen: Full Recurring Mandate Editor
- */
 @Composable
 private fun EditRecurringRuleModal(
     rule: LedgerTransaction,
@@ -1348,7 +1317,7 @@ private fun EditRecurringRuleModal(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.65f))
-                .clickable { onDismiss() },
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -1358,7 +1327,7 @@ private fun EditRecurringRuleModal(
                     .fillMaxWidth(0.92f)
                     .widthIn(max = 420.dp)
                     .border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
-                    .clickable(enabled = false) {}
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
             ) {
                 Column(
                     modifier = Modifier.padding(18.dp),
@@ -1366,23 +1335,11 @@ private fun EditRecurringRuleModal(
                 ) {
                     Text("EDIT RECURRING MANDATE", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
 
-                    OutlinedTextField(
+                    CompactInputField(
                         value = description,
                         onValueChange = { description = it },
-                        placeholder = { Text("Mandate Description / Payee", fontSize = 12.sp, color = theme.textMuted) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(46.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = theme.surfaceAlt,
-                            unfocusedContainerColor = theme.surfaceAlt,
-                            focusedBorderColor = theme.accent,
-                            unfocusedBorderColor = theme.borderLight,
-                            focusedTextColor = theme.textBright,
-                            unfocusedTextColor = theme.textBright
-                        )
+                        placeholder = "Mandate Description / Payee",
+                        modifier = Modifier.fillMaxWidth()
                     )
 
                     Row(
@@ -1390,32 +1347,18 @@ private fun EditRecurringRuleModal(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        OutlinedTextField(
+                        CompactInputField(
                             value = rawAmount,
-                            onValueChange = { input ->
-                                if (input.all { c -> c.isDigit() || c == '.' }) rawAmount = input
-                            },
-                            placeholder = { Text("Amount ₹", fontSize = 12.sp, color = theme.textMuted) },
-                            singleLine = true,
+                            onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) rawAmount = input },
+                            placeholder = "Amount ₹",
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(46.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = theme.surfaceAlt,
-                                unfocusedContainerColor = theme.surfaceAlt,
-                                focusedBorderColor = theme.accent,
-                                unfocusedBorderColor = theme.borderLight,
-                                focusedTextColor = theme.textBright,
-                                unfocusedTextColor = theme.textBright
-                            )
+                            modifier = Modifier.weight(1f)
                         )
 
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .height(46.dp)
+                                .height(44.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(theme.surfaceAlt)
                                 .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
@@ -1458,9 +1401,7 @@ private fun EditRecurringRuleModal(
 
                     val isValid = description.isNotBlank() && (rawAmount.toDoubleOrNull() ?: 0.0) > 0.0
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 4.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Button(
@@ -1468,25 +1409,21 @@ private fun EditRecurringRuleModal(
                                 val amt = rawAmount.toDoubleOrNull() ?: return@Button
                                 onSave(description, amt, frequency, selectedDateEpoch)
                             },
-                            modifier = Modifier
-                                .weight(1.3f)
-                                .height(42.dp),
+                            modifier = Modifier.weight(1.3f).height(44.dp),
                             shape = RoundedCornerShape(8.dp),
                             border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isValid) theme.accent else theme.surfaceAlt.copy(alpha = 0.5f),
-                                disabledContainerColor = theme.surfaceAlt.copy(alpha = 0.5f)
+                                containerColor = if (isValid) theme.accent else Color.Transparent,
+                                disabledContainerColor = Color.Transparent
                             ),
                             enabled = isValid
                         ) {
-                            Text("Save Mandate", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.38f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text("Save Mandate", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
 
                         OutlinedButton(
                             onClick = onDismiss,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(42.dp),
+                            modifier = Modifier.weight(1f).height(44.dp),
                             shape = RoundedCornerShape(8.dp),
                             border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
                         ) {
@@ -1589,83 +1526,5 @@ private fun FlatStreamRow(
 
         val amtStr = if (isPrivacyMode) "₹ •••" else "${if (isOut) "-" else "+"}₹ ${String.format("%,.0f", tx.amount)}"
         Text(text = amtStr, color = flowColor, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
-    }
-}
-
-@Composable
-private fun CleanVaultHeader(
-    totalInflow: Double,
-    totalSpent: Double,
-    isProUser: Boolean,
-    isPrivacyMode: Boolean,
-    unreadNoticeCount: Int,
-    theme: ThemeColors,
-    onTogglePrivacy: () -> Unit,
-    onOpenNotices: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(text = "InOut", color = theme.textBright, fontSize = 22.sp, fontWeight = FontWeight.Black)
-                if (isProUser) {
-                    Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(theme.accent).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                        Text(text = "PRO", color = theme.bg, fontSize = 9.sp, fontWeight = FontWeight.Black)
-                    }
-                }
-            }
-            Text(text = "THE VAULT", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.8.sp)
-        }
-
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(end = 4.dp)) {
-                Text(
-                    text = if (isPrivacyMode) "↓ ₹ •••" else "↓ ₹ ${String.format("%,.0f", totalSpent)}",
-                    color = theme.mildRed,
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = if (isPrivacyMode) "↑ ₹ •••" else "↑ ₹ ${String.format("%,.0f", totalInflow)}",
-                    color = theme.mildGreen,
-                    fontSize = 11.5.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            IconButton(onClick = onOpenNotices) {
-                BadgedBox(
-                    badge = {
-                        if (unreadNoticeCount > 0) {
-                            Badge(containerColor = theme.mildRed) {
-                                Text(text = unreadNoticeCount.toString(), color = Color.White)
-                            }
-                        }
-                    }
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Notifications,
-                        contentDescription = "Notices",
-                        modifier = Modifier.size(20.dp),
-                        tint = if (unreadNoticeCount > 0) theme.accent else theme.textMuted
-                    )
-                }
-            }
-
-            IconButton(onClick = onTogglePrivacy) {
-                Icon(
-                    imageVector = if (isPrivacyMode) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
-                    contentDescription = "Toggle Privacy",
-                    modifier = Modifier.size(20.dp),
-                    tint = theme.textMuted
-                )
-            }
-        }
     }
 }
