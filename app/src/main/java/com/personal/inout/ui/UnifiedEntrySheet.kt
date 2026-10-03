@@ -6,6 +6,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CalendarToday
@@ -16,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -70,38 +72,83 @@ fun UnifiedEntrySheet(
     var isReimbursable by remember { mutableStateOf(false) }
     var selectedCadence by remember { mutableStateOf("None") }
 
-    val liquidPockets = remember(allPockets) {
-        allPockets.filter {
-            it.type in listOf(
-                PocketType.LIQUID,
-                PocketType.PREPAID_WALLET,
-                PocketType.CREDIT_CARD
-            )
-        }
-    }
-
-    var selectedSourcePocket by remember(liquidPockets, prefilledPocketId) {
-        mutableStateOf(
-            liquidPockets.firstOrNull { it.id == prefilledPocketId }
-                ?: liquidPockets.firstOrNull { it.type == PocketType.LIQUID }
-                ?: liquidPockets.firstOrNull()
-        )
-    }
-
-    var selectedTargetPocket by remember(allPockets) {
-        mutableStateOf(
-            allPockets.firstOrNull { it.id != selectedSourcePocket?.id }
-        )
-    }
-
     val categories = when (selectedRail) {
         ActiveEntryRail.EXPENSE -> listOf("Food & Dining", "Groceries", "Transport", "Bills", "Shopping", "Health", "General")
-        ActiveEntryRail.INFLOW -> listOf("Salary", "Investment", "Freelance", "Refund", "Income")
+        ActiveEntryRail.INFLOW -> listOf("Salary", "Freelance", "Investment", "Cashback", "Reward Credit", "Merchant Refund", "Income")
         ActiveEntryRail.TRANSFER -> listOf("Internal Transfer", "Goal Pot", "ATM Withdrawal")
         ActiveEntryRail.CARD_BILL -> listOf("Card Payment", "Bill Settlement")
         ActiveEntryRail.PEER -> listOf("Peer Advance", "Debt Settlement")
     }
     var selectedCategory by remember(selectedRail) { mutableStateOf(categories.first()) }
+
+    // Conditional pocket filtering:
+    // Only liquid bank accounts can receive general inflows.
+    // Credit cards are allowed as inflow destinations ONLY for Cashback, Reward Credit, or Merchant Refund.
+    val isCreditCardRefundCategory = selectedCategory in listOf("Cashback", "Reward Credit", "Merchant Refund")
+
+    val selectableSourcePockets = remember(allPockets, selectedRail, isCreditCardRefundCategory) {
+        when (selectedRail) {
+            ActiveEntryRail.INFLOW -> {
+                allPockets.filter {
+                    if (isCreditCardRefundCategory) {
+                        it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET, PocketType.CREDIT_CARD)
+                    } else {
+                        it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET)
+                    }
+                }
+            }
+            ActiveEntryRail.CARD_BILL -> {
+                allPockets.filter { it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET) }
+            }
+            ActiveEntryRail.EXPENSE -> {
+                allPockets.filter { it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET, PocketType.CREDIT_CARD) }
+            }
+            ActiveEntryRail.TRANSFER, ActiveEntryRail.PEER -> {
+                allPockets.filter { it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET) }
+            }
+        }
+    }
+
+    var selectedSourcePocket by remember(selectableSourcePockets, prefilledPocketId) {
+        mutableStateOf(
+            selectableSourcePockets.firstOrNull { it.id == prefilledPocketId }
+                ?: selectableSourcePockets.firstOrNull { it.type == PocketType.LIQUID }
+                ?: selectableSourcePockets.firstOrNull()
+        )
+    }
+
+    LaunchedEffect(selectableSourcePockets) {
+        if (selectedSourcePocket !in selectableSourcePockets) {
+            selectedSourcePocket = selectableSourcePockets.firstOrNull()
+        }
+    }
+
+    val selectableTargetPockets = remember(allPockets, selectedRail, selectedSourcePocket) {
+        when (selectedRail) {
+            ActiveEntryRail.CARD_BILL -> allPockets.filter { it.type == PocketType.CREDIT_CARD }
+            ActiveEntryRail.PEER -> allPockets.filter { it.type in listOf(PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE) }
+            ActiveEntryRail.TRANSFER -> allPockets.filter { it.id != selectedSourcePocket?.id }
+            else -> emptyList()
+        }
+    }
+
+    var selectedTargetPocket by remember(selectableTargetPockets) {
+        mutableStateOf(selectableTargetPockets.firstOrNull())
+    }
+
+    LaunchedEffect(selectableTargetPockets) {
+        if (selectedTargetPocket !in selectableTargetPockets) {
+            selectedTargetPocket = selectableTargetPockets.firstOrNull()
+        }
+    }
+
+    // Force cadence to None if Inflow is directed to a Credit Card
+    val isCardInflow = selectedRail == ActiveEntryRail.INFLOW && selectedSourcePocket?.type == PocketType.CREDIT_CARD
+    LaunchedEffect(isCardInflow) {
+        if (isCardInflow) {
+            selectedCadence = "None"
+        }
+    }
 
     var showSourcePicker by remember { mutableStateOf(false) }
     var showTargetPicker by remember { mutableStateOf(false) }
@@ -132,7 +179,8 @@ fun UnifiedEntrySheet(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.65f)),
+                .background(Color.Black.copy(alpha = 0.65f))
+                .clickable { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -142,6 +190,7 @@ fun UnifiedEntrySheet(
                     .fillMaxWidth(0.92f)
                     .widthIn(max = 420.dp)
                     .border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+                    .clickable(enabled = false) {}
             ) {
                 Column(
                     modifier = Modifier
@@ -196,7 +245,7 @@ fun UnifiedEntrySheet(
                         }
                     }
 
-                    // Symmetrical 50/50 Amount and Date Row
+                    // Symmetrical 50/50 Amount and Date Row (Identical 44dp height)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -204,11 +253,18 @@ fun UnifiedEntrySheet(
                     ) {
                         OutlinedTextField(
                             value = amountExpression,
-                            onValueChange = { amountExpression = it },
-                            placeholder = { Text("Amount ₹", color = theme.textMuted, fontSize = 12.sp) },
+                            onValueChange = { input ->
+                                if (input.all { c -> c.isDigit() || c in "+-*/." }) {
+                                    amountExpression = input
+                                }
+                            },
+                            placeholder = { Text("₹ 0", color = theme.textMuted, fontSize = 12.sp) },
                             singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedContainerColor = theme.surfaceAlt,
                                 unfocusedContainerColor = theme.surfaceAlt,
@@ -222,19 +278,21 @@ fun UnifiedEntrySheet(
                         Box(
                             modifier = Modifier
                                 .weight(1f)
+                                .height(48.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(theme.surfaceAlt)
                                 .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
                                 .clickable { showDatePicker = true }
-                                .padding(horizontal = 12.dp, vertical = 15.dp),
-                            contentAlignment = Alignment.Center
+                                .padding(horizontal = 10.dp),
+                            contentAlignment = Alignment.CenterStart
                         ) {
                             Row(
+                                modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                horizontalArrangement = Arrangement.SpaceBetween
                             ) {
+                                Text(dateFormatted, color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                                 Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(14.dp))
-                                Text(dateFormatted, color = theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }
@@ -249,7 +307,7 @@ fun UnifiedEntrySheet(
                         )
                     }
 
-                    // Account Selection
+                    // Account Selection Tiles
                     if (selectedRail in listOf(ActiveEntryRail.TRANSFER, ActiveEntryRail.CARD_BILL, ActiveEntryRail.PEER)) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             SelectorPillTile(
@@ -267,19 +325,20 @@ fun UnifiedEntrySheet(
                         }
                     } else {
                         SelectorPillTile(
-                            label = "Account: ${selectedSourcePocket?.name ?: "Tap to Select"}",
+                            label = if (selectedRail == ActiveEntryRail.INFLOW) "Deposit To: ${selectedSourcePocket?.name ?: "Tap to Select"}"
+                            else "Paid From: ${selectedSourcePocket?.name ?: "Tap to Select"}",
                             modifier = Modifier.fillMaxWidth(),
                             theme = theme,
                             onClick = { showSourcePicker = true }
                         )
                     }
 
-                    // Vibrant Category Allocation Chips
+                    // Category Chips (Distributed Spacing)
                     Text("CATEGORY", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(5.dp),
-                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         categories.forEach { cat ->
                             val isSel = selectedCategory == cat
@@ -289,7 +348,7 @@ fun UnifiedEntrySheet(
                                     .background(if (isSel) theme.accent.copy(alpha = 0.22f) else theme.surfaceAlt)
                                     .border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(6.dp))
                                     .clickable { selectedCategory = cat }
-                                    .padding(horizontal = 9.dp, vertical = 6.dp)
+                                    .padding(horizontal = 9.dp, vertical = 5.dp)
                             ) {
                                 Text(
                                     cat,
@@ -301,14 +360,16 @@ fun UnifiedEntrySheet(
                         }
                     }
 
-                    // Narration / Merchant (Fully Interactive)
+                    // Narration / Merchant (Compact Input Box)
                     OutlinedTextField(
                         value = note,
                         onValueChange = { note = it },
                         placeholder = { Text("Narration / Merchant (Optional)", color = theme.textMuted, fontSize = 12.sp) },
                         singleLine = true,
                         shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = theme.surfaceAlt,
                             unfocusedContainerColor = theme.surfaceAlt,
@@ -319,9 +380,18 @@ fun UnifiedEntrySheet(
                         )
                     )
 
-                    // Repeat Cadence (Symmetrical Full-Width 5-Pill Rail)
+                    // Repeat Cadence (Locked to None for Credit Card Inflows)
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("REPEAT CADENCE", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("REPEAT CADENCE", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                            if (isCardInflow) {
+                                Text("Card refund/reward must be one-time", color = theme.mildRed, fontSize = 9.5.sp)
+                            }
+                        }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
@@ -334,19 +404,24 @@ fun UnifiedEntrySheet(
                                 "YEARLY" to "Y"
                             ).forEach { (cadenceKey, cadenceLabel) ->
                                 val isSel = selectedCadence == cadenceKey
+                                val isOptionEnabled = !isCardInflow || cadenceKey == "None"
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
                                         .clip(RoundedCornerShape(6.dp))
-                                        .background(if (isSel) theme.accent else theme.surfaceAlt)
+                                        .background(
+                                            if (isSel) theme.accent
+                                            else if (isOptionEnabled) theme.surfaceAlt
+                                            else theme.surfaceAlt.copy(alpha = 0.4f)
+                                        )
                                         .border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(6.dp))
-                                        .clickable { selectedCadence = cadenceKey }
+                                        .clickable(enabled = isOptionEnabled) { selectedCadence = cadenceKey }
                                         .padding(vertical = 6.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
                                         text = cadenceLabel,
-                                        color = if (isSel) theme.bg else theme.textBright,
+                                        color = if (isSel) theme.bg else if (isOptionEnabled) theme.textBright else theme.textMuted.copy(alpha = 0.4f),
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -397,8 +472,8 @@ fun UnifiedEntrySheet(
                         }
                     }
 
-                    // Action Controls
-                    val hasAccounts = allPockets.isNotEmpty()
+                    // Action Controls: Indian Layout (Confirm on Left, Cancel on Right)
+                    val hasAccounts = selectableSourcePockets.isNotEmpty()
                     val isValid = evaluatedAmount != null && evaluatedAmount > 0.0 && selectedSourcePocket != null
 
                     Row(
@@ -407,15 +482,7 @@ fun UnifiedEntrySheet(
                             .padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(8.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
-                        ) {
-                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
-                        }
-
+                        // Left Button: Confirm / Post Entry
                         Button(
                             onClick = {
                                 if (!hasAccounts) {
@@ -452,19 +519,39 @@ fun UnifiedEntrySheet(
                                 )
                                 onDismiss()
                             },
-                            modifier = Modifier.weight(1.3f),
+                            modifier = Modifier
+                                .weight(1.3f)
+                                .height(42.dp),
                             shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(
+                                1.dp,
+                                if (isValid && hasAccounts) theme.accent else theme.borderLight
+                            ),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isValid && hasAccounts) theme.accent else theme.surfaceAlt
+                                containerColor = if (isValid && hasAccounts) theme.accent else theme.surfaceAlt.copy(alpha = 0.5f),
+                                disabledContainerColor = theme.surfaceAlt.copy(alpha = 0.5f)
                             ),
                             enabled = hasAccounts && isValid
                         ) {
                             Text(
-                                text = if (hasAccounts) "Post Entry" else "Add Account",
-                                color = if (isValid && hasAccounts) theme.bg else theme.textMuted,
+                                text = if (hasAccounts) "Post Entry" else "Add Bank First",
+                                color = if (isValid && hasAccounts) theme.bg else theme.textMuted.copy(alpha = 0.38f),
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.sp
                             )
+                        }
+
+                        // Right Button: Cancel
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(42.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)
+                        ) {
+                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
                         }
                     }
                 }
@@ -474,8 +561,8 @@ fun UnifiedEntrySheet(
 
     if (showSourcePicker) {
         CenteredPocketPickerDialog(
-            title = "Select Source Account",
-            pockets = liquidPockets,
+            title = "Select Account",
+            pockets = selectableSourcePockets,
             theme = theme,
             onDismiss = { showSourcePicker = false },
             onSelect = {
@@ -487,8 +574,8 @@ fun UnifiedEntrySheet(
 
     if (showTargetPicker) {
         CenteredPocketPickerDialog(
-            title = "Select Destination Account",
-            pockets = allPockets.filter { it.id != selectedSourcePocket?.id },
+            title = "Select Destination",
+            pockets = selectableTargetPockets,
             theme = theme,
             onDismiss = { showTargetPicker = false },
             onSelect = {
@@ -512,7 +599,7 @@ private fun SelectorPillTile(
             .background(theme.surfaceAlt)
             .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
             .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 12.dp),
+            .padding(horizontal = 12.dp, vertical = 11.dp),
         contentAlignment = Alignment.CenterStart
     ) {
         Text(
@@ -540,7 +627,8 @@ private fun CenteredPocketPickerDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.6f)),
+                .background(Color.Black.copy(alpha = 0.6f))
+                .clickable { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -550,6 +638,7 @@ private fun CenteredPocketPickerDialog(
                     .fillMaxWidth(0.88f)
                     .widthIn(max = 380.dp)
                     .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
+                    .clickable(enabled = false) {}
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
