@@ -31,6 +31,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -42,8 +43,11 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.personal.inout.BuildConfig
@@ -111,6 +115,10 @@ fun DashboardScreen(db: AppDatabase) {
     val rawPockets by db.ledgerDao().getAllActivePockets().collectAsState(initial = emptyList())
     val completedTransactions by db.ledgerDao().observeHistoricalTransactions().collectAsState(initial = emptyList())
     val unreadNotices by db.ledgerDao().observeUnreadNotices().collectAsState(initial = emptyList())
+
+    val liquidPockets = remember(rawPockets) {
+        rawPockets.filter { it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET) }
+    }
 
     var pocketBalances by remember { mutableStateOf<Map<Long, Double>>(emptyMap()) }
     var solvencyDeck by remember {
@@ -283,7 +291,7 @@ fun DashboardScreen(db: AppDatabase) {
         if (uri != null) {
             scope.launch {
                 try {
-                    val parsed = ReceiptScanner.processReceipt(context, uri)
+                    val parsed = ReceiptScanner.processDocumentUri(context, uri)
                     ocrPrefilledNote = parsed.merchant
                     ocrPrefilledAmount = parsed.total
                     selectedPocketIdForEntry = rawPockets.firstOrNull { it.type == PocketType.LIQUID }?.id
@@ -799,6 +807,7 @@ fun DashboardScreen(db: AppDatabase) {
                 if (showCreatePocketDialog) {
                     CreateAccountDialog(
                         initialType = prefilledCreatePocketType,
+                        allLiquidPockets = liquidPockets,
                         theme = theme,
                         onDismiss = { showCreatePocketDialog = false },
                         onSave = { name, type, limit, dueDay, targetAmt, targetDateEpoch, initialVal, interestRate ->
@@ -826,6 +835,51 @@ fun DashboardScreen(db: AppDatabase) {
                                 }
                                 showCreatePocketDialog = false
                                 alertManager.showAlert("Created '$name'", AlertType.SUCCESS)
+                            }
+                        },
+                        onSavePeerWithFunding = { contactName, isLend, amount, fundingPocketId ->
+                            scope.launch {
+                                val peerType = if (isLend) PocketType.PEER_RECEIVABLE else PocketType.PEER_PAYABLE
+                                val peerPocketId = db.ledgerDao().insertPocket(
+                                    LedgerPocket(
+                                        name = contactName,
+                                        type = peerType
+                                    )
+                                )
+
+                                if (amount > 0.0 && fundingPocketId != null) {
+                                    if (isLend) {
+                                        // Lending Money: Bank decreases (Debit Peer Asset, Credit Bank)
+                                        ledgerEngine.recordMovement(
+                                            movementNature = MovementNature.TRANSFER,
+                                            sourcePocketId = fundingPocketId,
+                                            targetPocketId = peerPocketId,
+                                            amount = amount,
+                                            category = "Peer Debt",
+                                            description = "Lent to $contactName"
+                                        )
+                                    } else {
+                                        // Borrowing Money: Bank increases (Debit Bank, Credit Peer Liability)
+                                        ledgerEngine.recordMovement(
+                                            movementNature = MovementNature.TRANSFER,
+                                            sourcePocketId = peerPocketId,
+                                            targetPocketId = fundingPocketId,
+                                            amount = amount,
+                                            category = "Peer Advance",
+                                            description = "Borrowed from $contactName"
+                                        )
+                                    }
+                                } else if (amount > 0.0) {
+                                    ledgerEngine.recordMovement(
+                                        movementNature = MovementNature.OPENING_BASELINE,
+                                        sourcePocketId = peerPocketId,
+                                        targetPocketId = null,
+                                        amount = amount,
+                                        category = "Initial Position",
+                                        description = "Opening peer ledger for $contactName"
+                                    )
+                                }
+                                alertManager.showAlert("Added Peer ledger for '$contactName'", AlertType.SUCCESS)
                             }
                         }
                     )
@@ -923,44 +977,51 @@ fun DashboardScreen(db: AppDatabase) {
                 }
 
                 editingRecurringRule?.let { rule ->
-                    AlertDialog(
-                        containerColor = theme.surface,
-                        onDismissRequest = { editingRecurringRule = null },
-                        title = { Text(text = "Edit Recurring Rule", color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold) },
-                        text = {
-                            Text("Editing ${rule.description} (₹${rule.amount.toInt()})", color = theme.textMuted)
-                        },
-                        confirmButton = {
-                            Button(
-                                onClick = { editingRecurringRule = null },
-                                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-                            ) { Text("Done", color = theme.bg) }
+                    EditRecurringRuleModal(
+                        rule = rule,
+                        theme = theme,
+                        onDismiss = { editingRecurringRule = null },
+                        onSave = { updatedDesc, updatedAmt, updatedFreq, updatedDateEpoch ->
+                            scope.launch {
+                                db.ledgerDao().updateTransaction(
+                                    rule.copy(
+                                        description = updatedDesc,
+                                        amount = updatedAmt,
+                                        recurringFrequency = updatedFreq,
+                                        timestamp = updatedDateEpoch
+                                    )
+                                )
+                                editingRecurringRule = null
+                                alertManager.showAlert("Mandate updated", AlertType.SUCCESS)
+                            }
                         }
                     )
                 }
 
                 editingTransaction?.let { tx ->
-                    AlertDialog(
-                        containerColor = theme.surface,
-                        onDismissRequest = { editingTransaction = null },
-                        title = { Text(text = "Edit Ledger Entry", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 15.sp) },
-                        text = {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("Transaction: ${tx.description}", color = theme.textBright)
-                                Text("Amount: ₹${tx.amount.toInt()}", color = theme.accent)
+                    EditLedgerEntryModal(
+                        tx = tx,
+                        theme = theme,
+                        onDismiss = { editingTransaction = null },
+                        onSave = { updatedAmount, updatedDesc, updatedCategory, updatedDateEpoch, updatedTax, updatedReimb ->
+                            scope.launch {
+                                db.ledgerDao().updateTransaction(
+                                    tx.copy(
+                                        amount = updatedAmount,
+                                        description = updatedDesc,
+                                        category = updatedCategory,
+                                        timestamp = updatedDateEpoch,
+                                        isTaxDeductible = updatedTax,
+                                        isReimbursable = updatedReimb
+                                    )
+                                )
+                                editingTransaction = null
+                                alertManager.showAlert("Ledger entry updated", AlertType.SUCCESS)
                             }
                         },
-                        confirmButton = {
-                            Button(
-                                onClick = { editingTransaction = null },
-                                colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
-                            ) { Text("Done", color = theme.bg) }
-                        },
-                        dismissButton = {
-                            TextButton(onClick = {
-                                transactionPendingDeletion = tx
-                                editingTransaction = null
-                            }) { Text("Delete", color = theme.mildRed) }
+                        onDelete = {
+                            transactionPendingDeletion = tx
+                            editingTransaction = null
                         }
                     )
                 }
@@ -1004,6 +1065,436 @@ fun DashboardScreen(db: AppDatabase) {
             }
 
             VaultFloatingTopOverlay(alertManager = alertManager, theme = theme)
+        }
+    }
+}
+
+/**
+ * Secondary Screen: Full Ledger Entry Editor
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun EditLedgerEntryModal(
+    tx: LedgerTransaction,
+    theme: ThemeColors,
+    onDismiss: () -> Unit,
+    onSave: (amount: Double, desc: String, category: String, date: Long, isTax: Boolean, isReimb: Boolean) -> Unit,
+    onDelete: () -> Unit
+) {
+    var rawAmount by remember { mutableStateOf(String.format("%.0f", tx.amount)) }
+    var description by remember { mutableStateOf(tx.description) }
+    var selectedCategory by remember { mutableStateOf(tx.category) }
+    var selectedDateEpoch by remember { mutableStateOf(tx.timestamp) }
+    var isTaxDeductible by remember { mutableStateOf(tx.isTaxDeductible) }
+    var isReimbursable by remember { mutableStateOf(tx.isReimbursable) }
+    var showDatePicker by remember { mutableStateOf(false) }
+
+    val dateFormatted = remember(selectedDateEpoch) {
+        SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateEpoch))
+    }
+
+    val categories = listOf("Food & Dining", "Groceries", "Transport", "Bills", "Shopping", "Health", "General", "Salary", "Income")
+
+    if (showDatePicker) {
+        CustomCalendarDialog(
+            initialDateMillis = selectedDateEpoch,
+            onDismiss = { showDatePicker = false },
+            onDateSelected = {
+                selectedDateEpoch = it
+                showDatePicker = false
+            }
+        )
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.65f))
+                .clickable { onDismiss() },
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = theme.surface),
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .widthIn(max = 420.dp)
+                    .border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+                    .clickable(enabled = false) {}
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(11.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("EDIT TRANSACTION ENTRY", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
+                        Text(
+                            "Delete 🗑",
+                            color = theme.mildRed,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.clickable { onDelete() }
+                        )
+                    }
+
+                    // Symmetrical Amount and Date Row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = rawAmount,
+                            onValueChange = { input ->
+                                if (input.all { c -> c.isDigit() || c == '.' }) rawAmount = input
+                            },
+                            placeholder = { Text("Amount ₹", fontSize = 12.sp, color = theme.textMuted) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = theme.surfaceAlt,
+                                unfocusedContainerColor = theme.surfaceAlt,
+                                focusedBorderColor = theme.accent,
+                                unfocusedBorderColor = theme.borderLight,
+                                focusedTextColor = theme.textBright,
+                                unfocusedTextColor = theme.textBright
+                            )
+                        )
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(theme.surfaceAlt)
+                                .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
+                                .clickable { showDatePicker = true }
+                                .padding(horizontal = 10.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(dateFormatted, color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(14.dp))
+                            }
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = description,
+                        onValueChange = { description = it },
+                        placeholder = { Text("Merchant / Narration", fontSize = 12.sp, color = theme.textMuted) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(46.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = theme.surfaceAlt,
+                            unfocusedContainerColor = theme.surfaceAlt,
+                            focusedBorderColor = theme.accent,
+                            unfocusedBorderColor = theme.borderLight,
+                            focusedTextColor = theme.textBright,
+                            unfocusedTextColor = theme.textBright
+                        )
+                    )
+
+                    Text("CATEGORY", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        categories.forEach { cat ->
+                            val isSel = selectedCategory == cat
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isSel) theme.accent.copy(alpha = 0.22f) else theme.surfaceAlt)
+                                    .border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(6.dp))
+                                    .clickable { selectedCategory = cat }
+                                    .padding(horizontal = 8.dp, vertical = 5.dp)
+                            ) {
+                                Text(cat, color = if (isSel) theme.accent else theme.textBright, fontSize = 10.5.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isTaxDeductible) theme.accent.copy(alpha = 0.2f) else theme.surfaceAlt)
+                                .border(1.dp, if (isTaxDeductible) theme.accent else theme.borderLight, RoundedCornerShape(6.dp))
+                                .clickable { isTaxDeductible = !isTaxDeductible }
+                                .padding(vertical = 7.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("🏷 80C Tag", color = if (isTaxDeductible) theme.accent else theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isReimbursable) theme.mildGreen.copy(alpha = 0.2f) else theme.surfaceAlt)
+                                .border(1.dp, if (isReimbursable) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp))
+                                .clickable { isReimbursable = !isReimbursable }
+                                .padding(vertical = 7.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("💼 Reimbursable", color = if (isReimbursable) theme.mildGreen else theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    val isValid = (rawAmount.toDoubleOrNull() ?: 0.0) > 0.0
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                val amt = rawAmount.toDoubleOrNull() ?: return@Button
+                                onSave(amt, description, selectedCategory, selectedDateEpoch, isTaxDeductible, isReimbursable)
+                            },
+                            modifier = Modifier
+                                .weight(1.3f)
+                                .height(42.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isValid) theme.accent else theme.surfaceAlt.copy(alpha = 0.5f),
+                                disabledContainerColor = theme.surfaceAlt.copy(alpha = 0.5f)
+                            ),
+                            enabled = isValid
+                        ) {
+                            Text("Update Entry", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.38f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(42.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
+                        ) {
+                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Secondary Screen: Full Recurring Mandate Editor
+ */
+@Composable
+private fun EditRecurringRuleModal(
+    rule: LedgerTransaction,
+    theme: ThemeColors,
+    onDismiss: () -> Unit,
+    onSave: (desc: String, amount: Double, frequency: String, anchorDate: Long) -> Unit
+) {
+    var rawAmount by remember { mutableStateOf(String.format("%.0f", rule.amount)) }
+    var description by remember { mutableStateOf(rule.description) }
+    var frequency by remember { mutableStateOf(rule.recurringFrequency) }
+    var selectedDateEpoch by remember { mutableStateOf(rule.timestamp) }
+    var showDatePicker by remember { mutableStateOf(false) }
+
+    val dateFormatted = remember(selectedDateEpoch) {
+        SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateEpoch))
+    }
+
+    if (showDatePicker) {
+        CustomCalendarDialog(
+            initialDateMillis = selectedDateEpoch,
+            onDismiss = { showDatePicker = false },
+            onDateSelected = {
+                selectedDateEpoch = it
+                showDatePicker = false
+            }
+        )
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.65f))
+                .clickable { onDismiss() },
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = theme.surface),
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .widthIn(max = 420.dp)
+                    .border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+                    .clickable(enabled = false) {}
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(11.dp)
+                ) {
+                    Text("EDIT RECURRING MANDATE", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
+
+                    OutlinedTextField(
+                        value = description,
+                        onValueChange = { description = it },
+                        placeholder = { Text("Mandate Description / Payee", fontSize = 12.sp, color = theme.textMuted) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(46.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = theme.surfaceAlt,
+                            unfocusedContainerColor = theme.surfaceAlt,
+                            focusedBorderColor = theme.accent,
+                            unfocusedBorderColor = theme.borderLight,
+                            focusedTextColor = theme.textBright,
+                            unfocusedTextColor = theme.textBright
+                        )
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = rawAmount,
+                            onValueChange = { input ->
+                                if (input.all { c -> c.isDigit() || c == '.' }) rawAmount = input
+                            },
+                            placeholder = { Text("Amount ₹", fontSize = 12.sp, color = theme.textMuted) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = theme.surfaceAlt,
+                                unfocusedContainerColor = theme.surfaceAlt,
+                                focusedBorderColor = theme.accent,
+                                unfocusedBorderColor = theme.borderLight,
+                                focusedTextColor = theme.textBright,
+                                unfocusedTextColor = theme.textBright
+                            )
+                        )
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(46.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(theme.surfaceAlt)
+                                .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
+                                .clickable { showDatePicker = true }
+                                .padding(horizontal = 10.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(dateFormatted, color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(14.dp))
+                            }
+                        }
+                    }
+
+                    Text("EXECUTION CADENCE", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("DAILY" to "Daily", "WEEKLY" to "Weekly", "MONTHLY" to "Monthly", "YEARLY" to "Yearly").forEach { (key, label) ->
+                            val isSel = frequency == key
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isSel) theme.accent else theme.surfaceAlt)
+                                    .border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(6.dp))
+                                    .clickable { frequency = key }
+                                    .padding(vertical = 7.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(label, color = if (isSel) theme.bg else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    val isValid = description.isNotBlank() && (rawAmount.toDoubleOrNull() ?: 0.0) > 0.0
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                val amt = rawAmount.toDoubleOrNull() ?: return@Button
+                                onSave(description, amt, frequency, selectedDateEpoch)
+                            },
+                            modifier = Modifier
+                                .weight(1.3f)
+                                .height(42.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isValid) theme.accent else theme.surfaceAlt.copy(alpha = 0.5f),
+                                disabledContainerColor = theme.surfaceAlt.copy(alpha = 0.5f)
+                            ),
+                            enabled = isValid
+                        ) {
+                            Text("Save Mandate", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.38f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(42.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
+                        ) {
+                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
         }
     }
 }
