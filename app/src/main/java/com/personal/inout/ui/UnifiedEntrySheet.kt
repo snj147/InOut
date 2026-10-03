@@ -3,6 +3,7 @@ package com.personal.inout.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -81,31 +82,19 @@ fun UnifiedEntrySheet(
     }
     var selectedCategory by remember(selectedRail) { mutableStateOf(categories.first()) }
 
-    // Conditional pocket filtering:
-    // Only liquid bank accounts can receive general inflows.
-    // Credit cards are allowed as inflow destinations ONLY for Cashback, Reward Credit, or Merchant Refund.
     val isCreditCardRefundCategory = selectedCategory in listOf("Cashback", "Reward Credit", "Merchant Refund")
 
     val selectableSourcePockets = remember(allPockets, selectedRail, isCreditCardRefundCategory) {
         when (selectedRail) {
             ActiveEntryRail.INFLOW -> {
                 allPockets.filter {
-                    if (isCreditCardRefundCategory) {
-                        it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET, PocketType.CREDIT_CARD)
-                    } else {
-                        it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET)
-                    }
+                    if (isCreditCardRefundCategory) it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET, PocketType.CREDIT_CARD)
+                    else it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET)
                 }
             }
-            ActiveEntryRail.CARD_BILL -> {
-                allPockets.filter { it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET) }
-            }
-            ActiveEntryRail.EXPENSE -> {
-                allPockets.filter { it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET, PocketType.CREDIT_CARD) }
-            }
-            ActiveEntryRail.TRANSFER, ActiveEntryRail.PEER -> {
-                allPockets.filter { it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET) }
-            }
+            ActiveEntryRail.CARD_BILL -> allPockets.filter { it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET) }
+            ActiveEntryRail.EXPENSE -> allPockets.filter { it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET, PocketType.CREDIT_CARD) }
+            ActiveEntryRail.TRANSFER, ActiveEntryRail.PEER -> allPockets.filter { it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET) }
         }
     }
 
@@ -142,12 +131,9 @@ fun UnifiedEntrySheet(
         }
     }
 
-    // Force cadence to None if Inflow is directed to a Credit Card
     val isCardInflow = selectedRail == ActiveEntryRail.INFLOW && selectedSourcePocket?.type == PocketType.CREDIT_CARD
     LaunchedEffect(isCardInflow) {
-        if (isCardInflow) {
-            selectedCadence = "None"
-        }
+        if (isCardInflow) selectedCadence = "None"
     }
 
     var showSourcePicker by remember { mutableStateOf(false) }
@@ -180,7 +166,7 @@ fun UnifiedEntrySheet(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.65f))
-                .clickable { onDismiss() },
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -190,12 +176,10 @@ fun UnifiedEntrySheet(
                     .fillMaxWidth(0.92f)
                     .widthIn(max = 420.dp)
                     .border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
-                    .clickable(enabled = false) {}
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
             ) {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(18.dp),
+                    modifier = Modifier.fillMaxWidth().padding(18.dp),
                     verticalArrangement = Arrangement.spacedBy(11.dp)
                 ) {
                     Text(
@@ -206,7 +190,6 @@ fun UnifiedEntrySheet(
                         letterSpacing = 1.sp
                     )
 
-                    // 5-Pill Color-Coded Mode Rail
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -245,40 +228,23 @@ fun UnifiedEntrySheet(
                         }
                     }
 
-                    // Symmetrical 50/50 Amount and Date Row (Identical 44dp height)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        OutlinedTextField(
+                        CompactInputField(
                             value = amountExpression,
-                            onValueChange = { input ->
-                                if (input.all { c -> c.isDigit() || c in "+-*/." }) {
-                                    amountExpression = input
-                                }
-                            },
-                            placeholder = { Text("₹ 0", color = theme.textMuted, fontSize = 12.sp) },
-                            singleLine = true,
+                            onValueChange = { input -> if (input.all { c -> c.isDigit() || c in "+-*/." }) amountExpression = input },
+                            placeholder = "Amount ₹",
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(48.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = theme.surfaceAlt,
-                                unfocusedContainerColor = theme.surfaceAlt,
-                                focusedBorderColor = theme.accent,
-                                unfocusedBorderColor = theme.borderLight,
-                                focusedTextColor = theme.textBright,
-                                unfocusedTextColor = theme.textBright
-                            )
+                            modifier = Modifier.weight(1f)
                         )
 
                         Box(
                             modifier = Modifier
                                 .weight(1f)
-                                .height(48.dp)
+                                .height(44.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(theme.surfaceAlt)
                                 .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
@@ -298,47 +264,27 @@ fun UnifiedEntrySheet(
                     }
 
                     if (evaluatedAmount != null && amountExpression.any { it in "+-*/" }) {
-                        Text(
-                            "= ₹ ${String.format("%.0f", evaluatedAmount)}",
-                            color = theme.accent,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(start = 2.dp)
-                        )
+                        Text("= ₹ ${String.format("%.0f", evaluatedAmount)}", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 2.dp))
                     }
 
-                    // Account Selection Tiles
                     if (selectedRail in listOf(ActiveEntryRail.TRANSFER, ActiveEntryRail.CARD_BILL, ActiveEntryRail.PEER)) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            SelectorPillTile(
-                                label = "From: ${selectedSourcePocket?.name ?: "Select"}",
-                                modifier = Modifier.weight(1f),
-                                theme = theme,
-                                onClick = { showSourcePicker = true }
-                            )
-                            SelectorPillTile(
-                                label = "To: ${selectedTargetPocket?.name ?: "Select"}",
-                                modifier = Modifier.weight(1f),
-                                theme = theme,
-                                onClick = { showTargetPicker = true }
-                            )
+                            SelectorPillTile(label = "From: ${selectedSourcePocket?.name ?: "Select"}", modifier = Modifier.weight(1f), theme = theme) { showSourcePicker = true }
+                            SelectorPillTile(label = "To: ${selectedTargetPocket?.name ?: "Select"}", modifier = Modifier.weight(1f), theme = theme) { showTargetPicker = true }
                         }
                     } else {
                         SelectorPillTile(
-                            label = if (selectedRail == ActiveEntryRail.INFLOW) "Deposit To: ${selectedSourcePocket?.name ?: "Tap to Select"}"
-                            else "Paid From: ${selectedSourcePocket?.name ?: "Tap to Select"}",
+                            label = if (selectedRail == ActiveEntryRail.INFLOW) "Deposit To: ${selectedSourcePocket?.name ?: "Tap to Select"}" else "Paid From: ${selectedSourcePocket?.name ?: "Tap to Select"}",
                             modifier = Modifier.fillMaxWidth(),
-                            theme = theme,
-                            onClick = { showSourcePicker = true }
-                        )
+                            theme = theme
+                        ) { showSourcePicker = true }
                     }
 
-                    // Category Chips (Distributed Spacing)
                     Text("CATEGORY", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         categories.forEach { cat ->
                             val isSel = selectedCategory == cat
@@ -348,39 +294,20 @@ fun UnifiedEntrySheet(
                                     .background(if (isSel) theme.accent.copy(alpha = 0.22f) else theme.surfaceAlt)
                                     .border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(6.dp))
                                     .clickable { selectedCategory = cat }
-                                    .padding(horizontal = 9.dp, vertical = 5.dp)
+                                    .padding(horizontal = 9.dp, vertical = 6.dp)
                             ) {
-                                Text(
-                                    cat,
-                                    color = if (isSel) theme.accent else theme.textBright,
-                                    fontSize = 10.5.sp,
-                                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
-                                )
+                                Text(cat, color = if (isSel) theme.accent else theme.textBright, fontSize = 10.5.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
                             }
                         }
                     }
 
-                    // Narration / Merchant (Compact Input Box)
-                    OutlinedTextField(
+                    CompactInputField(
                         value = note,
                         onValueChange = { note = it },
-                        placeholder = { Text("Narration / Merchant (Optional)", color = theme.textMuted, fontSize = 12.sp) },
-                        singleLine = true,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = theme.surfaceAlt,
-                            unfocusedContainerColor = theme.surfaceAlt,
-                            focusedBorderColor = theme.accent,
-                            unfocusedBorderColor = theme.borderLight,
-                            focusedTextColor = theme.textBright,
-                            unfocusedTextColor = theme.textBright
-                        )
+                        placeholder = "Narration / Merchant (Optional)",
+                        modifier = Modifier.fillMaxWidth()
                     )
 
-                    // Repeat Cadence (Locked to None for Credit Card Inflows)
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -388,49 +315,31 @@ fun UnifiedEntrySheet(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("REPEAT CADENCE", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                            if (isCardInflow) {
-                                Text("Card refund/reward must be one-time", color = theme.mildRed, fontSize = 9.5.sp)
-                            }
+                            if (isCardInflow) Text("Card refund/reward must be one-time", color = theme.mildRed, fontSize = 9.5.sp)
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            listOf(
-                                "None" to "None",
-                                "DAILY" to "D",
-                                "WEEKLY" to "W",
-                                "MONTHLY" to "M",
-                                "YEARLY" to "Y"
-                            ).forEach { (cadenceKey, cadenceLabel) ->
+                            listOf("None" to "None", "DAILY" to "D", "WEEKLY" to "W", "MONTHLY" to "M", "YEARLY" to "Y").forEach { (cadenceKey, cadenceLabel) ->
                                 val isSel = selectedCadence == cadenceKey
                                 val isOptionEnabled = !isCardInflow || cadenceKey == "None"
                                 Box(
                                     modifier = Modifier
                                         .weight(1f)
                                         .clip(RoundedCornerShape(6.dp))
-                                        .background(
-                                            if (isSel) theme.accent
-                                            else if (isOptionEnabled) theme.surfaceAlt
-                                            else theme.surfaceAlt.copy(alpha = 0.4f)
-                                        )
+                                        .background(if (isSel) theme.accent else if (isOptionEnabled) theme.surfaceAlt else theme.surfaceAlt.copy(alpha = 0.4f))
                                         .border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(6.dp))
                                         .clickable(enabled = isOptionEnabled) { selectedCadence = cadenceKey }
                                         .padding(vertical = 6.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(
-                                        text = cadenceLabel,
-                                        color = if (isSel) theme.bg else if (isOptionEnabled) theme.textBright else theme.textMuted.copy(alpha = 0.4f),
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
+                                    Text(cadenceLabel, color = if (isSel) theme.bg else if (isOptionEnabled) theme.textBright else theme.textMuted.copy(alpha = 0.4f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
                     }
 
-                    // Statutory Tags (Equal 50/50 Proportion)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -445,12 +354,7 @@ fun UnifiedEntrySheet(
                                 .padding(vertical = 7.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = "🏷 80C Tag",
-                                color = if (isTaxDeductible) theme.accent else theme.textMuted,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Text("🏷 80C Tag", color = if (isTaxDeductible) theme.accent else theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
 
                         Box(
@@ -463,35 +367,22 @@ fun UnifiedEntrySheet(
                                 .padding(vertical = 7.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = "💼 Reimbursable",
-                                color = if (isReimbursable) theme.mildGreen else theme.textMuted,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Text("💼 Reimbursable", color = if (isReimbursable) theme.mildGreen else theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
-                    // Action Controls: Indian Layout (Confirm on Left, Cancel on Right)
                     val hasAccounts = selectableSourcePockets.isNotEmpty()
                     val isValid = evaluatedAmount != null && evaluatedAmount > 0.0 && selectedSourcePocket != null
 
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 4.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // Left Button: Confirm / Post Entry
                         Button(
                             onClick = {
-                                if (!hasAccounts) {
-                                    onNavigateToCreatePocket()
-                                    return@Button
-                                }
+                                if (!hasAccounts) { onNavigateToCreatePocket(); return@Button }
                                 val src = selectedSourcePocket ?: return@Button
                                 val amt = evaluatedAmount ?: return@Button
-
                                 val movementNature = when (selectedRail) {
                                     ActiveEntryRail.EXPENSE -> MovementNature.OPERATING_EXPENSE
                                     ActiveEntryRail.INFLOW -> MovementNature.OPERATING_INCOME
@@ -499,54 +390,25 @@ fun UnifiedEntrySheet(
                                     ActiveEntryRail.CARD_BILL -> MovementNature.OPERATING_EXPENSE
                                     ActiveEntryRail.PEER -> MovementNature.TRANSFER
                                 }
-
-                                val targetId = if (selectedRail in listOf(ActiveEntryRail.TRANSFER, ActiveEntryRail.CARD_BILL, ActiveEntryRail.PEER)) {
-                                    selectedTargetPocket?.id
-                                } else null
-
-                                onSubmitTransaction(
-                                    movementNature,
-                                    src.id,
-                                    targetId,
-                                    amt,
-                                    selectedCategory,
-                                    note.ifBlank { selectedCategory },
-                                    selectedDateMillis,
-                                    selectedCadence != "None",
-                                    if (selectedCadence == "None") "NONE" else selectedCadence,
-                                    isTaxDeductible,
-                                    isReimbursable
-                                )
+                                val targetId = if (selectedRail in listOf(ActiveEntryRail.TRANSFER, ActiveEntryRail.CARD_BILL, ActiveEntryRail.PEER)) selectedTargetPocket?.id else null
+                                onSubmitTransaction(movementNature, src.id, targetId, amt, selectedCategory, note.ifBlank { selectedCategory }, selectedDateMillis, selectedCadence != "None", if (selectedCadence == "None") "NONE" else selectedCadence, isTaxDeductible, isReimbursable)
                                 onDismiss()
                             },
-                            modifier = Modifier
-                                .weight(1.3f)
-                                .height(42.dp),
+                            modifier = Modifier.weight(1.3f).height(44.dp),
                             shape = RoundedCornerShape(8.dp),
-                            border = androidx.compose.foundation.BorderStroke(
-                                1.dp,
-                                if (isValid && hasAccounts) theme.accent else theme.borderLight
-                            ),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid && hasAccounts) theme.accent else theme.borderLight),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isValid && hasAccounts) theme.accent else theme.surfaceAlt.copy(alpha = 0.5f),
-                                disabledContainerColor = theme.surfaceAlt.copy(alpha = 0.5f)
+                                containerColor = if (isValid && hasAccounts) theme.accent else Color.Transparent,
+                                disabledContainerColor = Color.Transparent
                             ),
                             enabled = hasAccounts && isValid
                         ) {
-                            Text(
-                                text = if (hasAccounts) "Post Entry" else "Add Bank First",
-                                color = if (isValid && hasAccounts) theme.bg else theme.textMuted.copy(alpha = 0.38f),
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 12.sp
-                            )
+                            Text(if (hasAccounts) "Post Entry" else "Add Bank First", color = if (isValid && hasAccounts) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
 
-                        // Right Button: Cancel
                         OutlinedButton(
                             onClick = onDismiss,
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(42.dp),
+                            modifier = Modifier.weight(1f).height(44.dp),
                             shape = RoundedCornerShape(8.dp),
                             border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)
@@ -559,124 +421,37 @@ fun UnifiedEntrySheet(
         }
     }
 
-    if (showSourcePicker) {
-        CenteredPocketPickerDialog(
-            title = "Select Account",
-            pockets = selectableSourcePockets,
-            theme = theme,
-            onDismiss = { showSourcePicker = false },
-            onSelect = {
-                selectedSourcePocket = it
-                showSourcePicker = false
-            }
-        )
-    }
-
-    if (showTargetPicker) {
-        CenteredPocketPickerDialog(
-            title = "Select Destination",
-            pockets = selectableTargetPockets,
-            theme = theme,
-            onDismiss = { showTargetPicker = false },
-            onSelect = {
-                selectedTargetPocket = it
-                showTargetPicker = false
-            }
-        )
-    }
+    if (showSourcePicker) CenteredPocketPickerDialog("Select Account", selectableSourcePockets, theme, { showSourcePicker = false }) { selectedSourcePocket = it; showSourcePicker = false }
+    if (showTargetPicker) CenteredPocketPickerDialog("Select Destination", selectableTargetPockets, theme, { showTargetPicker = false }) { selectedTargetPocket = it; showTargetPicker = false }
 }
 
 @Composable
-private fun SelectorPillTile(
-    label: String,
-    modifier: Modifier,
-    theme: ThemeColors,
-    onClick: () -> Unit
-) {
+private fun SelectorPillTile(label: String, modifier: Modifier, theme: ThemeColors, onClick: () -> Unit) {
     Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(theme.surfaceAlt)
-            .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
-            .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 11.dp),
+        modifier = modifier.clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { onClick() }.padding(horizontal = 12.dp, vertical = 11.dp),
         contentAlignment = Alignment.CenterStart
     ) {
-        Text(
-            text = label,
-            color = theme.textBright,
-            fontSize = 11.5.sp,
-            fontWeight = FontWeight.Medium,
-            maxLines = 1
-        )
+        Text(text = label, color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, maxLines = 1)
     }
 }
 
 @Composable
-private fun CenteredPocketPickerDialog(
-    title: String,
-    pockets: List<LedgerPocket>,
-    theme: ThemeColors,
-    onDismiss: () -> Unit,
-    onSelect: (LedgerPocket) -> Unit
-) {
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.6f))
-                .clickable { onDismiss() },
-            contentAlignment = Alignment.Center
-        ) {
-            Card(
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = theme.surface),
-                modifier = Modifier
-                    .fillMaxWidth(0.88f)
-                    .widthIn(max = 380.dp)
-                    .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
-                    .clickable(enabled = false) {}
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
+private fun CenteredPocketPickerDialog(title: String, pockets: List<LedgerPocket>, theme: ThemeColors, onDismiss: () -> Unit, onSelect: (LedgerPocket) -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
+            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 380.dp).border(1.dp, theme.borderLight, RoundedCornerShape(14.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(text = title, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
                     HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
-
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
+                    Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         pockets.forEach { pocket ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(theme.surfaceAlt)
-                                    .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
-                                    .clickable { onSelect(pocket) }
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
+                            Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { onSelect(pocket) }.padding(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Text(pocket.name, color = theme.textBright, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp)
                                 Text(pocket.type.name, color = theme.textMuted, fontSize = 10.sp)
                             }
                         }
                     }
-
-                    TextButton(
-                        onClick = onDismiss,
-                        modifier = Modifier.align(Alignment.End)
-                    ) {
-                        Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
-                    }
+                    TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("Cancel", color = theme.textMuted, fontSize = 12.sp) }
                 }
             }
         }
