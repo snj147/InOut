@@ -174,6 +174,8 @@ fun DashboardScreen(db: AppDatabase) {
 
     var showUnifiedEntrySheet by remember { mutableStateOf(false) }
     var selectedPocketIdForEntry by remember { mutableStateOf<Long?>(null) }
+    var selectedTargetPocketIdForEntry by remember { mutableStateOf<Long?>(null) }
+    var forcedEntryRail by remember { mutableStateOf<ActiveEntryRail?>(null) }
 
     var editingPocket by remember { mutableStateOf<LedgerPocket?>(null) }
     var editingTransaction by remember { mutableStateOf<LedgerTransaction?>(null) }
@@ -389,6 +391,8 @@ fun DashboardScreen(db: AppDatabase) {
                                             ocrPrefilledNote = ""
                                             ocrPrefilledAmount = null
                                             selectedPocketIdForEntry = rawPockets.firstOrNull { it.type == PocketType.LIQUID }?.id
+                                            selectedTargetPocketIdForEntry = null
+                                            forcedEntryRail = null
                                             showUnifiedEntrySheet = true
                                         },
                                         modifier = Modifier.size(46.dp),
@@ -617,9 +621,30 @@ fun DashboardScreen(db: AppDatabase) {
                             recurringTransactions = recurringTemplates,
                             isPrivacyMode = isPrivacyMode,
                             onTransactPocket = { pocket ->
-                                selectedPocketIdForEntry = pocket.id
                                 ocrPrefilledNote = ""
                                 ocrPrefilledAmount = null
+                                when (pocket.type) {
+                                    PocketType.CREDIT_CARD -> {
+                                        forcedEntryRail = ActiveEntryRail.CARD_BILL
+                                        selectedPocketIdForEntry = liquidPockets.firstOrNull()?.id
+                                        selectedTargetPocketIdForEntry = pocket.id
+                                    }
+                                    PocketType.LIABILITY_LOAN -> {
+                                        forcedEntryRail = ActiveEntryRail.TRANSFER
+                                        selectedPocketIdForEntry = liquidPockets.firstOrNull()?.id
+                                        selectedTargetPocketIdForEntry = pocket.id
+                                    }
+                                    PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE -> {
+                                        forcedEntryRail = ActiveEntryRail.PEER
+                                        selectedPocketIdForEntry = liquidPockets.firstOrNull()?.id
+                                        selectedTargetPocketIdForEntry = pocket.id
+                                    }
+                                    else -> {
+                                        forcedEntryRail = null
+                                        selectedPocketIdForEntry = pocket.id
+                                        selectedTargetPocketIdForEntry = null
+                                    }
+                                }
                                 showUnifiedEntrySheet = true
                             },
                             onEditPocket = { editingPocket = it },
@@ -739,6 +764,8 @@ fun DashboardScreen(db: AppDatabase) {
                     UnifiedEntrySheet(
                         allPockets = rawPockets,
                         prefilledPocketId = selectedPocketIdForEntry,
+                        prefilledTargetPocketId = selectedTargetPocketIdForEntry,
+                        forcedRail = forcedEntryRail,
                         prefilledNote = ocrPrefilledNote,
                         prefilledAmount = ocrPrefilledAmount,
                         onDismiss = { showUnifiedEntrySheet = false },
