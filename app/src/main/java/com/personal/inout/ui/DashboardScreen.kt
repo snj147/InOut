@@ -79,6 +79,13 @@ fun DashboardScreen(db: AppDatabase) {
         if (buildSha.isNotBlank() && buildSha != "localdev") buildSha else "0d7352d"
     }
 
+    // RESTORED INSTALLATION TRACKING VARS
+    val packageInfo = remember { try { context.packageManager.getPackageInfo(context.packageName, 0) } catch (_: Exception) { null } }
+    val lastInstalledTimeFormatted = remember(packageInfo) {
+        val t = packageInfo?.lastUpdateTime ?: System.currentTimeMillis()
+        SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault()).format(Date(t))
+    }
+
     val billingManager = remember { PlayBillingManager(context, scope) }
     val isProUnlocked by billingManager.isProUnlocked.collectAsState()
 
@@ -203,36 +210,6 @@ fun DashboardScreen(db: AppDatabase) {
                 if (res.isSuccess) alertManager.showAlert("Vault restored cleanly", AlertType.SUCCESS)
                 else alertManager.showAlert("Restore failed: ${res.exceptionOrNull()?.message}", AlertType.ERROR)
             }
-        }
-    }
-
-    fun triggerSeamlessApkInstall(apkFile: File) {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                if (!context.packageManager.canRequestPackageInstalls()) {
-                    val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
-                        data = Uri.parse("package:${context.packageName}")
-                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-                    }
-                    context.startActivity(intent)
-                    alertManager.showAlert("Enable permission, then tap Install", AlertType.WARNING)
-                    return
-                }
-            }
-
-            val apkUri: Uri = FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                apkFile
-            )
-
-            val installIntent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(apkUri, "application/vnd.android.package-archive")
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
-            }
-            context.startActivity(installIntent)
-        } catch (e: Exception) {
-            alertManager.showAlert("Install invocation failed: ${e.message}", AlertType.ERROR)
         }
     }
 
@@ -930,22 +907,10 @@ private fun EditLedgerEntryModal(
     var isReimbursable by remember { mutableStateOf(tx.isReimbursable) }
     var showDatePicker by remember { mutableStateOf(false) }
 
-    val dateFormatted = remember(selectedDateEpoch) {
-        SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateEpoch))
-    }
-
+    val dateFormatted = remember(selectedDateEpoch) { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateEpoch)) }
     val categories = listOf("Food & Dining", "Groceries", "Transport", "Bills", "Shopping", "Health", "General", "Salary", "Income")
 
-    if (showDatePicker) {
-        CustomCalendarDialog(
-            initialDateMillis = selectedDateEpoch,
-            onDismiss = { showDatePicker = false },
-            onDateSelected = {
-                selectedDateEpoch = it
-                showDatePicker = false
-            }
-        )
-    }
+    if (showDatePicker) CustomCalendarDialog(initialDateMillis = selectedDateEpoch, onDismiss = { showDatePicker = false }) { selectedDateEpoch = it; showDatePicker = false }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
@@ -958,11 +923,7 @@ private fun EditLedgerEntryModal(
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         CompactInputField(value = rawAmount, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) rawAmount = input }, placeholder = "Amount ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f))
-
-                        Box(
-                            modifier = Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showDatePicker = true }.padding(horizontal = 10.dp),
-                            contentAlignment = Alignment.CenterStart
-                        ) {
+                        Box(modifier = Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showDatePicker = true }.padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Text(dateFormatted, color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                                 Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(14.dp))
@@ -983,12 +944,8 @@ private fun EditLedgerEntryModal(
                     }
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isTaxDeductible) theme.accent.copy(alpha = 0.2f) else theme.surfaceAlt).border(1.dp, if (isTaxDeductible) theme.accent else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isTaxDeductible = !isTaxDeductible }.padding(vertical = 7.dp), contentAlignment = Alignment.Center) {
-                            Text("🏷 80C Tag", color = if (isTaxDeductible) theme.accent else theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isReimbursable) theme.mildGreen.copy(alpha = 0.2f) else theme.surfaceAlt).border(1.dp, if (isReimbursable) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isReimbursable = !isReimbursable }.padding(vertical = 7.dp), contentAlignment = Alignment.Center) {
-                            Text("💼 Reimbursable", color = if (isReimbursable) theme.mildGreen else theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
-                        }
+                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isTaxDeductible) theme.accent.copy(alpha = 0.2f) else theme.surfaceAlt).border(1.dp, if (isTaxDeductible) theme.accent else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isTaxDeductible = !isTaxDeductible }.padding(vertical = 7.dp), contentAlignment = Alignment.Center) { Text("🏷 80C Tag", color = if (isTaxDeductible) theme.accent else theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold) }
+                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isReimbursable) theme.mildGreen.copy(alpha = 0.2f) else theme.surfaceAlt).border(1.dp, if (isReimbursable) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isReimbursable = !isReimbursable }.padding(vertical = 7.dp), contentAlignment = Alignment.Center) { Text("💼 Reimbursable", color = if (isReimbursable) theme.mildGreen else theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold) }
                     }
 
                     val isValid = (rawAmount.toDoubleOrNull() ?: 0.0) > 0.0
@@ -1057,6 +1014,44 @@ private fun EditRecurringRuleModal(
                         }
                         OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)) {
                             Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CenteredSafePurgeGuardModal(
+    pocket: LedgerPocket,
+    balance: Double,
+    theme: ThemeColors,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit
+) {
+    val canDeactivate = balance == 0.0
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
+            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 380.dp).border(1.dp, theme.borderLight, RoundedCornerShape(14.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(if (pocket.name.startsWith("Recurring")) "TERMINATE MANDATE" else "DEACTIVATE ACCOUNT", color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("Are you sure you want to proceed with \"${pocket.name}\"?", color = theme.textMuted, fontSize = 12.sp)
+
+                    if (!canDeactivate) {
+                        Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(theme.mildRed.copy(alpha = 0.15f)).padding(10.dp)) {
+                            Text("Active balance is ₹${String.format("%,.0f", abs(balance))}. Settle balance to ₹0 first before deactivating.", color = theme.mildRed, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    } else {
+                        Text("Balance is zero. All historical entries will remain safely in the audit register.", color = theme.mildGreen, fontSize = 11.5.sp)
+                    }
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = onConfirm, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed), enabled = canDeactivate) {
+                            Text(if (pocket.name.startsWith("Recurring")) "Terminate" else "Deactivate", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+                        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)) {
+                            Text("Cancel", color = theme.textMuted)
                         }
                     }
                 }
