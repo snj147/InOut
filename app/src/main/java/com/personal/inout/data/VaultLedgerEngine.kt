@@ -67,9 +67,17 @@ class VaultLedgerEngine(
             }
         }
 
-        if (movementNature == MovementNature.TRANSFER) {
+        // Intercept Loan / EMI Logic to enforce double-entry repayment routing
+        val effectiveNature = if (movementNature == MovementNature.OPERATING_EXPENSE && targetPocketId != null) {
+            val target = dao.getPocketById(targetPocketId)
+            if (target?.type == PocketType.LIABILITY_LOAN) MovementNature.EMI_PRINCIPAL else movementNature
+        } else {
+            movementNature
+        }
+
+        if (effectiveNature == MovementNature.TRANSFER || effectiveNature == MovementNature.EMI_PRINCIPAL) {
             if (targetPocketId == null || targetPocketId == sourcePocketId) {
-                return@withContext VaultExecutionResult.OverdraftError("Transfer requires distinct source and destination accounts.")
+                return@withContext VaultExecutionResult.OverdraftError("Transfer or Repayment requires distinct source and destination accounts.")
             }
             dao.getPocketById(targetPocketId)
                 ?: return@withContext VaultExecutionResult.OverdraftError("Destination account not found.")
@@ -87,7 +95,7 @@ class VaultLedgerEngine(
 
         val currentSourceBalance = dao.computePocketBalance(sourcePocketId, System.currentTimeMillis())
 
-        if (movementNature in listOf(MovementNature.OPERATING_EXPENSE, MovementNature.TRANSFER)) {
+        if (effectiveNature in listOf(MovementNature.OPERATING_EXPENSE, MovementNature.TRANSFER, MovementNature.EMI_PRINCIPAL)) {
             if (sourcePocket.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET)) {
                 if (currentSourceBalance < amount) {
                     if (autoSplitEnabled) {
@@ -96,7 +104,7 @@ class VaultLedgerEngine(
                             primaryAvailable = currentSourceBalance.coerceAtLeast(0.0),
                             totalAmount = amount,
                             targetPocketId = targetPocketId,
-                            movementNature = movementNature,
+                            movementNature = effectiveNature,
                             category = category,
                             description = description,
                             timestamp = timestamp,
@@ -125,7 +133,7 @@ class VaultLedgerEngine(
             amount = amount,
             description = description.ifBlank { category },
             category = category,
-            movementNature = movementNature,
+            movementNature = effectiveNature,
             status = status,
             sourcePocketId = sourcePocketId,
             targetPocketId = targetPocketId,
@@ -146,12 +154,12 @@ class VaultLedgerEngine(
                 entityType = "TRANSACTION",
                 recordId = txId,
                 preStateJson = "{}",
-                postStateJson = "{\"amount\":$amount,\"nature\":\"$movementNature\",\"pocketId\":$sourcePocketId}",
+                postStateJson = "{\"amount\":$amount,\"nature\":\"$effectiveNature\",\"pocketId\":$sourcePocketId}",
                 reasonNote = "Executed movement"
             )
         )
 
-        val summary = when (movementNature) {
+        val summary = when (effectiveNature) {
             MovementNature.OPERATING_EXPENSE -> "Logged expense of ₹${String.format("%,.0f", amount)} ($category)"
             MovementNature.OPERATING_INCOME -> "Credited ₹${String.format("%,.0f", amount)} to ${sourcePocket.name}"
             MovementNature.TRANSFER -> "Transferred ₹${String.format("%,.0f", amount)} to destination"
