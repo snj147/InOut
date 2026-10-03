@@ -73,7 +73,6 @@ fun AccountPocketsView(
         }
     }
 
-    // 0: ALL, 1: LIQUID, 2: DEBT, 3: CAPITAL, 4: AUTO
     var activeModeIndex by remember { mutableIntStateOf(0) }
 
     var selectedContextPocket by remember { mutableStateOf<Pair<LedgerPocket, Double>?>(null) }
@@ -87,7 +86,6 @@ fun AccountPocketsView(
         verticalArrangement = Arrangement.spacedBy(14.dp),
         contentPadding = PaddingValues(top = 10.dp, bottom = 96.dp)
     ) {
-        // Universal 5-Pill Rail (Zero Horizontal Scroll)
         item {
             Row(
                 modifier = Modifier
@@ -128,7 +126,6 @@ fun AccountPocketsView(
             }
         }
 
-        // 1. LIQUID ACCOUNTS
         if (activeModeIndex == 0 || activeModeIndex == 1) {
             val totalLiquid = liquidPockets.sumOf { pocketBalances[it.id] ?: 0.0 }
             item {
@@ -159,7 +156,7 @@ fun AccountPocketsView(
                                 icon = icon,
                                 iconColor = theme.mildGreen,
                                 theme = theme,
-                                onTap = { onTransactPocket(pocket) },
+                                onTap = { selectedContextPocket = pocket to bal },
                                 onLongPress = { selectedContextPocket = pocket to bal }
                             )
 
@@ -172,11 +169,11 @@ fun AccountPocketsView(
             }
         }
 
-        // 2. LIABILITIES & DEBT
         if (activeModeIndex == 0 || activeModeIndex == 2) {
             val totalDebt = debtPockets.sumOf { abs(pocketBalances[it.id] ?: 0.0) }
             item {
-                SectionSummaryHeader("LIABILITIES & BORROWINGS", -totalDebt, isPrivacyMode, theme)
+                // Formatting Fix: Dropped the negative sign so the header reads clean
+                SectionSummaryHeader("LIABILITIES & BORROWINGS", totalDebt, isPrivacyMode, theme)
             }
 
             if (debtPockets.isEmpty()) {
@@ -192,7 +189,7 @@ fun AccountPocketsView(
                     UnifiedStatementGroup(theme = theme) {
                         debtPockets.forEachIndexed { index, pocket ->
                             val bal = pocketBalances[pocket.id] ?: 0.0
-                            val outstanding = if (bal < 0.0) abs(bal) else 0.0
+                            val outstanding = if (bal < 0.0) abs(bal) else if (pocket.type == PocketType.LIABILITY_LOAN) bal else 0.0
                             val dueStr = if (pocket.billDueDay > 0) "Due ${pocket.billDueDay}th" else "Statement Balance"
 
                             UnifiedAccountRow(
@@ -203,7 +200,7 @@ fun AccountPocketsView(
                                 icon = Icons.Default.CreditCard,
                                 iconColor = theme.mildRed,
                                 theme = theme,
-                                onTap = { onTransactPocket(pocket) },
+                                onTap = { selectedContextPocket = pocket to bal },
                                 onLongPress = { selectedContextPocket = pocket to bal }
                             )
 
@@ -216,7 +213,6 @@ fun AccountPocketsView(
             }
         }
 
-        // 3. CAPITAL & RESERVES
         if (activeModeIndex == 0 || activeModeIndex == 3) {
             val totalCapital = capitalPockets.sumOf { pocketBalances[it.id] ?: 0.0 }
             item {
@@ -256,7 +252,7 @@ fun AccountPocketsView(
                                 icon = icon,
                                 iconColor = theme.accent,
                                 theme = theme,
-                                onTap = { onTransactPocket(pocket) },
+                                onTap = { selectedContextPocket = pocket to bal },
                                 onLongPress = { selectedContextPocket = pocket to bal }
                             )
 
@@ -269,7 +265,6 @@ fun AccountPocketsView(
             }
         }
 
-        // 4. RECURRING MANDATES (AUTO)
         if (activeModeIndex == 0 || activeModeIndex == 4) {
             val totalRecurring = recurringTransactions.sumOf { it.amount }
             item {
@@ -322,7 +317,6 @@ fun AccountPocketsView(
         }
     }
 
-    // Centered Context Action Voucher Modal
     selectedContextPocket?.let { (pocket, bal) ->
         CenteredAccountVoucherModal(
             pocket = pocket,
@@ -344,7 +338,6 @@ fun AccountPocketsView(
         )
     }
 
-    // Centered Safe Deactivation Guard Modal
     pendingSafeDeactivatePocket?.let { (pocket, bal) ->
         CenteredSafePurgeGuardModal(
             pocket = pocket,
@@ -358,7 +351,6 @@ fun AccountPocketsView(
         )
     }
 
-    // Centered Recurring Mandate Context Modal
     selectedContextRecurring?.let { schedule ->
         CenteredRecurringVoucherModal(
             rule = schedule,
@@ -527,8 +519,9 @@ private fun CenteredAccountVoucherModal(
                         )
                     }
 
+                    val displayBal = if (pocket.type == PocketType.LIABILITY_LOAN || pocket.type == PocketType.CREDIT_CARD) abs(balance) else balance
                     Text(
-                        text = "Current Book Balance: ₹ ${String.format("%,.2f", balance)}",
+                        text = "Current Book Balance: ₹ ${String.format("%,.2f", displayBal)}",
                         color = theme.textMuted,
                         fontSize = 11.sp
                     )
@@ -626,7 +619,7 @@ private fun CenteredSafePurgeGuardModal(
                                 .padding(10.dp)
                         ) {
                             Text(
-                                text = "Active balance is ₹${String.format("%,.0f", balance)}. Settle balance to ₹0 first before deactivating.",
+                                text = "Active balance is ₹${String.format("%,.0f", abs(balance))}. Settle balance to ₹0 first before deactivating.",
                                 color = theme.mildRed,
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.SemiBold
