@@ -10,7 +10,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.*
@@ -21,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -38,6 +41,7 @@ import java.util.*
 @Composable
 fun CreateAccountDialog(
     initialType: PocketType = PocketType.LIQUID,
+    allLiquidPockets: List<LedgerPocket> = emptyList(),
     theme: ThemeColors,
     onDismiss: () -> Unit,
     onSave: (
@@ -50,6 +54,12 @@ fun CreateAccountDialog(
         initialValuation: Double,
         interestRate: Double
     ) -> Unit,
+    onSavePeerWithFunding: (
+        contactName: String,
+        isLend: Boolean,
+        amount: Double,
+        fundingPocketId: Long?
+    ) -> Unit = { _, _, _, _ -> },
     onBatchCommit: (List<StagedStatementLineItem>) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -58,12 +68,20 @@ fun CreateAccountDialog(
     var name by remember { mutableStateOf("") }
     var type by remember { mutableStateOf(initialType) }
     var limit by remember { mutableStateOf("") }
+    var statementCycleDay by remember { mutableStateOf("") }
     var dueDay by remember { mutableStateOf("") }
     var targetAmt by remember { mutableStateOf("") }
     var initialValuation by remember { mutableStateOf("") }
     var interestRate by remember { mutableStateOf("") }
     var targetDateEpoch by remember { mutableStateOf(System.currentTimeMillis() + (30L * 24 * 3600 * 1000L)) }
     var showDatePicker by remember { mutableStateOf(false) }
+
+    // Peer Specific State: Lend vs Borrow toggle & linked funding account
+    var peerIsLendMode by remember { mutableStateOf(true) }
+    var peerFundingPocketId by remember(allLiquidPockets) {
+        mutableStateOf(allLiquidPockets.firstOrNull()?.id)
+    }
+    var showFundingDropdown by remember { mutableStateOf(false) }
 
     var isProcessingDocument by remember { mutableStateOf(false) }
     var stagedBatchItems by remember { mutableStateOf<List<StagedStatementLineItem>?>(null) }
@@ -106,7 +124,8 @@ fun CreateAccountDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.65f)),
+                .background(Color.Black.copy(alpha = 0.65f))
+                .clickable { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -116,6 +135,7 @@ fun CreateAccountDialog(
                     .fillMaxWidth(0.92f)
                     .widthIn(max = 420.dp)
                     .border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+                    .clickable(enabled = false) {}
             ) {
                 if (stagedBatchItems != null) {
                     BatchBalanceSheetStagingView(
@@ -130,14 +150,20 @@ fun CreateAccountDialog(
                 } else {
                     Column(
                         modifier = Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(11.dp)
                     ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(text = "NEW ACCOUNT SETUP", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
+                            Text(
+                                text = "NEW ACCOUNT SETUP",
+                                color = theme.textBright,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 13.sp,
+                                letterSpacing = 1.sp
+                            )
 
                             OutlinedButton(
                                 onClick = { documentPickerLauncher.launch(arrayOf("application/pdf", "image/*")) },
@@ -148,11 +174,16 @@ fun CreateAccountDialog(
                             ) {
                                 Icon(Icons.Default.UploadFile, contentDescription = null, tint = theme.accent, modifier = Modifier.size(13.dp))
                                 Spacer(Modifier.width(4.dp))
-                                Text(if (isProcessingDocument) "Scanning..." else "Import PDF / Sheet", color = theme.accent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    if (isProcessingDocument) "Scanning..." else "Import PDF / Sheet",
+                                    color = theme.accent,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
 
-                        // Strict 2-Row Classification Grid
+                        // Symmetrical Classification Grid (Balanced 4 on Row 1, 3 on Row 2)
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 listOf(
@@ -169,7 +200,7 @@ fun CreateAccountDialog(
                                             .background(if (isSel) c.copy(alpha = 0.25f) else theme.surfaceAlt)
                                             .border(1.dp, if (isSel) c else theme.borderLight, RoundedCornerShape(6.dp))
                                             .clickable { type = t }
-                                            .padding(vertical = 8.dp),
+                                            .padding(vertical = 7.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(lbl, color = if (isSel) c else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -191,7 +222,7 @@ fun CreateAccountDialog(
                                             .background(if (isSel) c.copy(alpha = 0.25f) else theme.surfaceAlt)
                                             .border(1.dp, if (isSel) c else theme.borderLight, RoundedCornerShape(6.dp))
                                             .clickable { type = t }
-                                            .padding(vertical = 8.dp),
+                                            .padding(vertical = 7.dp),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(lbl, color = if (isSel) c else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -200,13 +231,23 @@ fun CreateAccountDialog(
                             }
                         }
 
+                        // Account Name Field (Slick 44dp height)
                         OutlinedTextField(
                             value = name,
                             onValueChange = { name = it },
-                            placeholder = { Text("Account Name (e.g. HDFC Salary, SBI Home Loan)", fontSize = 12.sp) },
+                            placeholder = {
+                                Text(
+                                    if (type == PocketType.PEER_RECEIVABLE || type == PocketType.PEER_PAYABLE) "Contact Name (e.g. Rahul Sharma)"
+                                    else "Account Name (e.g. HDFC Salary, SBI Home Loan)",
+                                    fontSize = 12.sp,
+                                    color = theme.textMuted
+                                )
+                            },
                             singleLine = true,
                             shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedContainerColor = theme.surfaceAlt,
                                 unfocusedContainerColor = theme.surfaceAlt,
@@ -221,11 +262,16 @@ fun CreateAccountDialog(
                             PocketType.LIQUID, PocketType.PREPAID_WALLET -> {
                                 OutlinedTextField(
                                     value = initialValuation,
-                                    onValueChange = { initialValuation = it },
-                                    placeholder = { Text("Current Opening Balance in ₹", fontSize = 12.sp) },
+                                    onValueChange = { input ->
+                                        if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input
+                                    },
+                                    placeholder = { Text("Opening Balance ₹ (Optional)", fontSize = 12.sp, color = theme.textMuted) },
                                     singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                     shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(46.dp),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedContainerColor = theme.surfaceAlt,
                                         unfocusedContainerColor = theme.surfaceAlt,
@@ -238,14 +284,19 @@ fun CreateAccountDialog(
                             }
 
                             PocketType.CREDIT_CARD -> {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedTextField(
                                         value = limit,
-                                        onValueChange = { limit = it },
-                                        placeholder = { Text("Limit ₹", fontSize = 12.sp) },
+                                        onValueChange = { input ->
+                                            if (input.all { c -> c.isDigit() || c == '.' }) limit = input
+                                        },
+                                        placeholder = { Text("Credit Limit ₹", fontSize = 12.sp, color = theme.textMuted) },
                                         singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                         shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier.weight(1f),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(46.dp),
                                         colors = OutlinedTextFieldDefaults.colors(
                                             focusedContainerColor = theme.surfaceAlt,
                                             unfocusedContainerColor = theme.surfaceAlt,
@@ -255,33 +306,67 @@ fun CreateAccountDialog(
                                             unfocusedTextColor = theme.textBright
                                         )
                                     )
-                                    OutlinedTextField(
-                                        value = dueDay,
-                                        onValueChange = { dueDay = it },
-                                        placeholder = { Text("Due Day (1-31)", fontSize = 12.sp) },
-                                        singleLine = true,
-                                        shape = RoundedCornerShape(8.dp),
-                                        modifier = Modifier.weight(1f),
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedContainerColor = theme.surfaceAlt,
-                                            unfocusedContainerColor = theme.surfaceAlt,
-                                            focusedBorderColor = theme.accent,
-                                            unfocusedBorderColor = theme.borderLight,
-                                            focusedTextColor = theme.textBright,
-                                            unfocusedTextColor = theme.textBright
+
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                        OutlinedTextField(
+                                            value = statementCycleDay,
+                                            onValueChange = { input ->
+                                                if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) statementCycleDay = input
+                                            },
+                                            placeholder = { Text("Bill Date (1-31)", fontSize = 12.sp, color = theme.textMuted) },
+                                            singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(46.dp),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedContainerColor = theme.surfaceAlt,
+                                                unfocusedContainerColor = theme.surfaceAlt,
+                                                focusedBorderColor = theme.accent,
+                                                unfocusedBorderColor = theme.borderLight,
+                                                focusedTextColor = theme.textBright,
+                                                unfocusedTextColor = theme.textBright
+                                            )
                                         )
-                                    )
+                                        OutlinedTextField(
+                                            value = dueDay,
+                                            onValueChange = { input ->
+                                                if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) dueDay = input
+                                            },
+                                            placeholder = { Text("Due Date (1-31)", fontSize = 12.sp, color = theme.textMuted) },
+                                            singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            shape = RoundedCornerShape(8.dp),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(46.dp),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedContainerColor = theme.surfaceAlt,
+                                                unfocusedContainerColor = theme.surfaceAlt,
+                                                focusedBorderColor = theme.accent,
+                                                unfocusedBorderColor = theme.borderLight,
+                                                focusedTextColor = theme.textBright,
+                                                unfocusedTextColor = theme.textBright
+                                            )
+                                        )
+                                    }
                                 }
                             }
 
                             PocketType.GOAL_POT -> {
                                 OutlinedTextField(
                                     value = targetAmt,
-                                    onValueChange = { targetAmt = it },
-                                    placeholder = { Text("Target Goal Amount in ₹", fontSize = 12.sp) },
+                                    onValueChange = { input ->
+                                        if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input
+                                    },
+                                    placeholder = { Text("Target Goal Amount ₹", fontSize = 12.sp, color = theme.textMuted) },
                                     singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                     shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(46.dp),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedContainerColor = theme.surfaceAlt,
                                         unfocusedContainerColor = theme.surfaceAlt,
@@ -291,29 +376,41 @@ fun CreateAccountDialog(
                                         unfocusedTextColor = theme.textBright
                                     )
                                 )
-                                Row(
+                                Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .height(46.dp)
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(theme.surfaceAlt)
+                                        .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
                                         .clickable { showDatePicker = true }
-                                        .padding(horizontal = 12.dp, vertical = 12.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                        .padding(horizontal = 12.dp),
+                                    contentAlignment = Alignment.CenterStart
                                 ) {
-                                    Text(text = "Target Date: $dateFormatted", color = theme.textBright, fontSize = 12.sp)
-                                    Icon(imageVector = Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(text = "Target Date: $dateFormatted", color = theme.textBright, fontSize = 12.sp)
+                                        Icon(imageVector = Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(14.dp))
+                                    }
                                 }
                             }
 
                             PocketType.INVESTMENT, PocketType.FIXED_ASSET -> {
                                 OutlinedTextField(
                                     value = initialValuation,
-                                    onValueChange = { initialValuation = it },
-                                    placeholder = { Text("Current Portfolio / Valuation in ₹", fontSize = 12.sp) },
+                                    onValueChange = { input ->
+                                        if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input
+                                    },
+                                    placeholder = { Text("Current Valuation ₹", fontSize = 12.sp, color = theme.textMuted) },
                                     singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                     shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(46.dp),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedContainerColor = theme.surfaceAlt,
                                         unfocusedContainerColor = theme.surfaceAlt,
@@ -325,35 +422,131 @@ fun CreateAccountDialog(
                                 )
                             }
 
+                            // Dynamic Peer Lending / Borrowing Workflow
                             PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE -> {
-                                OutlinedTextField(
-                                    value = initialValuation,
-                                    onValueChange = { initialValuation = it },
-                                    placeholder = { Text("Initial Amount Lent / Borrowed in ₹", fontSize = 12.sp) },
-                                    singleLine = true,
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.fillMaxWidth(),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedContainerColor = theme.surfaceAlt,
-                                        unfocusedContainerColor = theme.surfaceAlt,
-                                        focusedBorderColor = theme.accent,
-                                        unfocusedBorderColor = theme.borderLight,
-                                        focusedTextColor = theme.textBright,
-                                        unfocusedTextColor = theme.textBright
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(if (peerIsLendMode) theme.mildGreen.copy(alpha = 0.25f) else theme.surfaceAlt)
+                                            .border(1.dp, if (peerIsLendMode) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp))
+                                            .clickable { peerIsLendMode = true }
+                                            .padding(vertical = 8.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                "I Lent (They Owe)",
+                                                color = if (peerIsLendMode) theme.mildGreen else theme.textBright,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(if (!peerIsLendMode) theme.mildRed.copy(alpha = 0.25f) else theme.surfaceAlt)
+                                            .border(1.dp, if (!peerIsLendMode) theme.mildRed else theme.borderLight, RoundedCornerShape(6.dp))
+                                            .clickable { peerIsLendMode = false }
+                                            .padding(vertical = 8.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                "I Borrowed (I Owe)",
+                                                color = if (!peerIsLendMode) theme.mildRed else theme.textBright,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+
+                                    OutlinedTextField(
+                                        value = initialValuation,
+                                        onValueChange = { input ->
+                                            if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input
+                                        },
+                                        placeholder = { Text("Amount ₹", fontSize = 12.sp, color = theme.textMuted) },
+                                        singleLine = true,
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(46.dp),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedContainerColor = theme.surfaceAlt,
+                                            unfocusedContainerColor = theme.surfaceAlt,
+                                            focusedBorderColor = theme.accent,
+                                            unfocusedBorderColor = theme.borderLight,
+                                            focusedTextColor = theme.textBright,
+                                            unfocusedTextColor = theme.textBright
+                                        )
                                     )
-                                )
+
+                                    val activeFundingPocket = allLiquidPockets.firstOrNull { it.id == peerFundingPocketId }
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(46.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(theme.surfaceAlt)
+                                            .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
+                                            .clickable { showFundingDropdown = true }
+                                            .padding(horizontal = 12.dp),
+                                        contentAlignment = Alignment.CenterStart
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = if (peerIsLendMode) "Debited From: ${activeFundingPocket?.name ?: "No Bank Account"}"
+                                                else "Credited To: ${activeFundingPocket?.name ?: "No Bank Account"}",
+                                                color = theme.textBright,
+                                                fontSize = 11.5.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = theme.accent)
+                                        }
+
+                                        DropdownMenu(
+                                            expanded = showFundingDropdown,
+                                            onDismissRequest = { showFundingDropdown = false },
+                                            modifier = Modifier.background(theme.surface)
+                                        ) {
+                                            allLiquidPockets.forEach { pocket ->
+                                                DropdownMenuItem(
+                                                    text = { Text(pocket.name, color = theme.textBright) },
+                                                    onClick = {
+                                                        peerFundingPocketId = pocket.id
+                                                        showFundingDropdown = false
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
 
+                            // Strict Symmetrical 2x2 Numeric Grid for Loans
                             PocketType.LIABILITY_LOAN -> {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                         OutlinedTextField(
                                             value = initialValuation,
-                                            onValueChange = { initialValuation = it },
-                                            placeholder = { Text("Principal Debt ₹", fontSize = 12.sp) },
+                                            onValueChange = { input ->
+                                                if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input
+                                            },
+                                            placeholder = { Text("Principal Debt ₹", fontSize = 12.sp, color = theme.textMuted) },
                                             singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                             shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier.weight(1f),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(46.dp),
                                             colors = OutlinedTextFieldDefaults.colors(
                                                 focusedContainerColor = theme.surfaceAlt,
                                                 unfocusedContainerColor = theme.surfaceAlt,
@@ -365,11 +558,16 @@ fun CreateAccountDialog(
                                         )
                                         OutlinedTextField(
                                             value = targetAmt,
-                                            onValueChange = { targetAmt = it },
-                                            placeholder = { Text("Monthly EMI ₹", fontSize = 12.sp) },
+                                            onValueChange = { input ->
+                                                if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input
+                                            },
+                                            placeholder = { Text("Monthly EMI ₹", fontSize = 12.sp, color = theme.textMuted) },
                                             singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                             shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier.weight(1f),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(46.dp),
                                             colors = OutlinedTextFieldDefaults.colors(
                                                 focusedContainerColor = theme.surfaceAlt,
                                                 unfocusedContainerColor = theme.surfaceAlt,
@@ -384,11 +582,16 @@ fun CreateAccountDialog(
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                                         OutlinedTextField(
                                             value = dueDay,
-                                            onValueChange = { dueDay = it },
-                                            placeholder = { Text("Due Day (1-31)", fontSize = 12.sp) },
+                                            onValueChange = { input ->
+                                                if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) dueDay = input
+                                            },
+                                            placeholder = { Text("Due Day (1-31)", fontSize = 12.sp, color = theme.textMuted) },
                                             singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                             shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier.weight(1f),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(46.dp),
                                             colors = OutlinedTextFieldDefaults.colors(
                                                 focusedContainerColor = theme.surfaceAlt,
                                                 unfocusedContainerColor = theme.surfaceAlt,
@@ -400,11 +603,16 @@ fun CreateAccountDialog(
                                         )
                                         OutlinedTextField(
                                             value = interestRate,
-                                            onValueChange = { interestRate = it },
-                                            placeholder = { Text("Interest Rate %", fontSize = 12.sp) },
+                                            onValueChange = { input ->
+                                                if (input.all { c -> c.isDigit() || c == '.' }) interestRate = input
+                                            },
+                                            placeholder = { Text("Interest Rate %", fontSize = 12.sp, color = theme.textMuted) },
                                             singleLine = true,
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                             shape = RoundedCornerShape(8.dp),
-                                            modifier = Modifier.weight(1f),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(46.dp),
                                             colors = OutlinedTextFieldDefaults.colors(
                                                 focusedContainerColor = theme.surfaceAlt,
                                                 unfocusedContainerColor = theme.surfaceAlt,
@@ -419,39 +627,83 @@ fun CreateAccountDialog(
                             }
                         }
 
+                        // Validation Check for Form Submission
+                        val isFormValid = when (type) {
+                            PocketType.LIABILITY_LOAN -> {
+                                name.isNotBlank() &&
+                                        (initialValuation.toDoubleOrNull() ?: 0.0) > 0.0 &&
+                                        (targetAmt.toDoubleOrNull() ?: 0.0) > 0.0 &&
+                                        (dueDay.toIntOrNull() ?: 0) in 1..31
+                            }
+                            PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE -> {
+                                name.isNotBlank() && (initialValuation.toDoubleOrNull() ?: 0.0) > 0.0
+                            }
+                            PocketType.CREDIT_CARD -> {
+                                name.isNotBlank() && (limit.toDoubleOrNull() ?: 0.0) > 0.0
+                            }
+                            else -> name.isNotBlank()
+                        }
+
+                        // Action Controls: Indian Layout Standard (Action on Left, Cancel on Right)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(top = 4.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            OutlinedButton(
-                                onClick = onDismiss,
-                                modifier = Modifier.weight(1f),
-                                shape = RoundedCornerShape(8.dp)
-                            ) {
-                                Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
-                            }
-
+                            // Left Button: Confirm / Save
                             Button(
                                 onClick = {
-                                    if (name.isNotBlank()) onSave(
-                                        name,
-                                        type,
-                                        limit.toDoubleOrNull() ?: 0.0,
-                                        dueDay.toIntOrNull() ?: 0,
-                                        targetAmt.toDoubleOrNull() ?: 0.0,
-                                        targetDateEpoch,
-                                        initialValuation.toDoubleOrNull() ?: 0.0,
-                                        interestRate.toDoubleOrNull() ?: 0.0
-                                    )
+                                    if (type == PocketType.PEER_RECEIVABLE || type == PocketType.PEER_PAYABLE) {
+                                        val amt = initialValuation.toDoubleOrNull() ?: 0.0
+                                        onSavePeerWithFunding(name, peerIsLendMode, amt, peerFundingPocketId)
+                                        onDismiss()
+                                    } else {
+                                        onSave(
+                                            name,
+                                            type,
+                                            limit.toDoubleOrNull() ?: 0.0,
+                                            dueDay.toIntOrNull() ?: 0,
+                                            targetAmt.toDoubleOrNull() ?: 0.0,
+                                            targetDateEpoch,
+                                            initialValuation.toDoubleOrNull() ?: 0.0,
+                                            interestRate.toDoubleOrNull() ?: 0.0
+                                        )
+                                    }
                                 },
-                                modifier = Modifier.weight(1.2f),
+                                modifier = Modifier
+                                    .weight(1.3f)
+                                    .height(42.dp),
                                 shape = RoundedCornerShape(8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
-                                enabled = name.isNotBlank()
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (isFormValid) theme.accent else theme.borderLight
+                                ),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isFormValid) theme.accent else theme.surfaceAlt.copy(alpha = 0.5f),
+                                    disabledContainerColor = theme.surfaceAlt.copy(alpha = 0.5f)
+                                ),
+                                enabled = isFormValid
                             ) {
-                                Text("Save Account", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text(
+                                    "Save Account",
+                                    color = if (isFormValid) theme.bg else theme.textMuted.copy(alpha = 0.38f),
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.sp
+                                )
+                            }
+
+                            // Right Button: Cancel
+                            OutlinedButton(
+                                onClick = onDismiss,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(42.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)
+                            ) {
+                                Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
                             }
                         }
                     }
@@ -525,22 +777,27 @@ private fun BatchBalanceSheetStagingView(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            OutlinedButton(
-                onClick = onDismissStaging,
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(8.dp)
-            ) {
-                Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
-            }
-
             Button(
                 onClick = { onConfirmBatch(itemsList.filter { it.isSelectedForCommit }) },
-                modifier = Modifier.weight(1.3f),
+                modifier = Modifier
+                    .weight(1.3f)
+                    .height(42.dp),
                 shape = RoundedCornerShape(8.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
                 enabled = itemsList.any { it.isSelectedForCommit }
             ) {
                 Text("Import Selected", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
+
+            OutlinedButton(
+                onClick = onDismissStaging,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(42.dp),
+                shape = RoundedCornerShape(8.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
+            ) {
+                Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
             }
         }
     }
@@ -580,30 +837,39 @@ fun EditAccountDialog(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.6f)),
+                .background(Color.Black.copy(alpha = 0.65f))
+                .clickable { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(containerColor = theme.surface),
                 modifier = Modifier
                     .fillMaxWidth(0.9f)
                     .widthIn(max = 400.dp)
-                    .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
+                    .border(1.dp, theme.borderLight, RoundedCornerShape(16.dp))
+                    .clickable(enabled = false) {}
             ) {
                 Column(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.padding(18.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(text = "EDIT ${pocket.name.uppercase(Locale.getDefault())}", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(
+                        text = "EDIT ${pocket.name.uppercase(Locale.getDefault())}",
+                        color = theme.textBright,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.5.sp
+                    )
 
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
-                        placeholder = { Text("Account Name") },
+                        placeholder = { Text("Account Name", color = theme.textMuted, fontSize = 12.sp) },
                         singleLine = true,
                         shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(46.dp),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = theme.surfaceAlt,
                             unfocusedContainerColor = theme.surfaceAlt,
@@ -618,11 +884,16 @@ fun EditAccountDialog(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             OutlinedTextField(
                                 value = limit,
-                                onValueChange = { limit = it },
-                                placeholder = { Text("Credit Limit") },
+                                onValueChange = { input ->
+                                    if (input.all { c -> c.isDigit() || c == '.' }) limit = input
+                                },
+                                placeholder = { Text("Limit ₹", color = theme.textMuted, fontSize = 12.sp) },
                                 singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(46.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = theme.surfaceAlt,
                                     unfocusedContainerColor = theme.surfaceAlt,
@@ -634,11 +905,16 @@ fun EditAccountDialog(
                             )
                             OutlinedTextField(
                                 value = dueDay,
-                                onValueChange = { dueDay = it },
-                                placeholder = { Text("Due Day (1-31)") },
+                                onValueChange = { input ->
+                                    if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) dueDay = input
+                                },
+                                placeholder = { Text("Due Day (1-31)", color = theme.textMuted, fontSize = 12.sp) },
                                 singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.weight(1f),
+                                modifier = Modifier
+                                    .weight(0.9f)
+                                    .height(46.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = theme.surfaceAlt,
                                     unfocusedContainerColor = theme.surfaceAlt,
@@ -654,11 +930,16 @@ fun EditAccountDialog(
                     if (pocket.type == PocketType.GOAL_POT) {
                         OutlinedTextField(
                             value = targetAmt,
-                            onValueChange = { targetAmt = it },
-                            placeholder = { Text("Target Goal Amount") },
+                            onValueChange = { input ->
+                                if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input
+                            },
+                            placeholder = { Text("Target Goal Amount ₹", color = theme.textMuted, fontSize = 12.sp) },
                             singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedContainerColor = theme.surfaceAlt,
                                 unfocusedContainerColor = theme.surfaceAlt,
@@ -671,17 +952,11 @@ fun EditAccountDialog(
                     }
 
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text("Cancel", color = theme.textMuted)
-                        }
-
                         Button(
                             onClick = {
                                 if (name.isNotBlank()) onSave(
@@ -692,11 +967,25 @@ fun EditAccountDialog(
                                     targetDateEpoch
                                 )
                             },
-                            modifier = Modifier.weight(1.2f),
+                            modifier = Modifier
+                                .weight(1.3f)
+                                .height(42.dp),
                             shape = RoundedCornerShape(8.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
+                            colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
+                            enabled = name.isNotBlank()
                         ) {
-                            Text("Save Changes", color = theme.bg, fontWeight = FontWeight.Bold)
+                            Text("Save Changes", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(42.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
+                        ) {
+                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
                         }
                     }
                 }
