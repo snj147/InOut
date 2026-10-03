@@ -27,7 +27,6 @@ jobs:
         with:
           gradle-version: '8.8'
 
-      # Match the exact password expected by Gradle's signing block
       - name: Setup Stable Debug Keystore
         run: |
           mkdir -p app
@@ -36,10 +35,12 @@ jobs:
       - name: Build Debug APK
         run: gradle assembleDebug -PGIT_SHA=${{ github.sha }} -PVERSION_CODE=${{ github.run_number }}
 
-      - name: Rename APK with Commit SHA
+      - name: Clear Old APKs and Rename New APK
         run: |
           SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
           APK_PATH=$(find app/build/outputs/apk/debug -name "*.apk" | head -n 1)
+          # Erase any old rolling apks from output before renaming
+          find app/build/outputs/apk/debug -name "InOut-alpha-*.apk" -type f -delete
           if [ -n "$APK_PATH" ]; then
             mv "$APK_PATH" "app/build/outputs/apk/debug/InOut-alpha-${SHORT_SHA}.apk"
           fi
