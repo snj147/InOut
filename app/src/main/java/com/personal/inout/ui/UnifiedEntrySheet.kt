@@ -43,6 +43,8 @@ enum class ActiveEntryRail(val label: String, val nature: MovementNature) {
 fun UnifiedEntrySheet(
     allPockets: List<LedgerPocket>,
     prefilledPocketId: Long? = null,
+    prefilledTargetPocketId: Long? = null,
+    forcedRail: ActiveEntryRail? = null,
     prefilledNote: String = "",
     prefilledAmount: Double? = null,
     onDismiss: () -> Unit,
@@ -63,7 +65,7 @@ fun UnifiedEntrySheet(
 ) {
     val theme = LocalThemeColors.current
 
-    var selectedRail by remember { mutableStateOf(ActiveEntryRail.EXPENSE) }
+    var selectedRail by remember { mutableStateOf(forcedRail ?: ActiveEntryRail.EXPENSE) }
     var amountExpression by remember { mutableStateOf(prefilledAmount?.let { String.format("%.0f", it) } ?: "") }
     var note by remember { mutableStateOf(prefilledNote) }
     var selectedDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -76,7 +78,7 @@ fun UnifiedEntrySheet(
     val categories = when (selectedRail) {
         ActiveEntryRail.EXPENSE -> listOf("Food & Dining", "Groceries", "Transport", "Bills", "Shopping", "Health", "General")
         ActiveEntryRail.INFLOW -> listOf("Salary", "Freelance", "Investment", "Cashback", "Reward Credit", "Merchant Refund", "Income")
-        ActiveEntryRail.TRANSFER -> listOf("Internal Transfer", "Goal Pot", "ATM Withdrawal")
+        ActiveEntryRail.TRANSFER -> listOf("Internal Transfer", "Loan Repayment", "Goal Pot", "ATM Withdrawal")
         ActiveEntryRail.CARD_BILL -> listOf("Card Payment", "Bill Settlement")
         ActiveEntryRail.PEER -> listOf("Peer Advance", "Debt Settlement")
     }
@@ -116,13 +118,16 @@ fun UnifiedEntrySheet(
         when (selectedRail) {
             ActiveEntryRail.CARD_BILL -> allPockets.filter { it.type == PocketType.CREDIT_CARD }
             ActiveEntryRail.PEER -> allPockets.filter { it.type in listOf(PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE) }
-            ActiveEntryRail.TRANSFER -> allPockets.filter { it.id != selectedSourcePocket?.id }
+            ActiveEntryRail.TRANSFER -> allPockets.filter { it.id != selectedSourcePocket?.id && it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET, PocketType.LIABILITY_LOAN, PocketType.GOAL_POT) }
             else -> emptyList()
         }
     }
 
-    var selectedTargetPocket by remember(selectableTargetPockets) {
-        mutableStateOf(selectableTargetPockets.firstOrNull())
+    var selectedTargetPocket by remember(selectableTargetPockets, prefilledTargetPocketId) {
+        mutableStateOf(
+            selectableTargetPockets.firstOrNull { it.id == prefilledTargetPocketId }
+                ?: selectableTargetPockets.firstOrNull()
+        )
     }
 
     LaunchedEffect(selectableTargetPockets) {
@@ -372,7 +377,7 @@ fun UnifiedEntrySheet(
                     }
 
                     val hasAccounts = selectableSourcePockets.isNotEmpty()
-                    val isValid = evaluatedAmount != null && evaluatedAmount > 0.0 && selectedSourcePocket != null
+                    val isValid = evaluatedAmount != null && evaluatedAmount > 0.0 && selectedSourcePocket != null && (!listOf(ActiveEntryRail.TRANSFER, ActiveEntryRail.CARD_BILL, ActiveEntryRail.PEER).contains(selectedRail) || selectedTargetPocket != null)
 
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -447,7 +452,7 @@ private fun CenteredPocketPickerDialog(title: String, pockets: List<LedgerPocket
                         pockets.forEach { pocket ->
                             Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { onSelect(pocket) }.padding(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Text(pocket.name, color = theme.textBright, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp)
-                                Text(pocket.type.name, color = theme.textMuted, fontSize = 10.sp)
+                                Text(pocket.type.name.replace("_", " "), color = theme.textMuted, fontSize = 10.sp)
                             }
                         }
                     }
