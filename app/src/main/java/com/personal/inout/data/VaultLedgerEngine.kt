@@ -44,6 +44,29 @@ class VaultLedgerEngine(
         val sourcePocket = dao.getPocketById(sourcePocketId)
             ?: return@withContext VaultExecutionResult.OverdraftError("Source account not found. Please select an active account.")
 
+        // Enforce credit card inflow rules: only allow specific categories and disallow overcrediting
+        if (movementNature == MovementNature.OPERATING_INCOME && sourcePocket.type == PocketType.CREDIT_CARD) {
+            val validCardInflowCategories = listOf("Cashback", "Reward Credit", "Merchant Refund")
+            if (!validCardInflowCategories.any { it.equals(category, ignoreCase = true) }) {
+                return@withContext VaultExecutionResult.OverdraftError(
+                    "Credit Card inflows are restricted to Cashback, Reward Credit, or Merchant Refund only."
+                )
+            }
+            if (isRecurring && recurringFrequency != "NONE") {
+                return@withContext VaultExecutionResult.OverdraftError("Credit card refunds and rewards cannot be scheduled as recurring.")
+            }
+            val currentBalance = dao.computePocketBalance(sourcePocket.id, System.currentTimeMillis())
+            val currentOutstandingDue = if (currentBalance < 0.0) abs(currentBalance) else 0.0
+            if (currentOutstandingDue <= 0.0) {
+                return@withContext VaultExecutionResult.OverdraftError("Card has no outstanding debt. Inflow rejected.")
+            }
+            if (amount > currentOutstandingDue) {
+                return@withContext VaultExecutionResult.OverdraftError(
+                    "Inflow of ₹${String.format("%,.0f", amount)} exceeds current outstanding debt of ₹${String.format("%,.0f", currentOutstandingDue)}."
+                )
+            }
+        }
+
         if (movementNature == MovementNature.TRANSFER) {
             if (targetPocketId == null || targetPocketId == sourcePocketId) {
                 return@withContext VaultExecutionResult.OverdraftError("Transfer requires distinct source and destination accounts.")
@@ -276,15 +299,12 @@ class VaultLedgerEngine(
             .filter { it.movementNature in listOf(MovementNature.OPERATING_EXPENSE, MovementNature.EMI_PRINCIPAL) }
             .sumOf { it.amount }
 
-        // Clean-Slate Safety Guard:
-        // Do not project a negative phantom burn deficit if the ledger is freshly installed with 0 transactions
         val projectedClosingLiquid = if (totalTxCount == 0 && finalSafeLiquid == 0.0) {
             0.0
         } else {
             finalSafeLiquid + expectedInflows - knownFixedDues - (daysRemainingInMonth * dailyBurnCeiling)
         }
 
-        // Deficit alert only fires when there is an active liability/shortfall, never on an empty fresh setup
         val hasDeficit = if (totalTxCount == 0 && sumCardDues == 0.0) {
             false
         } else {
