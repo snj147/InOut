@@ -97,7 +97,6 @@ object AppUpdateEngine {
     suspend fun startStreamDownload(context: Context, downloadUrl: String, versionTag: String) = withContext(Dispatchers.IO) {
         val currentState = _downloadState.value
         
-        // Guard against duplicate network calls if the exact file is already downloading or ready
         if (currentState is UpdateDownloadState.Downloading) {
             return@withContext
         }
@@ -107,7 +106,6 @@ object AppUpdateEngine {
         }
 
         try {
-            // Write directly to app-specific external Downloads directory to ensure the Package Installer daemon has access
             val downloadDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS) ?: context.filesDir
             val targetFile = File(downloadDir, "InOut-alpha-$versionTag.apk")
             if (targetFile.exists()) targetFile.delete()
@@ -139,12 +137,10 @@ object AppUpdateEngine {
                             val progressFloat = if (totalBytes > 0) bytesCopied.toFloat() / totalBytes.toFloat() else 0f
                             val currentPercent = (progressFloat * 100).roundToInt()
                             
-                            // Throttle UI emissions to 1% intervals to eliminate Compose jittering
                             if (currentPercent > lastEmittedProgress) {
                                 _downloadState.value = UpdateDownloadState.Downloading(progressFloat, bytesCopied, totalBytes)
                                 lastEmittedProgress = currentPercent
                             }
-                            
                             read = input.read(buffer)
                         }
                     }
@@ -152,7 +148,6 @@ object AppUpdateEngine {
 
                 _downloadState.value = UpdateDownloadState.ReadyToInstall(targetFile, versionTag)
                 
-                // Auto-trigger the installation intent immediately after download completes
                 withContext(Dispatchers.Main) {
                     triggerPackageInstaller(context, targetFile)
                 }
