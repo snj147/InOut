@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -38,6 +39,7 @@ fun AccountPocketsView(
     recurringTransactions: List<LedgerTransaction>,
     isPrivacyMode: Boolean,
     onTransactPocket: (LedgerPocket) -> Unit,
+    onViewTransactions: (Long) -> Unit,
     onEditPocket: (LedgerPocket) -> Unit,
     onDeletePocketSafe: (LedgerPocket, Double) -> Unit,
     onTogglePauseRecurring: (LedgerTransaction) -> Unit,
@@ -156,7 +158,6 @@ fun AccountPocketsView(
                                 icon = icon,
                                 iconColor = theme.mildGreen,
                                 theme = theme,
-                                onTap = { selectedContextPocket = pocket to bal },
                                 onLongPress = { selectedContextPocket = pocket to bal }
                             )
 
@@ -172,7 +173,6 @@ fun AccountPocketsView(
         if (activeModeIndex == 0 || activeModeIndex == 2) {
             val totalDebt = debtPockets.sumOf { abs(pocketBalances[it.id] ?: 0.0) }
             item {
-                // Formatting Fix: Dropped the negative sign so the header reads clean
                 SectionSummaryHeader("LIABILITIES & BORROWINGS", totalDebt, isPrivacyMode, theme)
             }
 
@@ -195,12 +195,11 @@ fun AccountPocketsView(
                             UnifiedAccountRow(
                                 title = pocket.name,
                                 sub = if (pocket.type == PocketType.CREDIT_CARD) "Limit: ₹${String.format("%,.0f", pocket.creditLimit)} • $dueStr" else "Liability Loan",
-                                balanceDisplay = if (isPrivacyMode) "₹ •••" else "- ₹ ${String.format("%,.0f", outstanding)}",
+                                balanceDisplay = if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", outstanding)}",
                                 balanceColor = theme.mildRed,
                                 icon = Icons.Default.CreditCard,
                                 iconColor = theme.mildRed,
                                 theme = theme,
-                                onTap = { selectedContextPocket = pocket to bal },
                                 onLongPress = { selectedContextPocket = pocket to bal }
                             )
 
@@ -252,7 +251,6 @@ fun AccountPocketsView(
                                 icon = icon,
                                 iconColor = theme.accent,
                                 theme = theme,
-                                onTap = { selectedContextPocket = pocket to bal },
                                 onLongPress = { selectedContextPocket = pocket to bal }
                             )
 
@@ -303,7 +301,6 @@ fun AccountPocketsView(
                                 icon = Icons.Default.Schedule,
                                 iconColor = theme.accent,
                                 theme = theme,
-                                onTap = { onEditRecurring(schedule) },
                                 onLongPress = { selectedContextRecurring = schedule }
                             )
 
@@ -326,6 +323,10 @@ fun AccountPocketsView(
             onQuickAction = {
                 selectedContextPocket = null
                 onTransactPocket(pocket)
+            },
+            onViewHistory = {
+                selectedContextPocket = null
+                onViewTransactions(pocket.id)
             },
             onEdit = {
                 selectedContextPocket = null
@@ -410,14 +411,13 @@ private fun UnifiedAccountRow(
     icon: ImageVector,
     iconColor: Color,
     theme: ThemeColors,
-    onTap: () -> Unit,
     onLongPress: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(
-                onClick = onTap,
+                onClick = { /* Disabled normal tap */ },
                 onLongClick = onLongPress
             )
             .padding(horizontal = 14.dp, vertical = 12.dp),
@@ -478,6 +478,7 @@ private fun CenteredAccountVoucherModal(
     theme: ThemeColors,
     onDismiss: () -> Unit,
     onQuickAction: () -> Unit,
+    onViewHistory: () -> Unit,
     onEdit: () -> Unit,
     onArchiveDelete: () -> Unit
 ) {
@@ -489,7 +490,7 @@ private fun CenteredAccountVoucherModal(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.6f))
-                .clickable { onDismiss() },
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -499,7 +500,7 @@ private fun CenteredAccountVoucherModal(
                     .fillMaxWidth(0.88f)
                     .widthIn(max = 380.dp)
                     .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
-                    .clickable(enabled = false) {}
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -540,6 +541,13 @@ private fun CenteredAccountVoucherModal(
                         isPrimary = true,
                         theme = theme,
                         onClick = onQuickAction
+                    )
+
+                    TactileActionButton(
+                        label = "🧾 View Transactions",
+                        isPrimary = false,
+                        theme = theme,
+                        onClick = onViewHistory
                     )
 
                     TactileActionButton(
@@ -587,7 +595,7 @@ private fun CenteredSafePurgeGuardModal(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.6f))
-                .clickable { onDismiss() },
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -597,7 +605,7 @@ private fun CenteredSafePurgeGuardModal(
                     .fillMaxWidth(0.88f)
                     .widthIn(max = 380.dp)
                     .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
-                    .clickable(enabled = false) {}
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -637,22 +645,23 @@ private fun CenteredSafePurgeGuardModal(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text("Cancel", color = theme.textMuted)
-                        }
-
                         Button(
                             onClick = onConfirm,
-                            modifier = Modifier.weight(1.2f),
+                            modifier = Modifier.weight(1.3f).height(44.dp),
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed),
                             enabled = canDeactivate
                         ) {
                             Text("Deactivate", color = Color.White, fontWeight = FontWeight.Bold)
+                        }
+
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f).height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
+                        ) {
+                            Text("Cancel", color = theme.textMuted)
                         }
                     }
                 }
@@ -677,7 +686,7 @@ private fun CenteredRecurringVoucherModal(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.6f))
-                .clickable { onDismiss() },
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -687,7 +696,7 @@ private fun CenteredRecurringVoucherModal(
                     .fillMaxWidth(0.88f)
                     .widthIn(max = 380.dp)
                     .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
-                    .clickable(enabled = false) {}
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -706,7 +715,7 @@ private fun CenteredRecurringVoucherModal(
                     )
 
                     TactileActionButton(
-                        label = "✕ Terminate & Remove Mandate",
+                        label = "✕ Terminate Mandate",
                         isPrimary = false,
                         isDanger = true,
                         theme = theme,
