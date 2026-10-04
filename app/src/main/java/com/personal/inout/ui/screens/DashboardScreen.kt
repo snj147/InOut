@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,6 +29,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -39,8 +41,11 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -238,7 +243,6 @@ fun DashboardScreen(db: AppDatabase) {
                             .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                             .border(1.dp, theme.borderLight, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                     ) {
-                        // Localized Navigation Labels
                         listOf(
                             Triple(0, "Ledger", Icons.Filled.AccountBalanceWallet),
                             Triple(1, "Passbook", Icons.Filled.AccountBalance),
@@ -435,8 +439,6 @@ fun DashboardScreen(db: AppDatabase) {
 
                 if (isFabExpanded) { Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { isFabExpanded = false }) }
 
-                // --- MODALS RENDERED HERE ---
-                
                 activeLoanRepaymentPocket?.let { loanPocket ->
                     val debtBal = abs(uiState.pocketBalances[loanPocket.id] ?: 0.0)
                     LogLoanRepaymentModal(
@@ -540,7 +542,10 @@ fun DashboardScreen(db: AppDatabase) {
                                     val tgtId = if (isLend) peerPocketId else fundingPocketId
                                     val res = viewModel.ledgerEngine.recordMovement(MovementNature.TRANSFER, srcId, tgtId, amount, if (isLend) "Peer Debt" else "Peer Advance", if (isLend) "Lent to $contactName" else "Borrowed from $contactName")
                                     if (res is VaultExecutionResult.OverdraftError) {
-                                        db.ledgerDao().deletePocket(db.ledgerDao().getPocketById(peerPocketId)!!)
+                                        val pocketToDelete = db.ledgerDao().getPocketById(peerPocketId)
+                                        if (pocketToDelete != null) {
+                                            db.ledgerDao().deletePocket(pocketToDelete)
+                                        }
                                         alertManager.showAlert(res.message, AlertType.ERROR)
                                         return@launch
                                     }
