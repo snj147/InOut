@@ -21,6 +21,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.personal.inout.data.LedgerPocket
 import com.personal.inout.data.PocketType
 import com.personal.inout.ui.ThemeColors
+import com.personal.inout.util.toIndianRupee
 import kotlin.math.abs
 
 @Composable
@@ -72,20 +73,23 @@ fun CenteredAccountVoucherModal(
                         )
                     }
 
-                    val displayBal = if (pocket.type == PocketType.LIABILITY_LOAN || pocket.type == PocketType.CREDIT_CARD) abs(balance) else balance
+                    val displayBal = abs(balance)
+                    val balStr = if (displayBal == 0.0) "₹ 0" else displayBal.toIndianRupee()
                     Text(
-                        text = "Current Book Balance: ₹ ${String.format("%,.2f", displayBal)}",
+                        text = "Current Book Balance: $balStr",
                         color = theme.textMuted,
                         fontSize = 11.sp
                     )
 
                     HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
 
+                    // Adaptive Dynamic Peer Buttons
                     val actionLabel = when (pocket.type) {
                         PocketType.CREDIT_CARD -> "💳 Card Payment"
                         PocketType.GOAL_POT -> "🎯 Sweep Savings (In / Out)"
                         PocketType.INVESTMENT, PocketType.FIXED_ASSET -> "📈 Revalue / Liquidate Holding"
-                        PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE -> "🤝 Lend / Borrow or Transact"
+                        PocketType.PEER_RECEIVABLE -> if (balance >= 0) "🤝 Lend More / Collect Funds" else "🤝 Borrow More / Repay Funds"
+                        PocketType.PEER_PAYABLE -> if (balance <= 0) "🤝 Borrow More / Repay Funds" else "🤝 Lend More / Collect Funds"
                         PocketType.LIABILITY_LOAN -> "🏛 Log Monthly EMI Principal"
                         else -> "⚡ Quick Transact"
                     }
