@@ -96,7 +96,7 @@ object AppUpdateEngine {
             input.close()
 
             if (isZip) {
-                val extractedApk = extractLargestApkFromZip(context, targetFile)
+                val extractedApk = extractLatestApkFromZip(context, targetFile)
                 if (extractedApk != null) {
                     targetFile.delete()
                     _downloadState.value = UpdateDownloadState.ReadyToInstall(extractedApk)
@@ -111,25 +111,28 @@ object AppUpdateEngine {
         }
     }
 
-    private fun extractLargestApkFromZip(context: Context, zipFile: File): File? {
-        var bestApk: File? = null
-        var bestApkSize = 0L
+    private fun extractLatestApkFromZip(context: Context, zipFile: File): File? {
+        var latestApk: File? = null
+        var latestTime = 0L
 
         try {
             val zis = ZipInputStream(zipFile.inputStream())
             var entry = zis.nextEntry
             while (entry != null) {
                 if (!entry.isDirectory && entry.name.endsWith(".apk")) {
+                    val entryTime = entry.time
                     val tempOutFile = File(context.cacheDir, "extracted_${System.currentTimeMillis()}.apk")
                     FileOutputStream(tempOutFile).use { fos ->
                         zis.copyTo(fos)
                     }
-                    if (tempOutFile.length() > bestApkSize) {
-                        bestApk?.delete() // Delete the previous smaller apk
-                        bestApk = tempOutFile
-                        bestApkSize = tempOutFile.length()
+                    
+                    // We check the internal timestamp of the zip entry to ensure we grab the most recent compile
+                    if (entryTime > latestTime) {
+                        latestApk?.delete() // Delete the older apk
+                        latestApk = tempOutFile
+                        latestTime = entryTime
                     } else {
-                        tempOutFile.delete() // Discard this one
+                        tempOutFile.delete() // Discard this older one
                     }
                 }
                 entry = zis.nextEntry
@@ -138,7 +141,7 @@ object AppUpdateEngine {
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        return bestApk
+        return latestApk
     }
 
     fun promptInstall(context: Context, apkFile: File) {
