@@ -22,9 +22,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.personal.inout.data.LedgerTransaction
-import com.personal.inout.ui.CompactInputField
-import com.personal.inout.ui.CustomCalendarDialog
 import com.personal.inout.ui.ThemeColors
+import com.personal.inout.ui.components.CompactInputField
+import com.personal.inout.ui.components.CustomCalendarDialog
 import java.text.SimpleDateFormat
 import java.util.*
 
