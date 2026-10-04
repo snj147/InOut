@@ -34,18 +34,18 @@ class DashboardViewModel(
     var dailyBurnCeiling = MutableStateFlow(prefs.getFloat("daily_burn_ceiling", 500f).toDouble())
 
     init {
-        // This is the magic block that fixes the "Restart to Refresh" bug.
-        // It listens to the database constantly. If anything changes, it recalculates
-        // everything and pushes the new state to the UI instantly.
         viewModelScope.launch(Dispatchers.IO) {
             combine(
                 dao.getAllActivePockets(),
-                dao.observeHistoricalTransactions()
-            ) { pockets, txs ->
+                dao.observeAllTransactions() // <-- FIX: Observes all to bypass static time evaluation
+            ) { pockets, allTxs ->
+                val now = System.currentTimeMillis() // Dynamically calculates time on every DB insert
+                val txs = allTxs.filter { it.timestamp <= now }
+                
                 val balances = pockets.associate { it.id to dao.computePocketBalance(it.id) }
                 val deck = ledgerEngine.computeSolvencyDeck()
                 val liquid = pockets.filter { it.type == PocketType.LIQUID || it.type == PocketType.PREPAID_WALLET }
-                val recurring = txs.filter { it.isRecurring && it.recurringFrequency != "NONE" }
+                val recurring = allTxs.filter { it.isRecurring && it.recurringFrequency != "NONE" }
                 val inflow = txs.filter { it.movementNature == MovementNature.OPERATING_INCOME }.sumOf { it.amount }
                 val outflow = txs.filter { it.movementNature == MovementNature.OPERATING_EXPENSE }.sumOf { it.amount }
 
@@ -64,14 +64,12 @@ class DashboardViewModel(
             }
         }
 
-        // Notices flow
         viewModelScope.launch(Dispatchers.IO) {
             dao.observeUnreadNotices().collect { notices ->
                 _uiState.value = _uiState.value.copy(unreadNotices = notices)
             }
         }
 
-        // Catch up recurrings on boot
         viewModelScope.launch(Dispatchers.IO) {
             ledgerEngine.catchUpRecurringRules()
         }
@@ -84,7 +82,10 @@ class DashboardViewModel(
     ) {
         viewModelScope.launch {
             when (val res = ledgerEngine.recordMovement(nature, srcId, tgtId, amt, cat, note, date, SettlementStatus.CLEARED, autoSplitEnabled.value, tax, reimb, false, isRec, freq)) {
-                is VaultExecutionResult.Success -> onSuccess(res.summary)
+                is VaultExecutionResult.Success -> {
+                    if (isRec) ledgerEngine.catchUpRecurringRules() // Forces immediate execution if applicable
+                    onSuccess(res.summary)
+                }
                 is VaultExecutionResult.OverdraftError -> onError(res.message)
                 is VaultExecutionResult.DuplicateWarning -> onWarning(res.message)
             }
