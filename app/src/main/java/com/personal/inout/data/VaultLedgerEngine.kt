@@ -2,6 +2,7 @@ package com.personal.inout.data
 
 import android.content.SharedPreferences
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
 import java.util.*
 import kotlin.math.abs
@@ -17,15 +18,15 @@ class VaultLedgerEngine(
     private val prefs: SharedPreferences
 ) {
     suspend fun recordMovement(
-        nature: MovementNature,
+        movementNature: MovementNature,
         sourcePocketId: Long,
         targetPocketId: Long? = null,
         amount: Double,
         category: String,
-        note: String,
-        overrideTimestamp: Long = System.currentTimeMillis(),
+        description: String,
+        timestamp: Long = System.currentTimeMillis(),
         status: SettlementStatus = SettlementStatus.CLEARED,
-        allowAutoSplit: Boolean = false,
+        autoSplitEnabled: Boolean = false,
         isTaxDeductible: Boolean = false,
         isReimbursable: Boolean = false,
         isSubscription: Boolean = false,
@@ -38,11 +39,11 @@ class VaultLedgerEngine(
         val srcPocket = dao.getPocketById(sourcePocketId) ?: return@withContext VaultExecutionResult.OverdraftError("Source account missing.")
         val tgtPocket = targetPocketId?.let { dao.getPocketById(it) }
 
-        if (nature == MovementNature.OPERATING_EXPENSE || nature == MovementNature.TRANSFER || nature == MovementNature.EMI_PRINCIPAL) {
+        if (movementNature == MovementNature.OPERATING_EXPENSE || movementNature == MovementNature.TRANSFER || movementNature == MovementNature.EMI_PRINCIPAL) {
             val availableBal = dao.computePocketBalance(sourcePocketId)
             
             if (availableBal < amount && srcPocket.type != PocketType.CREDIT_CARD && srcPocket.type != PocketType.LIABILITY_LOAN) {
-                if (allowAutoSplit && nature == MovementNature.OPERATING_EXPENSE) {
+                if (autoSplitEnabled && movementNature == MovementNature.OPERATING_EXPENSE) {
                     val shortfall = amount - availableBal
                     val secondaryAccounts = dao.getAllActivePocketsSnapshot()
                         .filter { it.type == PocketType.LIQUID && it.id != sourcePocketId }
@@ -51,7 +52,7 @@ class VaultLedgerEngine(
                     val splitTxList = mutableListOf<LedgerTransaction>()
 
                     if (availableBal > 0) {
-                        splitTxList.add(LedgerTransaction(amount = availableBal, movementNature = nature, sourcePocketId = sourcePocketId, category = category, description = "$note (Split)", timestamp = overrideTimestamp, status = status, isTaxDeductible = isTaxDeductible, isReimbursable = isReimbursable, isSubscription = isSubscription, isRecurring = isRecurring, recurringFrequency = recurringFrequency))
+                        splitTxList.add(LedgerTransaction(amount = availableBal, movementNature = movementNature, sourcePocketId = sourcePocketId, category = category, description = "$description (Split)", timestamp = timestamp, status = status, isTaxDeductible = isTaxDeductible, isReimbursable = isReimbursable, isSubscription = isSubscription, isRecurring = isRecurring, recurringFrequency = recurringFrequency))
                     }
 
                     for (sec in secondaryAccounts) {
@@ -59,7 +60,7 @@ class VaultLedgerEngine(
                         val secBal = dao.computePocketBalance(sec.id)
                         if (secBal > 0) {
                             val draw = minOf(secBal, remainingShortfall)
-                            splitTxList.add(LedgerTransaction(amount = draw, movementNature = nature, sourcePocketId = sec.id, category = category, description = "$note (Auto-Split from ${sec.name})", timestamp = overrideTimestamp, status = status, isTaxDeductible = isTaxDeductible, isReimbursable = isReimbursable, isSubscription = isSubscription, isRecurring = isRecurring, recurringFrequency = recurringFrequency))
+                            splitTxList.add(LedgerTransaction(amount = draw, movementNature = movementNature, sourcePocketId = sec.id, category = category, description = "$description (Auto-Split from ${sec.name})", timestamp = timestamp, status = status, isTaxDeductible = isTaxDeductible, isReimbursable = isReimbursable, isSubscription = isSubscription, isRecurring = isRecurring, recurringFrequency = recurringFrequency))
                             remainingShortfall -= draw
                         }
                     }
@@ -76,19 +77,19 @@ class VaultLedgerEngine(
             }
         }
 
-        val duplicateCheck = dao.findPotentialDuplicate(sourcePocketId, amount, overrideTimestamp)
+        val duplicateCheck = dao.findPotentialDuplicate(sourcePocketId, amount, timestamp)
         if (duplicateCheck != null && !isRecurring) {
             return@withContext VaultExecutionResult.DuplicateWarning("Identical transaction detected within 48 hours. Proceed manually if intentional.")
         }
 
         val tx = LedgerTransaction(
             amount = amount,
-            movementNature = nature,
+            movementNature = movementNature,
             sourcePocketId = sourcePocketId,
             targetPocketId = targetPocketId,
             category = category,
-            description = note,
-            timestamp = overrideTimestamp,
+            description = description,
+            timestamp = timestamp,
             status = status,
             isTaxDeductible = isTaxDeductible,
             isReimbursable = isReimbursable,
@@ -98,10 +99,18 @@ class VaultLedgerEngine(
         )
 
         val txId = dao.insertTransaction(tx)
-        dao.insertAuditEntry(LedgerAuditEntry(transactionId = txId, eventType = "CREATED", payloadSnapshot = "Amount: $amount, Nature: ${nature.name}", signatureHash = "SYS_AUTH_${System.currentTimeMillis()}"))
+        
+        dao.insertAuditEntry(LedgerAuditEntry(
+            actionType = "INSERT",
+            entityType = "TRANSACTION",
+            recordId = txId,
+            preStateJson = "{}",
+            postStateJson = "{\"amount\": $amount, \"nature\": \"${movementNature.name}\"}",
+            reasonNote = "System generated entry"
+        ))
 
         val targetNameStr = tgtPocket?.let { " to ${it.name}" } ?: ""
-        VaultExecutionResult.Success("Logged ₹${amount.toInt()} ${nature.name} from ${srcPocket.name}$targetNameStr")
+        VaultExecutionResult.Success("Logged ₹${amount.toInt()} ${movementNature.name} from ${srcPocket.name}$targetNameStr")
     }
 
     suspend fun computeSolvencyDeck(): SolvencyMetricDeck = withContext(Dispatchers.IO) {
@@ -127,16 +136,90 @@ class VaultLedgerEngine(
         val dailyBurnCeiling = prefs.getFloat("daily_burn_ceiling", 500f).toDouble()
         val runwayDays = if (dailyBurnCeiling > 0) (trueSafeLiquid / dailyBurnCeiling).toLong() else 0L
 
+        // Calculate actual daily burn rate for today
+        val todayStart = Calendar.getInstance().apply {
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }.timeInMillis
+        
+        val txs = dao.observeHistoricalTransactions().firstOrNull() ?: emptyList()
+        val todayBurn = txs.filter { it.timestamp >= todayStart && it.movementNature == MovementNature.OPERATING_EXPENSE }.sumOf { it.amount }
+
         SolvencyMetricDeck(
             trueSafeLiquid = trueSafeLiquid,
             projectedClosingLiquid = totalLiquid, 
             totalNetWorth = netWorth,
+            dailyBurnRate = todayBurn,
             dailyBurnCeiling = dailyBurnCeiling,
-            burnStatus = BurnPacingStatus.ON_TRACK,
+            burnStatus = if (todayBurn > dailyBurnCeiling) BurnPacingStatus.SPIKED else BurnPacingStatus.ON_TRACK,
             runwayDays = runwayDays,
-            monthlyBudgetConsumed = 0.0,
             hasEarlyDeficitAlert = totalLiquid < totalCardDues
         )
+    }
+
+    suspend fun generateIndianStatements(fromEpoch: Long, toEpoch: Long): Pair<IndianBalanceSheetReport, IndianPnLStatement> = withContext(Dispatchers.IO) {
+        val pockets = dao.getAllActivePocketsSnapshot()
+        val balances = pockets.associate { it.id to dao.computePocketBalance(it.id) }
+        val txs = dao.getTransactionsBetween(fromEpoch, toEpoch)
+
+        val assetTypes = listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET, PocketType.INVESTMENT, PocketType.FIXED_ASSET, PocketType.GOAL_POT, PocketType.PEER_RECEIVABLE)
+        val liabilityTypes = listOf(PocketType.CREDIT_CARD, PocketType.LIABILITY_LOAN, PocketType.PEER_PAYABLE)
+
+        val grossAssets = pockets.filter { it.type in assetTypes }.sumOf { balances[it.id] ?: 0.0 }
+        val grossLiabilities = pockets.filter { it.type in liabilityTypes }.sumOf { abs(balances[it.id] ?: 0.0) }
+        val netWorth = grossAssets - grossLiabilities
+
+        val securedLoans = pockets.filter { it.type == PocketType.LIABILITY_LOAN }.sumOf { abs(balances[it.id] ?: 0.0) }
+        val unsecuredLoans = 0.0 
+        val sundryCreditorsAndCardDues = pockets.filter { it.type == PocketType.CREDIT_CARD || it.type == PocketType.PEER_PAYABLE }.sumOf { abs(balances[it.id] ?: 0.0) }
+        val totalLiabilitiesAndCapital = netWorth + securedLoans + unsecuredLoans + sundryCreditorsAndCardDues
+
+        val fixedCapitalAssetsWDV = pockets.filter { it.type == PocketType.FIXED_ASSET }.sumOf { balances[it.id] ?: 0.0 }
+        val investmentsPortfolio = pockets.filter { it.type == PocketType.INVESTMENT || it.type == PocketType.GOAL_POT }.sumOf { balances[it.id] ?: 0.0 }
+        val sundryDebtorsReceivable = pockets.filter { it.type == PocketType.PEER_RECEIVABLE }.sumOf { balances[it.id] ?: 0.0 }
+        val bankAndPrepaidBalances = pockets.filter { it.type == PocketType.LIQUID || it.type == PocketType.PREPAID_WALLET }.sumOf { balances[it.id] ?: 0.0 }
+        val cashInHand = pockets.filter { it.name.contains("Cash", ignoreCase = true) }.sumOf { balances[it.id] ?: 0.0 }
+        
+        val bs = IndianBalanceSheetReport(
+            asOfDateEpoch = System.currentTimeMillis(),
+            proprietorCapitalAccount = netWorth,
+            securedLoans = securedLoans,
+            unsecuredLoans = unsecuredLoans,
+            sundryCreditorsAndCardDues = sundryCreditorsAndCardDues,
+            totalLiabilitiesAndCapital = totalLiabilitiesAndCapital,
+            fixedCapitalAssetsWDV = fixedCapitalAssetsWDV,
+            investmentsPortfolio = investmentsPortfolio,
+            sundryDebtorsReceivable = sundryDebtorsReceivable,
+            bankAndPrepaidBalances = bankAndPrepaidBalances,
+            cashInHand = cashInHand,
+            totalAssets = grossAssets,
+            isBalanced = true
+        )
+
+        val grossInflows = txs.filter { it.movementNature == MovementNature.OPERATING_INCOME }.sumOf { it.amount }
+        val operationalLivingExpenses = txs.filter { it.movementNature == MovementNature.OPERATING_EXPENSE }.sumOf { it.amount }
+        val financeAndLoanCharges = txs.filter { it.movementNature == MovementNature.EMI_PRINCIPAL }.sumOf { it.amount } 
+        val depreciationWrittenOff = txs.filter { it.movementNature == MovementNature.DEPRECIATION_WRITE }.sumOf { it.amount }
+        val netSurplusSavings = grossInflows - operationalLivingExpenses - financeAndLoanCharges - depreciationWrittenOff
+        
+        val taxDeductibleSummary = txs.filter { it.isTaxDeductible }
+            .groupBy { it.category }
+            .mapValues { (_, list) -> list.sumOf { it.amount } }
+
+        val pnl = IndianPnLStatement(
+            fromEpoch = fromEpoch,
+            toEpoch = toEpoch,
+            grossInflows = grossInflows,
+            operationalLivingExpenses = operationalLivingExpenses,
+            financeAndLoanCharges = financeAndLoanCharges,
+            depreciationWrittenOff = depreciationWrittenOff,
+            netSurplusSavings = netSurplusSavings,
+            taxDeductibleSummary = taxDeductibleSummary
+        )
+
+        Pair(bs, pnl)
     }
 
     suspend fun catchUpRecurringRules(): Int = withContext(Dispatchers.IO) {
