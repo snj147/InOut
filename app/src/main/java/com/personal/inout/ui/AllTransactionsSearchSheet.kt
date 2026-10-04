@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -74,7 +75,7 @@ fun AllTransactionsSearchSheet(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.65f))
-                .clickable { onDismiss() },
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -84,7 +85,7 @@ fun AllTransactionsSearchSheet(
                     .fillMaxWidth(0.95f)
                     .fillMaxHeight(0.90f)
                     .border(1.dp, theme.borderLight, RoundedCornerShape(16.dp))
-                    .clickable(enabled = false) {}
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
             ) {
                 Column(
                     modifier = Modifier
@@ -92,7 +93,6 @@ fun AllTransactionsSearchSheet(
                         .padding(14.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // Header Bar
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -118,7 +118,6 @@ fun AllTransactionsSearchSheet(
                         }
                     }
 
-                    // Search Input
                     OutlinedTextField(
                         value = searchQuery,
                         onValueChange = { searchQuery = it },
@@ -137,7 +136,6 @@ fun AllTransactionsSearchSheet(
                         shape = RoundedCornerShape(8.dp)
                     )
 
-                    // Dual-Rail Filters
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -184,7 +182,6 @@ fun AllTransactionsSearchSheet(
                         }
                     }
 
-                    // Continuous Ledger Stream
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -248,9 +245,13 @@ fun AllTransactionsSearchSheet(
                                             val dateStr = SimpleDateFormat("dd MMM, hh:mm a", Locale.getDefault()).format(Date(tx.timestamp))
                                             Text(text = "${tx.category} • $accountName • $dateStr", color = theme.textMuted, fontSize = 10.sp)
                                         }
+                                        
+                                        val displayAmt = if (tx.amount == 0.0) "₹ 0" else "${if (isOut) "-" else "+"}₹ ${String.format("%,.0f", tx.amount)}"
+                                        val colorAmt = if (tx.amount == 0.0) theme.textBright else if (isOut) theme.mildRed else theme.mildGreen
+                                        
                                         Text(
-                                            text = if (isPrivacyMode) "₹ •••" else "${if (isOut) "-" else "+"}₹ ${String.format("%,.0f", tx.amount)}",
-                                            color = if (isOut) theme.mildRed else theme.mildGreen,
+                                            text = if (isPrivacyMode) "₹ •••" else displayAmt,
+                                            color = colorAmt,
                                             fontSize = 12.5.sp,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -264,7 +265,6 @@ fun AllTransactionsSearchSheet(
         }
     }
 
-    // Centered Audit Voucher Inspection Ticket
     inspectingTransaction?.let { tx ->
         CenteredAuditVoucherTicket(
             tx = tx,
@@ -298,7 +298,7 @@ private fun CenteredAuditVoucherTicket(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black.copy(alpha = 0.6f))
-                .clickable { onDismiss() },
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
             contentAlignment = Alignment.Center
         ) {
             Card(
@@ -308,7 +308,7 @@ private fun CenteredAuditVoucherTicket(
                     .fillMaxWidth(0.88f)
                     .widthIn(max = 380.dp)
                     .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
-                    .clickable(enabled = false) {}
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -355,21 +355,22 @@ private fun CenteredAuditVoucherTicket(
                             .padding(top = 4.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        OutlinedButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text("Close", color = theme.textMuted)
-                        }
-
                         Button(
                             onClick = onEdit,
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier.weight(1.3f).height(44.dp),
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
                         ) {
-                            Text("Edit Entry", color = theme.bg, fontWeight = FontWeight.Bold)
+                            Text("Edit Entry", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                        
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f).height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
+                        ) {
+                            Text("Close", color = theme.textMuted, fontSize = 12.sp)
                         }
                     }
                 }
