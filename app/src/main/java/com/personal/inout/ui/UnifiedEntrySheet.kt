@@ -428,36 +428,41 @@ fun UnifiedEntrySheet(
                 }
             }
         }
+
+        if (showSourcePicker) CenteredPocketPickerDialog("Select Account", selectableSourcePockets, theme, { showSourcePicker = false }) { selectedSourcePocket = it; showSourcePicker = false }
+        if (showTargetPicker) CenteredPocketPickerDialog("Select Destination", selectableTargetPockets, theme, { showTargetPicker = false }) { selectedTargetPocket = it; showTargetPicker = false }
     }
 
-    if (showSourcePicker) CenteredPocketPickerDialog("Select Account", selectableSourcePockets, theme, { showSourcePicker = false }) { selectedSourcePocket = it; showSourcePicker = false }
-    if (showTargetPicker) CenteredPocketPickerDialog("Select Destination", selectableTargetPockets, theme, { showTargetPicker = false }) { selectedTargetPocket = it; showTargetPicker = false }
-}
+    @Composable
+    private fun SelectorPillTile(label: String, modifier: Modifier, theme: ThemeColors, onClick: () -> Unit) {
+        Box(
+            modifier = modifier.clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { onClick() }.padding(horizontal = 12.dp, vertical = 11.dp),
+            contentAlignment = Alignment.CenterStart
+        ) {
+            Text(text = label, color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+        }
+    }
 
-@Composable
-private fun SelectorPillTile(label: String, modifier: Modifier, theme: ThemeColors, onClick: () -> Unit) {
-    Box(
-        modifier = modifier.clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { onClick() }.padding(horizontal = 12.dp, vertical = 11.dp),
-        contentAlignment = Alignment.CenterStart
-    ) {
-        Text(text = label, color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+    @Composable
+    private fun CenteredPocketPickerDialog(title: String, pockets: List<LedgerPocket>, theme: ThemeColors, onDismiss: () -> Unit, onSelect: (LedgerPocket) -> Unit) {
+        Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
+                Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 380.dp).border(1.dp, theme.borderLight, RoundedCornerShape(14.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(text = title, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
+                        HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
+                        Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            pockets.forEach { pocket ->
+                                Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { onSelect(pocket) }.padding(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                    Text(pocket.name, color = theme.textBright, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp)
+                                    Text(pocket.type.name.replace("_", " "), color = theme.textMuted, fontSize = 10.sp)
+                                }
+                            }
+                        }
+                        TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("Cancel", color = theme.textMuted, fontSize = 12.sp) }
+                    }
+                }
+            }
+        }
     }
 }
-
-@Composable
-private fun CenteredPocketPickerDialog(title: String, pockets: List<LedgerPocket>, theme: ThemeColors, onDismiss: () -> Unit, onSelect: (LedgerPocket) -> Unit) {
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
-            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 380.dp).border(1.dp, theme.borderLight, RoundedCornerShape(14.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(text = title, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
-                    HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
-                    Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        pockets.forEach { pocket ->
-                            Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(theme.The remaining compilation error in "Screenshot_20261004-124327_Chrome.jpg" is an `Unresolved reference: computedAmount` occurring on lines 273, 274, and 275 of the `UnifiedEntrySheet.kt` file[span_1](start_span)[span_1](end_span). The `:app:compileDebugKotlin` task is failing because the Kotlin compiler cannot find this variable in the current scope[span_2](start_span)[span_2](end_span).
-
-To resolve this issue, audit `UnifiedEntrySheet.kt` around line 273:
-
-*   **Verify Declaration:** Ensure that `computedAmount` is explicitly declared (e.g., `val computedAmount = ...` or `var computedAmount = ...`) before it is called on line 273.
-*   **Check Scope:** If `computedAmount` was declared inside a specific block (like an `if` statement or a specific composable lambda), it will not be accessible outside of it. Move the declaration to a broader scope that encompasses lines 273 through 275.
-*   **Check Spelling:** Confirm that the variable wasn't defined under a slightly different name (such as `amount` or `calculatedAmount`) earlier in the file.
