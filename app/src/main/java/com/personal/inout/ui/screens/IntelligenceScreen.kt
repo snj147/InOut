@@ -5,6 +5,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,6 +27,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.personal.inout.data.LedgerTransaction
 import com.personal.inout.data.MovementNature
 import com.personal.inout.ui.ThemeColors
+import com.personal.inout.util.toIndianRupee
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.abs
@@ -220,7 +222,7 @@ fun IntelligenceScreen(
                     }
 
                     Text(
-                        text = if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", netCapitalPosition)}",
+                        text = if (isPrivacyMode) "₹ •••" else netCapitalPosition.toIndianRupee(),
                         color = theme.textBright,
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Black
@@ -232,7 +234,7 @@ fun IntelligenceScreen(
                     ) {
                         val assetColor = if (grossAssets == 0.0) theme.textBright else theme.mildGreen
                         Text(
-                            text = if (isPrivacyMode) "Assets: ₹ •••" else "Assets: ₹${String.format("%,.0f", grossAssets)}",
+                            text = if (isPrivacyMode) "Assets: ₹ •••" else "Assets: ${grossAssets.toIndianRupee()}",
                             color = assetColor,
                             fontSize = 11.5.sp,
                             fontWeight = FontWeight.SemiBold
@@ -240,7 +242,7 @@ fun IntelligenceScreen(
                         
                         val liabilityColor = if (grossLiabilities == 0.0) theme.textBright else theme.mildRed
                         Text(
-                            text = if (isPrivacyMode) "Dues: ₹ •••" else "External Dues: ₹${String.format("%,.0f", grossLiabilities)}",
+                            text = if (isPrivacyMode) "Dues: ₹ •••" else "External Dues: ${grossLiabilities.toIndianRupee()}",
                             color = liabilityColor,
                             fontSize = 11.5.sp,
                             fontWeight = FontWeight.SemiBold
@@ -326,7 +328,7 @@ fun IntelligenceScreen(
                             
                             val burnColor = if (todayBurn == 0.0) theme.textBright else if (todayBurn > dailyBurnCeiling) theme.mildRed else theme.mildGreen
                             Text(
-                                if (isPrivacyMode) "₹ •••" else "₹${String.format("%,.0f", todayBurn)}",
+                                if (isPrivacyMode) "₹ •••" else todayBurn.toIndianRupee(),
                                 color = burnColor,
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold
@@ -349,12 +351,12 @@ fun IntelligenceScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            if (isPrivacyMode) "Spent: ₹ •••" else "Spent: ₹${String.format("%,.0f", totalPeriodSpent)} / ₹${String.format("%,.0f", monthlyTargetBudget)} Target",
+                            if (isPrivacyMode) "Spent: ₹ •••" else "Spent: ${totalPeriodSpent.toIndianRupee()} / ${monthlyTargetBudget.toIndianRupee()} Target",
                             color = theme.textMuted,
                             fontSize = 10.5.sp
                         )
                         Text(
-                            "Benchmark: ₹${dailyBurnCeiling.toInt()}/day",
+                            "Benchmark: ${dailyBurnCeiling.toIndianRupee()}/day",
                             color = theme.textMuted,
                             fontSize = 10.5.sp,
                             fontWeight = FontWeight.SemiBold
@@ -387,7 +389,7 @@ fun IntelligenceScreen(
                             letterSpacing = 1.sp
                         )
                         Text(
-                            if (isPrivacyMode) "₹ •••" else "Total: ₹${String.format("%,.0f", totalPeriodSpent)}",
+                            if (isPrivacyMode) "₹ •••" else "Total: ${totalPeriodSpent.toIndianRupee()}",
                             color = theme.textBright,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
@@ -428,7 +430,7 @@ fun IntelligenceScreen(
 
                                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                         Text(
-                                            text = if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", amt)}",
+                                            text = if (isPrivacyMode) "₹ •••" else amt.toIndianRupee(),
                                             color = theme.textBright,
                                             fontSize = 12.5.sp,
                                             fontWeight = FontWeight.Bold
@@ -481,7 +483,7 @@ fun IntelligenceScreen(
                             Text("🏷 Section 80C Tagged", color = theme.textMuted, fontSize = 11.sp)
                             val taxColor = if (taxDeductibleTotal == 0.0) theme.textBright else theme.accent
                             Text(
-                                if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", taxDeductibleTotal)}",
+                                if (isPrivacyMode) "₹ •••" else taxDeductibleTotal.toIndianRupee(),
                                 color = taxColor,
                                 fontSize = 13.5.sp,
                                 fontWeight = FontWeight.Bold
@@ -491,7 +493,7 @@ fun IntelligenceScreen(
                             Text("💼 Corporate Claims", color = theme.textMuted, fontSize = 11.sp)
                             val claimColor = if (reimbursableTotal == 0.0) theme.textBright else theme.mildGreen
                             Text(
-                                if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", reimbursableTotal)}",
+                                if (isPrivacyMode) "₹ •••" else reimbursableTotal.toIndianRupee(),
                                 color = claimColor,
                                 fontSize = 13.5.sp,
                                 fontWeight = FontWeight.Bold
@@ -579,7 +581,7 @@ private fun CenteredCategoryDrilldownModal(
                         Text(categoryName, color = theme.textBright, fontSize = 15.sp, fontWeight = FontWeight.Bold)
                         val totalColor = if (totalSpent == 0.0) theme.textBright else theme.mildRed
                         Text(
-                            "₹ ${String.format("%,.0f", totalSpent)}",
+                            totalSpent.toIndianRupee(),
                             color = totalColor,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold
@@ -610,7 +612,7 @@ private fun CenteredCategoryDrilldownModal(
                                 }
                                 val txColor = if (tx.amount == 0.0) theme.textBright else theme.mildRed
                                 val prefix = if (tx.amount == 0.0) "" else "- "
-                                Text("$prefix₹ ${String.format("%,.0f", tx.amount)}", color = txColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("$prefix${tx.amount.toIndianRupee()}", color = txColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -664,18 +666,18 @@ private fun CenteredCapitalStructureModal(
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Total Owned Assets", color = theme.textBright, fontSize = 12.5.sp)
                             val assetColor = if (grossAssets == 0.0) theme.textBright else theme.mildGreen
-                            Text("₹ ${String.format("%,.0f", grossAssets)}", color = assetColor, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                            Text(grossAssets.toIndianRupee(), color = assetColor, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
                         }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Total External Liabilities", color = theme.textBright, fontSize = 12.5.sp)
                             val libColor = if (grossLiabilities == 0.0) theme.textBright else theme.mildRed
                             val prefix = if (grossLiabilities == 0.0) "" else "- "
-                            Text("$prefix₹ ${String.format("%,.0f", grossLiabilities)}", color = libColor, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+                            Text("$prefix${grossLiabilities.toIndianRupee()}", color = libColor, fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
                         }
                         HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("Net Proprietor Capital", color = theme.accent, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
-                            Text("₹ ${String.format("%,.0f", netWorth)}", color = theme.textBright, fontSize = 13.5.sp, fontWeight = FontWeight.Black)
+                            Text(netWorth.toIndianRupee(), color = theme.textBright, fontSize = 13.5.sp, fontWeight = FontWeight.Black)
                         }
                     }
 
@@ -734,7 +736,7 @@ private fun CenteredTaxAuditModal(
                         taxRecords.forEach { tx ->
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(tx.description.ifBlank { tx.category }, color = theme.textBright, fontSize = 11.5.sp)
-                                Text("₹${String.format("%,.0f", tx.amount)}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                Text(tx.amount.toIndianRupee(), color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
 
@@ -744,7 +746,7 @@ private fun CenteredTaxAuditModal(
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(tx.description.ifBlank { tx.category }, color = theme.textBright, fontSize = 11.5.sp)
                                 val claimColor = if (tx.amount == 0.0) theme.textBright else theme.mildGreen
-                                Text("₹${String.format("%,.0f", tx.amount)}", color = claimColor, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                Text(tx.amount.toIndianRupee(), color = claimColor, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
                     }
