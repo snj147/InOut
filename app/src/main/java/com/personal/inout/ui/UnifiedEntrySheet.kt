@@ -269,7 +269,8 @@ fun UnifiedEntrySheet(
                     }
 
                     if (evaluatedAmount != null && amountExpression.any { it in "+-*/" }) {
-                        Text("= ₹ ${String.format("%.0f", evaluatedAmount)}", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 2.dp))
+                        val colorEval = if (evaluatedAmount == 0.0) theme.textBright else theme.accent
+                        Text("= ₹ ${String.format("%.0f", evaluatedAmount)}", color = colorEval, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 2.dp))
                     }
 
                     if (selectedRail in listOf(ActiveEntryRail.TRANSFER, ActiveEntryRail.CARD_BILL, ActiveEntryRail.PEER)) {
@@ -287,7 +288,7 @@ fun UnifiedEntrySheet(
 
                     Text("CATEGORY", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     
-                    // Fixed Distributed Spacing for Categories
+                    // Fixed: Spaced Evening Distribution
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
