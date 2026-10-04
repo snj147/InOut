@@ -116,7 +116,7 @@ class VaultLedgerEngine(
 
         val trueSafeLiquid = (totalLiquid - totalCardDues).coerceAtLeast(0.0)
 
-        // FIX: Strict type-based asset and liability calculation for Indian accounting principles
+        // Strict type-based asset and liability calculation for Indian accounting principles
         val assetTypes = listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET, PocketType.INVESTMENT, PocketType.FIXED_ASSET, PocketType.GOAL_POT, PocketType.PEER_RECEIVABLE)
         val liabilityTypes = listOf(PocketType.CREDIT_CARD, PocketType.LIABILITY_LOAN, PocketType.PEER_PAYABLE)
 
@@ -129,7 +129,7 @@ class VaultLedgerEngine(
 
         SolvencyMetricDeck(
             trueSafeLiquid = trueSafeLiquid,
-            projectedClosingLiquid = totalLiquid, // Simplification for now
+            projectedClosingLiquid = totalLiquid, 
             totalNetWorth = netWorth,
             dailyBurnCeiling = dailyBurnCeiling,
             burnStatus = BurnPacingStatus.ON_TRACK,
