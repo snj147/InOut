@@ -79,7 +79,6 @@ fun DashboardScreen(db: AppDatabase) {
         if (buildSha.isNotBlank() && buildSha != "localdev") buildSha else "0d7352d"
     }
 
-    // RESTORED INSTALLATION TRACKING VARS
     val packageInfo = remember { try { context.packageManager.getPackageInfo(context.packageName, 0) } catch (_: Exception) { null } }
     val lastInstalledTimeFormatted = remember(packageInfo) {
         val t = packageInfo?.lastUpdateTime ?: System.currentTimeMillis()
@@ -486,12 +485,12 @@ fun DashboardScreen(db: AppDatabase) {
                     val peerBal = pocketBalances[peerPocket.id] ?: 0.0
                     SettlePeerBalanceModal(
                         peerPocket = peerPocket, currentBalance = peerBal, liquidPockets = liquidPockets, theme = theme, onDismiss = { activePeerSettlementPocket = null },
-                        onSettle = { isReceiving, amt, bankId ->
+                        onSettle = { isLend, amt, bankId ->
                             scope.launch {
-                                val srcId = if (isReceiving) peerPocket.id else bankId
-                                val tgtId = if (isReceiving) bankId else peerPocket.id
+                                val srcId = if (isLend) peerPocket.id else bankId
+                                val tgtId = if (isLend) bankId else peerPocket.id
                                 val res = ledgerEngine.recordMovement(MovementNature.TRANSFER, srcId, tgtId, amt, "Peer Settlement", "Settlement with ${peerPocket.name}")
-                                if (res is VaultExecutionResult.Success) { alertManager.showAlert("Settled ₹${amt.toInt()}", AlertType.SUCCESS); activePeerSettlementPocket = null }
+                                if (res is VaultExecutionResult.Success) { alertManager.showAlert("Settled ₹${amt.toInt()} with ${peerPocket.name}", AlertType.SUCCESS); activePeerSettlementPocket = null }
                                 else if (res is VaultExecutionResult.OverdraftError) alertManager.showAlert(res.message, AlertType.ERROR)
                             }
                         }
@@ -561,10 +560,17 @@ fun DashboardScreen(db: AppDatabase) {
                 if (showCreatePocketDialog) {
                     CreateAccountDialog(
                         initialType = prefilledCreatePocketType, allLiquidPockets = liquidPockets, theme = theme, onDismiss = { showCreatePocketDialog = false },
-                        onSave = { name, type, limit, dueDay, targetAmt, targetDateEpoch, initialVal, interestRate ->
+                        onSave = { name, type, limit, dueDay, targetAmt, targetDateEpoch, initialVal, interestRate, linkedAssetType ->
                             scope.launch {
                                 val pocketId = db.ledgerDao().insertPocket(LedgerPocket(name = name, type = type, creditLimit = limit, billDueDay = dueDay, targetGoalAmount = targetAmt, goalTargetDate = targetDateEpoch))
-                                if (initialVal > 0.0) ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "Opening baseline for $name", System.currentTimeMillis())
+                                
+                                if (type == PocketType.LIABILITY_LOAN && linkedAssetType != null && initialVal > 0.0) {
+                                    val assetId = db.ledgerDao().insertPocket(LedgerPocket(name = "$name - Asset", type = linkedAssetType))
+                                    ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "Loan Principal baseline", System.currentTimeMillis())
+                                    ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, assetId, null, initialVal, "Initial Position", "Asset Acquisition via Loan", System.currentTimeMillis())
+                                } else if (initialVal > 0.0) {
+                                    ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "Opening baseline for $name", System.currentTimeMillis())
+                                }
                                 showCreatePocketDialog = false; alertManager.showAlert("Created '$name'", AlertType.SUCCESS)
                             }
                         },
@@ -573,8 +579,14 @@ fun DashboardScreen(db: AppDatabase) {
                                 val peerType = if (isLend) PocketType.PEER_RECEIVABLE else PocketType.PEER_PAYABLE
                                 val peerPocketId = db.ledgerDao().insertPocket(LedgerPocket(name = contactName, type = peerType))
                                 if (amount > 0.0 && fundingPocketId != null) {
-                                    if (isLend) ledgerEngine.recordMovement(MovementNature.TRANSFER, fundingPocketId, peerPocketId, amount, "Peer Debt", "Lent to $contactName")
-                                    else ledgerEngine.recordMovement(MovementNature.TRANSFER, peerPocketId, fundingPocketId, amount, "Peer Advance", "Borrowed from $contactName")
+                                    val srcId = if (isLend) fundingPocketId else peerPocketId
+                                    val tgtId = if (isLend) peerPocketId else fundingPocketId
+                                    val res = ledgerEngine.recordMovement(MovementNature.TRANSFER, srcId, tgtId, amount, if (isLend) "Peer Debt" else "Peer Advance", if (isLend) "Lent to $contactName" else "Borrowed from $contactName")
+                                    if (res is VaultExecutionResult.OverdraftError) {
+                                        db.ledgerDao().deletePocket(peerPocketId)
+                                        alertManager.showAlert(res.message, AlertType.ERROR)
+                                        return@launch
+                                    }
                                 } else if (amount > 0.0) {
                                     ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, peerPocketId, null, amount, "Initial Position", "Opening peer ledger for $contactName")
                                 }
@@ -659,10 +671,6 @@ fun DashboardScreen(db: AppDatabase) {
     }
 }
 
-// ---------------------------------------------------------
-// NEW SECONDARY MODAL SCREENS
-// ---------------------------------------------------------
-
 @Composable
 private fun LogLoanRepaymentModal(
     loanPocket: LedgerPocket,
@@ -684,7 +692,8 @@ private fun LogLoanRepaymentModal(
                     
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("Account: ${loanPocket.name}", color = theme.textMuted, fontSize = 11.5.sp)
-                        Text("Outstanding Balance: ₹ ${String.format("%,.0f", outstandingBalance)}", color = theme.mildRed, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        val balColor = if (outstandingBalance == 0.0) theme.textBright else theme.mildRed
+                        Text("Outstanding Balance: ₹ ${String.format("%,.0f", outstandingBalance)}", color = balColor, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                     }
 
                     CompactInputField(value = amountInput, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) amountInput = input }, placeholder = "Repayment Amount ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
@@ -729,28 +738,28 @@ private fun SettlePeerBalanceModal(
 ) {
     var amountInput by remember { mutableStateOf("") }
     var selectedBankId by remember(liquidPockets) { mutableStateOf(liquidPockets.firstOrNull()?.id) }
-    var isReceiving by remember { mutableStateOf(currentBalance > 0) }
+    var isLend by remember { mutableStateOf(currentBalance > 0) }
     var showDropdown by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
             Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 400.dp).border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
                 Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("🤝 SETTLE PEER BALANCE", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
+                    Text("🤝 LEND / BORROW OR TRANSACT", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
                     
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("Peer: ${peerPocket.name}", color = theme.textMuted, fontSize = 11.5.sp)
                         val statText = if (currentBalance > 0) "They Owe You ₹ ${String.format("%,.0f", currentBalance)}" else if (currentBalance < 0) "You Owe Them ₹ ${String.format("%,.0f", abs(currentBalance))}" else "Settled (₹0)"
-                        val statColor = if (currentBalance > 0) theme.mildGreen else if (currentBalance < 0) theme.mildRed else theme.textMuted
+                        val statColor = if (currentBalance > 0) theme.mildGreen else if (currentBalance < 0) theme.mildRed else theme.textBright
                         Text("Current Status: $statText", color = statColor, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                     }
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isReceiving) theme.mildGreen.copy(alpha = 0.25f) else theme.surfaceAlt).border(1.dp, if (isReceiving) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isReceiving = true }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                            Text("I am Receiving", color = if (isReceiving) theme.mildGreen else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isLend) theme.mildGreen.copy(alpha = 0.25f) else theme.surfaceAlt).border(1.dp, if (isLend) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isLend = true }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                            Text("Lend", color = if (isLend) theme.mildGreen else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
-                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (!isReceiving) theme.mildRed.copy(alpha = 0.25f) else theme.surfaceAlt).border(1.dp, if (!isReceiving) theme.mildRed else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isReceiving = false }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                            Text("I am Paying", color = if (!isReceiving) theme.mildRed else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (!isLend) theme.mildRed.copy(alpha = 0.25f) else theme.surfaceAlt).border(1.dp, if (!isLend) theme.mildRed else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isLend = false }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                            Text("Borrow", color = if (!isLend) theme.mildRed else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -772,7 +781,7 @@ private fun SettlePeerBalanceModal(
 
                     val isValid = (amountInput.toDoubleOrNull() ?: 0.0) > 0.0 && selectedBankId != null
                     Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { onSettle(isReceiving, amountInput.toDouble(), selectedBankId!!) }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
+                        Button(onClick = { onSettle(isLend, amountInput.toDouble(), selectedBankId!!) }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
                             Text("Settle Balance", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                         OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)) {
@@ -869,7 +878,8 @@ private fun RevalueAssetPortfolioModal(
                     
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("Asset: ${assetPocket.name}", color = theme.textMuted, fontSize = 11.5.sp)
-                        Text("Current Book Value: ₹ ${String.format("%,.0f", currentBookValue)}", color = theme.accent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                        val balColor = if (currentBookValue == 0.0) theme.textBright else theme.accent
+                        Text("Current Book Value: ₹ ${String.format("%,.0f", currentBookValue)}", color = balColor, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                     }
 
                     CompactInputField(value = valuationInput, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) valuationInput = input }, placeholder = "New Market Valuation ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
@@ -964,65 +974,6 @@ private fun EditLedgerEntryModal(
 }
 
 @Composable
-private fun EditRecurringRuleModal(
-    rule: LedgerTransaction,
-    theme: ThemeColors,
-    onDismiss: () -> Unit,
-    onSave: (desc: String, amount: Double, frequency: String, anchorDate: Long) -> Unit
-) {
-    var rawAmount by remember { mutableStateOf(String.format("%.0f", rule.amount)) }
-    var description by remember { mutableStateOf(rule.description) }
-    var frequency by remember { mutableStateOf(rule.recurringFrequency) }
-    var selectedDateEpoch by remember { mutableStateOf(rule.timestamp) }
-    var showDatePicker by remember { mutableStateOf(false) }
-
-    val dateFormatted = remember(selectedDateEpoch) { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateEpoch)) }
-
-    if (showDatePicker) CustomCalendarDialog(initialDateMillis = selectedDateEpoch, onDismiss = { showDatePicker = false }) { selectedDateEpoch = it; showDatePicker = false }
-
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
-            Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 420.dp).border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
-                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                    Text("EDIT RECURRING MANDATE", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
-                    CompactInputField(value = description, onValueChange = { description = it }, placeholder = "Mandate Description / Payee", modifier = Modifier.fillMaxWidth())
-
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        CompactInputField(value = rawAmount, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) rawAmount = input }, placeholder = "Amount ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f))
-                        Box(modifier = Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showDatePicker = true }.padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text(dateFormatted, color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                                Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(14.dp))
-                            }
-                        }
-                    }
-
-                    Text("EXECUTION CADENCE", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("DAILY" to "Daily", "WEEKLY" to "Weekly", "MONTHLY" to "Monthly", "YEARLY" to "Yearly").forEach { (key, label) ->
-                            val isSel = frequency == key
-                            Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isSel) theme.accent else theme.surfaceAlt).border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(6.dp)).clickable { frequency = key }.padding(vertical = 7.dp), contentAlignment = Alignment.Center) {
-                                Text(label, color = if (isSel) theme.bg else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    }
-
-                    val isValid = description.isNotBlank() && (rawAmount.toDoubleOrNull() ?: 0.0) > 0.0
-                    Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { val amt = rawAmount.toDoubleOrNull() ?: return@Button; onSave(description, amt, frequency, selectedDateEpoch) }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
-                            Text("Save Mandate", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)) {
-                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun CenteredSafePurgeGuardModal(
     pocket: LedgerPocket,
     balance: Double,
@@ -1035,7 +986,7 @@ private fun CenteredSafePurgeGuardModal(
         Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
             Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 380.dp).border(1.dp, theme.borderLight, RoundedCornerShape(14.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
                 Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(if (pocket.name.startsWith("Recurring")) "TERMINATE MANDATE" else "DEACTIVATE ACCOUNT", color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text(if (pocket.name.startsWith("Recurring")) "TERMINATE MANDATE" else if (pocket.name.startsWith("Transaction")) "DELETE ENTRY" else "DEACTIVATE ACCOUNT", color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     Text("Are you sure you want to proceed with \"${pocket.name}\"?", color = theme.textMuted, fontSize = 12.sp)
 
                     if (!canDeactivate) {
@@ -1043,12 +994,12 @@ private fun CenteredSafePurgeGuardModal(
                             Text("Active balance is ₹${String.format("%,.0f", abs(balance))}. Settle balance to ₹0 first before deactivating.", color = theme.mildRed, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                         }
                     } else {
-                        Text("Balance is zero. All historical entries will remain safely in the audit register.", color = theme.mildGreen, fontSize = 11.5.sp)
+                        Text("Action confirmed. Affected balances will recalculate automatically.", color = theme.mildGreen, fontSize = 11.5.sp)
                     }
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = onConfirm, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed), enabled = canDeactivate) {
-                            Text(if (pocket.name.startsWith("Recurring")) "Terminate" else "Deactivate", color = Color.White, fontWeight = FontWeight.Bold)
+                            Text("Confirm & Delete", color = Color.White, fontWeight = FontWeight.Bold)
                         }
                         OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)) {
                             Text("Cancel", color = theme.textMuted)
