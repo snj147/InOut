@@ -286,9 +286,11 @@ fun UnifiedEntrySheet(
                     }
 
                     Text("CATEGORY", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    
+                    // Fixed Distributed Spacing for Categories
                     FlowRow(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         categories.forEach { cat ->
