@@ -86,7 +86,7 @@ fun CreateAccountDialog(
     var showPurposeDropdown by remember { mutableStateOf(false) }
     val loanPurposes = listOf(
         "Personal Use (No Asset)" to null,
-        "Vehicle Purchase" to PocketType.FIXED_ASSET,
+        "Vehicle Asset" to PocketType.FIXED_ASSET,
         "Property / Real Estate" to PocketType.FIXED_ASSET,
         "Education / Skill" to null
     )
@@ -266,7 +266,9 @@ fun BatchBalanceSheetStagingView(stagedItems: List<StagedStatementLineItem>, the
                         Text(item.rawExtractedName, color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                         Text(item.inferredType.name, color = theme.accent, fontSize = 9.5.sp)
                     }
-                    Text("₹ ${String.format("%,.0f", item.extractedAmount)}", color = if (item.inferredType == PocketType.LIABILITY_LOAN || item.inferredType == PocketType.CREDIT_CARD) theme.mildRed else theme.mildGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    val isOut = item.inferredType == PocketType.LIABILITY_LOAN || item.inferredType == PocketType.CREDIT_CARD
+                    val col = if (item.extractedAmount == 0.0) theme.textBright else if (isOut) theme.mildRed else theme.mildGreen
+                    Text("₹ ${String.format("%,.0f", item.extractedAmount)}", color = col, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -298,7 +300,7 @@ fun EditAccountDialog(pocket: LedgerPocket, theme: ThemeColors, onDismiss: () ->
         Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
             Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.9f).widthIn(max = 400.dp).border(1.dp, theme.borderLight, RoundedCornerShape(14.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
                 Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("EDIT ${pocket.name.uppercase(Locale.getDefault())}", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
+                    Text(text = "EDIT ${pocket.name.uppercase(Locale.getDefault())}", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
                     CompactInputField(value = name, onValueChange = { name = it }, placeholder = "Account Name", modifier = Modifier.fillMaxWidth())
 
                     if (pocket.type == PocketType.CREDIT_CARD) {
