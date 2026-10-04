@@ -404,7 +404,7 @@ fun DashboardScreen(db: AppDatabase) {
                             onRequestCreateAccount = { reqType -> prefilledCreatePocketType = reqType; showCreatePocketDialog = true }
                         )
 
-                        2 -> IntelligenceScreen(uiState.pocketBalances, uiState.completedTransactions, uiState.recurringTemplates, emptyList(), viewModel.dailyBurnCeiling.value, uiState.solvencyDeck.trueSafeLiquid, isPrivacyMode, theme)
+                        2 -> IntelligenceScreen(uiState.rawPockets, uiState.pocketBalances, uiState.completedTransactions, uiState.recurringTemplates, emptyList(), viewModel.dailyBurnCeiling.value, uiState.solvencyDeck.trueSafeLiquid, isPrivacyMode, theme)
 
                         3 -> SettingsCardsList(
                             theme = theme, currentSha = currentInstalledSha, lastUpdatedDate = lastInstalledTimeFormatted, masterPin = masterSecurityPin,
@@ -525,10 +525,10 @@ fun DashboardScreen(db: AppDatabase) {
                                 val pocketId = db.ledgerDao().insertPocket(LedgerPocket(name = name, type = type, creditLimit = limit, billDueDay = dueDay, targetGoalAmount = targetAmt, goalTargetDate = targetDateEpoch))
                                 if (type == PocketType.LIABILITY_LOAN && linkedAssetType != null && initialVal > 0.0) {
                                     val assetId = db.ledgerDao().insertPocket(LedgerPocket(name = "$name - Asset", type = linkedAssetType))
-                                    viewModel.ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "Loan Principal baseline", System.currentTimeMillis())
-                                    viewModel.ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, assetId, null, initialVal, "Initial Position", "Asset Acquisition via Loan", System.currentTimeMillis())
+                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "Loan Principal baseline", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
+                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, assetId, null, initialVal, "Initial Position", "Asset Acquisition via Loan", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
                                 } else if (initialVal > 0.0) {
-                                    viewModel.ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "Opening baseline for $name", System.currentTimeMillis())
+                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "Opening baseline for $name", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
                                 }
                                 showCreatePocketDialog = false; alertManager.showAlert("Created '$name'", AlertType.SUCCESS)
                             }
@@ -540,20 +540,19 @@ fun DashboardScreen(db: AppDatabase) {
                                 if (amount > 0.0 && fundingPocketId != null) {
                                     val srcId = if (isLend) fundingPocketId else peerPocketId
                                     val tgtId = if (isLend) peerPocketId else fundingPocketId
-                                    val res = viewModel.ledgerEngine.recordMovement(MovementNature.TRANSFER, srcId, tgtId, amount, if (isLend) "Peer Debt" else "Peer Advance", if (isLend) "Lent to $contactName" else "Borrowed from $contactName")
-                                    if (res is VaultExecutionResult.OverdraftError) {
-                                        val pocketToDelete = db.ledgerDao().getPocketById(peerPocketId)
-                                        if (pocketToDelete != null) {
-                                            db.ledgerDao().deletePocket(pocketToDelete)
-                                        }
-                                        alertManager.showAlert(res.message, AlertType.ERROR)
-                                        return@launch
-                                    }
+                                    viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, srcId, tgtId, amount, if (isLend) "Peer Debt" else "Peer Advance", if (isLend) "Lent to $contactName" else "Borrowed from $contactName", System.currentTimeMillis(), false, "NONE", false, false, 
+                                        { showCreatePocketDialog = false; alertManager.showAlert("Added Peer ledger for '$contactName'", AlertType.SUCCESS) },
+                                        { db.ledgerDao().deletePocket(db.ledgerDao().getPocketById(peerPocketId)!!); alertManager.showAlert(it, AlertType.ERROR) },
+                                        { alertManager.showAlert(it, AlertType.WARNING) }
+                                    )
                                 } else if (amount > 0.0) {
-                                    viewModel.ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, peerPocketId, null, amount, "Initial Position", "Opening peer ledger for $contactName")
+                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, peerPocketId, null, amount, "Initial Position", "Opening peer ledger for $contactName", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
+                                    showCreatePocketDialog = false
+                                    alertManager.showAlert("Added Peer ledger for '$contactName'", AlertType.SUCCESS)
+                                } else {
+                                    showCreatePocketDialog = false
+                                    alertManager.showAlert("Added Peer ledger for '$contactName'", AlertType.SUCCESS)
                                 }
-                                showCreatePocketDialog = false
-                                alertManager.showAlert("Added Peer ledger for '$contactName'", AlertType.SUCCESS)
                             }
                         }
                     )
