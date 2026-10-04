@@ -24,8 +24,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.personal.inout.data.LedgerPocket
 import com.personal.inout.data.LedgerTransaction
 import com.personal.inout.data.MovementNature
+import com.personal.inout.data.PocketType
 import com.personal.inout.ui.ThemeColors
 import com.personal.inout.util.toIndianRupee
 import java.text.SimpleDateFormat
@@ -40,6 +42,7 @@ enum class TimeHorizon(val label: String) {
 
 @Composable
 fun IntelligenceScreen(
+    rawPockets: List<LedgerPocket>,
     pocketBalances: Map<Long, Double>,
     flowRecords: List<LedgerTransaction>,
     recurringSchedules: List<LedgerTransaction>,
@@ -95,11 +98,15 @@ fun IntelligenceScreen(
             .sortedByDescending { it.second }
     }
 
-    val grossAssets = remember(pocketBalances) {
-        pocketBalances.values.filter { it > 0.0 }.sum()
+    // STRICT PocketType-based Asset/Liability Calculation
+    val assetTypes = listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET, PocketType.INVESTMENT, PocketType.FIXED_ASSET, PocketType.GOAL_POT, PocketType.PEER_RECEIVABLE)
+    val liabilityTypes = listOf(PocketType.CREDIT_CARD, PocketType.LIABILITY_LOAN, PocketType.PEER_PAYABLE)
+
+    val grossAssets = remember(rawPockets, pocketBalances) {
+        rawPockets.filter { it.type in assetTypes }.sumOf { pocketBalances[it.id] ?: 0.0 }
     }
-    val grossLiabilities = remember(pocketBalances) {
-        pocketBalances.values.filter { it < 0.0 }.sumOf { abs(it) }
+    val grossLiabilities = remember(rawPockets, pocketBalances) {
+        rawPockets.filter { it.type in liabilityTypes }.sumOf { abs(pocketBalances[it.id] ?: 0.0) }
     }
     val netCapitalPosition = grossAssets - grossLiabilities
     val equityRatio = if ((grossAssets + grossLiabilities) > 0.0) {
