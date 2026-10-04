@@ -146,7 +146,7 @@ fun UnifiedEntrySheet(
     var showSourcePicker by remember { mutableStateOf(false) }
     var showTargetPicker by remember { mutableStateOf(false) }
 
-    val evaluatedAmount = remember(amountExpression) {
+    val computedAmount = remember(amountExpression) {
         MathEvaluator.evaluate(amountExpression)
     }
 
@@ -381,7 +381,7 @@ fun UnifiedEntrySheet(
                     }
 
                     val hasAccounts = selectableSourcePockets.isNotEmpty()
-                    val isValid = evaluatedAmount != null && evaluatedAmount > 0.0 && selectedSourcePocket != null && (!listOf(ActiveEntryRail.TRANSFER, ActiveEntryRail.CARD_BILL, ActiveEntryRail.PEER).contains(selectedRail) || selectedTargetPocket != null)
+                    val isValid = computedAmount != null && computedAmount > 0.0 && selectedSourcePocket != null && (!listOf(ActiveEntryRail.TRANSFER, ActiveEntryRail.CARD_BILL, ActiveEntryRail.PEER).contains(selectedRail) || selectedTargetPocket != null)
 
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -391,7 +391,7 @@ fun UnifiedEntrySheet(
                             onClick = {
                                 if (!hasAccounts) { onNavigateToCreatePocket(); return@Button }
                                 val src = selectedSourcePocket ?: return@Button
-                                val amt = evaluatedAmount ?: return@Button
+                                val amt = computedAmount ?: return@Button
                                 val movementNature = when (selectedRail) {
                                     ActiveEntryRail.EXPENSE -> MovementNature.OPERATING_EXPENSE
                                     ActiveEntryRail.INFLOW -> MovementNature.OPERATING_INCOME
@@ -454,15 +454,10 @@ private fun CenteredPocketPickerDialog(title: String, pockets: List<LedgerPocket
                     HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
                     Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         pockets.forEach { pocket ->
-                            Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { onSelect(pocket) }.padding(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text(pocket.name, color = theme.textBright, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp)
-                                Text(pocket.type.name.replace("_", " "), color = theme.textMuted, fontSize = 10.sp)
-                            }
-                        }
-                    }
-                    TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("Cancel", color = theme.textMuted, fontSize = 12.sp) }
-                }
-            }
-        }
-    }
-}
+                            Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(theme.The remaining compilation error in "Screenshot_20261004-124327_Chrome.jpg" is an `Unresolved reference: computedAmount` occurring on lines 273, 274, and 275 of the `UnifiedEntrySheet.kt` file[span_1](start_span)[span_1](end_span). The `:app:compileDebugKotlin` task is failing because the Kotlin compiler cannot find this variable in the current scope[span_2](start_span)[span_2](end_span).
+
+To resolve this issue, audit `UnifiedEntrySheet.kt` around line 273:
+
+*   **Verify Declaration:** Ensure that `computedAmount` is explicitly declared (e.g., `val computedAmount = ...` or `var computedAmount = ...`) before it is called on line 273.
+*   **Check Scope:** If `computedAmount` was declared inside a specific block (like an `if` statement or a specific composable lambda), it will not be accessible outside of it. Move the declaration to a broader scope that encompasses lines 273 through 275.
+*   **Check Spelling:** Confirm that the variable wasn't defined under a slightly different name (such as `amount` or `calculatedAmount`) earlier in the file.
