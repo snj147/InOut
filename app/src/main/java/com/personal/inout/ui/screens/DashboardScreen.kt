@@ -542,7 +542,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     val tgtId = if (isLend) peerPocketId else fundingPocketId
                                     viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, srcId, tgtId, amount, if (isLend) "Peer Debt" else "Peer Advance", if (isLend) "Lent to $contactName" else "Borrowed from $contactName", System.currentTimeMillis(), false, "NONE", false, false, 
                                         { showCreatePocketDialog = false; alertManager.showAlert("Added Peer ledger for '$contactName'", AlertType.SUCCESS) },
-                                        { db.ledgerDao().deletePocket(db.ledgerDao().getPocketById(peerPocketId)!!); alertManager.showAlert(it, AlertType.ERROR) },
+                                        { scope.launch { db.ledgerDao().deletePocket(db.ledgerDao().getPocketById(peerPocketId)!!) }; alertManager.showAlert(it, AlertType.ERROR) },
                                         { alertManager.showAlert(it, AlertType.WARNING) }
                                     )
                                 } else if (amount > 0.0) {
