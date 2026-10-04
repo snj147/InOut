@@ -10,8 +10,6 @@ import android.widget.Toast
 import androidx.core.content.FileProvider
 import com.personal.inout.data.AppDatabase
 import com.personal.inout.data.LedgerTransaction
-import com.personal.inout.data.MovementNature
-import com.personal.inout.data.PocketType
 import com.personal.inout.data.VaultLedgerEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -19,7 +17,6 @@ import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
-import kotlin.math.abs
 
 object PdfDossierExporter {
 
@@ -178,7 +175,7 @@ object PdfDossierExporter {
                 canvas.drawText("No transactions tagged under Section 80C or medical deduction heads during this period.", 40f, y, regularTextPaint)
                 y += 14f
             } else {
-                taxSummary.forEach { (cat, amt) ->
+                for ((cat, amt) in taxSummary) {
                     canvas.drawText("Tax Flagged Category: $cat", 40f, y, regularTextPaint)
                     canvas.drawText("INR ${String.format("%,.2f", amt)}", 470f, y, regularTextPaint)
                     y += 12f
