@@ -2,12 +2,8 @@ package com.personal.inout.ui
 
 import android.Manifest
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.net.Uri
-import android.os.Build
-import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -32,7 +28,6 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -44,22 +39,20 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.personal.inout.BuildConfig
 import com.personal.inout.billing.PlayBillingManager
 import com.personal.inout.data.*
 import com.personal.inout.ocr.ReceiptScanner
 import com.personal.inout.util.*
-import kotlinx.coroutines.Dispatchers
+import com.personal.inout.viewmodel.DashboardViewModel
+import com.personal.inout.ui.dialogs.* // RED ERRORS EXPECTED HERE UNTIL BATCH 2
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.abs
@@ -70,9 +63,20 @@ fun DashboardScreen(db: AppDatabase) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val prefs = remember { context.getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE) }
-
     val alertManager = remember { VaultAlertManager() }
-    val ledgerEngine = remember { VaultLedgerEngine(db.ledgerDao(), prefs) }
+
+    // Inject ViewModel
+    val viewModel: DashboardViewModel = viewModel(
+        factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                return DashboardViewModel(db.ledgerDao(), prefs) as T
+            }
+        }
+    )
+
+    // Collect Real-Time UI State
+    val uiState by viewModel.uiState.collectAsState()
 
     val currentInstalledSha = remember {
         val buildSha = BuildConfig.GIT_SHA
@@ -94,9 +98,7 @@ fun DashboardScreen(db: AppDatabase) {
     }
 
     var masterSecurityPin by remember { mutableStateOf(prefs.getString("master_security_pin", "000000") ?: "000000") }
-    var dailyBurnCeiling by remember { mutableStateOf(prefs.getFloat("daily_burn_ceiling", 500f).toDouble()) }
-    var autoSplitEnabled by remember { mutableStateOf(prefs.getBoolean("auto_split_debit", false)) }
-
+    
     val theme = when (activeThemeMode) {
         AppThemeMode.PALE_AMBER -> PaleAmberTheme
         AppThemeMode.MATCHA_OLIVE -> MatchaOliveTheme
@@ -104,42 +106,10 @@ fun DashboardScreen(db: AppDatabase) {
         AppThemeMode.NORDIC_SLATE -> NordicSlateTheme
     }
 
-    val rawPockets by db.ledgerDao().getAllActivePockets().collectAsState(initial = emptyList())
-    val completedTransactions by db.ledgerDao().observeHistoricalTransactions().collectAsState(initial = emptyList())
-    val unreadNotices by db.ledgerDao().observeUnreadNotices().collectAsState(initial = emptyList())
-
-    val liquidPockets = remember(rawPockets) {
-        rawPockets.filter { it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET) }
-    }
-
-    var pocketBalances by remember { mutableStateOf<Map<Long, Double>>(emptyMap()) }
-    var solvencyDeck by remember {
-        mutableStateOf(SolvencyMetricDeck(0.0, 0.0, 0.0, dailyBurnCeiling, BurnPacingStatus.ON_TRACK, 0L, 0.0, false))
-    }
-
-    LaunchedEffect(rawPockets, completedTransactions) {
-        withContext(Dispatchers.IO) {
-            val balMap = mutableMapOf<Long, Double>()
-            for (pocket in rawPockets) balMap[pocket.id] = db.ledgerDao().computePocketBalance(pocket.id)
-            pocketBalances = balMap
-            solvencyDeck = ledgerEngine.computeSolvencyDeck()
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            val caughtUp = ledgerEngine.catchUpRecurringRules()
-            if (caughtUp > 0) alertManager.showAlert("Auto-executed $caughtUp scheduled recurring entries", AlertType.INFO)
-        }
-    }
-
-    val recurringTemplates = remember(completedTransactions) { completedTransactions.filter { it.isRecurring && it.recurringFrequency != "NONE" } }
-    val totalInflowLifetime = remember(completedTransactions) { completedTransactions.filter { it.movementNature == MovementNature.OPERATING_INCOME }.sumOf { it.amount } }
-    val totalOutflowLifetime = remember(completedTransactions) { completedTransactions.filter { it.movementNature == MovementNature.OPERATING_EXPENSE }.sumOf { it.amount } }
-
     var selectedTab by remember { mutableIntStateOf(0) }
     var isPrivacyMode by remember { mutableStateOf(false) }
 
+    // Dialog Tracking States
     var showUnifiedEntrySheet by remember { mutableStateOf(false) }
     var selectedPocketIdForEntry by remember { mutableStateOf<Long?>(null) }
     var selectedTargetPocketIdForEntry by remember { mutableStateOf<Long?>(null) }
@@ -178,9 +148,9 @@ fun DashboardScreen(db: AppDatabase) {
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
 
-    val groupedRecords = remember(completedTransactions) {
+    val groupedRecords = remember(uiState.completedTransactions) {
         val calNow = Calendar.getInstance()
-        completedTransactions.take(35).groupBy { tx ->
+        uiState.completedTransactions.take(35).groupBy { tx ->
             val calRecord = Calendar.getInstance().apply { timeInMillis = tx.timestamp }
             when {
                 calNow.get(Calendar.YEAR) == calRecord.get(Calendar.YEAR) &&
@@ -218,7 +188,7 @@ fun DashboardScreen(db: AppDatabase) {
                 val parsed = ReceiptScanner.processReceiptBitmap(bitmap)
                 ocrPrefilledNote = parsed.merchant
                 ocrPrefilledAmount = parsed.total
-                selectedPocketIdForEntry = rawPockets.firstOrNull { it.type == PocketType.LIQUID }?.id
+                selectedPocketIdForEntry = uiState.liquidPockets.firstOrNull()?.id
                 showUnifiedEntrySheet = true
                 alertManager.showAlert("Parsed: ${parsed.merchant} (₹${String.format("%,.0f", parsed.total ?: 0.0)})", AlertType.INFO)
             } catch (e: Exception) {
@@ -243,7 +213,7 @@ fun DashboardScreen(db: AppDatabase) {
                     val parsed = ReceiptScanner.processDocumentUri(context, uri)
                     ocrPrefilledNote = parsed.merchant
                     ocrPrefilledAmount = parsed.total
-                    selectedPocketIdForEntry = rawPockets.firstOrNull { it.type == PocketType.LIQUID }?.id
+                    selectedPocketIdForEntry = uiState.liquidPockets.firstOrNull()?.id
                     showUnifiedEntrySheet = true
                     alertManager.showAlert("Parsed: ${parsed.merchant} (₹${String.format("%,.0f", parsed.total ?: 0.0)})", AlertType.INFO)
                 } catch (e: Exception) {
@@ -253,29 +223,21 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    fun executeMasterEntryTrigger(nature: MovementNature, srcId: Long, tgtId: Long?, amt: Double, cat: String, note: String, date: Long, isRec: Boolean, freq: String, tax: Boolean, reimb: Boolean) {
-        scope.launch {
-            when (val res = ledgerEngine.recordMovement(nature, srcId, tgtId, amt, cat, note, date, SettlementStatus.CLEARED, autoSplitEnabled, tax, reimb, false, isRec, freq)) {
-                is VaultExecutionResult.OverdraftError -> alertManager.showAlert(res.message, AlertType.ERROR)
-                is VaultExecutionResult.DuplicateWarning -> alertManager.showAlert(res.message, AlertType.WARNING)
-                is VaultExecutionResult.Success -> {
-                    alertManager.showAlert(res.summary, AlertType.SUCCESS)
-                    showUnifiedEntrySheet = false
-                }
-            }
-        }
-    }
-
     CompositionLocalProvider(LocalThemeColors provides theme, LocalVaultAlertManager provides alertManager) {
         Box(modifier = Modifier.fillMaxSize()) {
             Scaffold(
                 containerColor = theme.bg,
-                topBar = { DashboardHeader(totalInflowLifetime, totalOutflowLifetime, isProUnlocked, isPrivacyMode) { isPrivacyMode = !isPrivacyMode } },
+                topBar = { 
+                    DashboardHeader(uiState.totalInflowLifetime, uiState.totalOutflowLifetime, isProUnlocked, isPrivacyMode) { isPrivacyMode = !isPrivacyMode } 
+                },
                 bottomBar = {
                     NavigationBar(
                         containerColor = theme.surface,
                         tonalElevation = 6.dp,
-                        modifier = Modifier.navigationBarsPadding().clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp)).border(1.dp, theme.borderLight, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                        modifier = Modifier
+                            .navigationBarsPadding()
+                            .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
+                            .border(1.dp, theme.borderLight, RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp))
                     ) {
                         listOf(
                             Triple(0, "Vault", Icons.Filled.AccountBalanceWallet),
@@ -304,7 +266,7 @@ fun DashboardScreen(db: AppDatabase) {
                                             isFabExpanded = false
                                             ocrPrefilledNote = ""
                                             ocrPrefilledAmount = null
-                                            selectedPocketIdForEntry = rawPockets.firstOrNull { it.type == PocketType.LIQUID }?.id
+                                            selectedPocketIdForEntry = uiState.liquidPockets.firstOrNull()?.id
                                             selectedTargetPocketIdForEntry = null
                                             forcedEntryRail = null
                                             showUnifiedEntrySheet = true
@@ -339,7 +301,13 @@ fun DashboardScreen(db: AppDatabase) {
                                     else { isFabExpanded = !isFabExpanded }
                                 },
                                 containerColor = theme.accent, contentColor = theme.bg, shape = CircleShape
-                            ) { Icon(imageVector = if (selectedTab == 1) Icons.Default.AddCard else Icons.Default.Add, contentDescription = "Action", modifier = Modifier.size(24.dp).rotate(if (selectedTab == 0) rotation else 0f)) }
+                            ) { 
+                                Icon(
+                                    imageVector = if (selectedTab == 1) Icons.Default.AddCard else Icons.Default.Add, 
+                                    contentDescription = "Action", 
+                                    modifier = Modifier.size(24.dp).rotate(if (selectedTab == 0) rotation else 0f)
+                                ) 
+                            }
                         }
                     }
                 }
@@ -352,10 +320,10 @@ fun DashboardScreen(db: AppDatabase) {
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxWidth()) { page ->
                                             when (page) {
-                                                0 -> MetricCarouselCard("TRUE SAFE LIQUID", if (solvencyDeck.trueSafeLiquid > 0) "Solvent" else "Deficit", solvencyDeck.trueSafeLiquid > 0, if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", solvencyDeck.trueSafeLiquid)}", "Spendable cash without debt", "Net Worth: ₹${String.format("%,.0f", solvencyDeck.totalNetWorth)}", theme) {}
-                                                1 -> MetricCarouselCard("RUNWAY SURVIVAL HORIZON", if (solvencyDeck.runwayDays > 30) "Comfortable" else "Critical", solvencyDeck.runwayDays > 30, if (isPrivacyMode) "•• Days" else "${solvencyDeck.runwayDays} Days", "Daily Target: ₹${dailyBurnCeiling.toInt()}/day ✎", if (solvencyDeck.burnStatus == BurnPacingStatus.ON_TRACK) "Pacing Normal" else "Burn Spiked", theme) { showBurnEditDialog = true }
-                                                2 -> MetricCarouselCard("MONTH-END CASH FORECAST", if (solvencyDeck.hasEarlyDeficitAlert) "Deficit Alert" else "Healthy", !solvencyDeck.hasEarlyDeficitAlert, if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", solvencyDeck.projectedClosingLiquid)}", "Deterministic Commitments", "Fixed Outflows Factored", theme) {}
-                                                3 -> MetricCarouselCard("STATUTORY NET WORTH", if (solvencyDeck.totalNetWorth >= 0) "Positive" else "Insolvent", solvencyDeck.totalNetWorth >= 0, if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", solvencyDeck.totalNetWorth)}", "Assets Less Liabilities", "Balance Sheet", theme) {}
+                                                0 -> MetricCarouselCard("TRUE SAFE LIQUID", if (uiState.solvencyDeck.trueSafeLiquid > 0) "Solvent" else "Deficit", uiState.solvencyDeck.trueSafeLiquid > 0, if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", uiState.solvencyDeck.trueSafeLiquid)}", "Spendable cash without debt", "Net Worth: ₹${String.format("%,.0f", uiState.solvencyDeck.totalNetWorth)}", theme) {}
+                                                1 -> MetricCarouselCard("RUNWAY SURVIVAL HORIZON", if (uiState.solvencyDeck.runwayDays > 30) "Comfortable" else "Critical", uiState.solvencyDeck.runwayDays > 30, if (isPrivacyMode) "•• Days" else "${uiState.solvencyDeck.runwayDays} Days", "Daily Target: ₹${viewModel.dailyBurnCeiling.value.toInt()}/day ✎", if (uiState.solvencyDeck.burnStatus == BurnPacingStatus.ON_TRACK) "Pacing Normal" else "Burn Spiked", theme) { showBurnEditDialog = true }
+                                                2 -> MetricCarouselCard("MONTH-END CASH FORECAST", if (uiState.solvencyDeck.hasEarlyDeficitAlert) "Deficit Alert" else "Healthy", !uiState.solvencyDeck.hasEarlyDeficitAlert, if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", uiState.solvencyDeck.projectedClosingLiquid)}", "Deterministic Commitments", "Fixed Outflows Factored", theme) {}
+                                                3 -> MetricCarouselCard("STATUTORY NET WORTH", if (uiState.solvencyDeck.totalNetWorth >= 0) "Positive" else "Insolvent", uiState.solvencyDeck.totalNetWorth >= 0, if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", uiState.solvencyDeck.totalNetWorth)}", "Assets Less Liabilities", "Balance Sheet", theme) {}
                                             }
                                         }
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
@@ -369,18 +337,18 @@ fun DashboardScreen(db: AppDatabase) {
                                 item {
                                     Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                         Text("Recent Flow", color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        if (completedTransactions.isNotEmpty()) {
-                                            Text("View All (${completedTransactions.size}) →", color = theme.accent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { prefilledHistoryFilterPocketId = null; showAllRecordsSheet = true })
+                                        if (uiState.completedTransactions.isNotEmpty()) {
+                                            Text("View All (${uiState.completedTransactions.size}) →", color = theme.accent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { prefilledHistoryFilterPocketId = null; showAllRecordsSheet = true })
                                         }
                                     }
                                 }
-                                if (completedTransactions.isEmpty()) {
+                                if (uiState.completedTransactions.isEmpty()) {
                                     item { Box(modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp), contentAlignment = Alignment.Center) { Text("No records logged yet. Tap + below to add entry.", color = theme.textMuted, fontSize = 12.sp) } }
                                 } else {
                                     groupedRecords.forEach { (dateHeader, records) ->
                                         item { Text(dateHeader.uppercase(Locale.getDefault()), color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, modifier = Modifier.padding(top = 10.dp, bottom = 4.dp)) }
                                         items(records, key = { it.id }) { tx ->
-                                            FlatStreamRow(tx, rawPockets, isPrivacyMode, theme) { editingTransaction = tx }
+                                            FlatStreamRow(tx, uiState.rawPockets, isPrivacyMode, theme) { editingTransaction = tx }
                                             HorizontalDivider(color = theme.borderLight.copy(alpha = 0.4f), thickness = 0.5.dp)
                                         }
                                     }
@@ -389,9 +357,9 @@ fun DashboardScreen(db: AppDatabase) {
                         }
 
                         1 -> AccountPocketsView(
-                            rawPockets = rawPockets,
-                            pocketBalances = pocketBalances,
-                            recurringTransactions = recurringTemplates,
+                            rawPockets = uiState.rawPockets,
+                            pocketBalances = uiState.pocketBalances,
+                            recurringTransactions = uiState.recurringTemplates,
                             isPrivacyMode = isPrivacyMode,
                             onTransactPocket = { pocket ->
                                 ocrPrefilledNote = ""
@@ -399,7 +367,7 @@ fun DashboardScreen(db: AppDatabase) {
                                 when (pocket.type) {
                                     PocketType.CREDIT_CARD -> {
                                         forcedEntryRail = ActiveEntryRail.CARD_BILL
-                                        selectedPocketIdForEntry = liquidPockets.firstOrNull()?.id
+                                        selectedPocketIdForEntry = uiState.liquidPockets.firstOrNull()?.id
                                         selectedTargetPocketIdForEntry = pocket.id
                                         showUnifiedEntrySheet = true
                                     }
@@ -432,11 +400,11 @@ fun DashboardScreen(db: AppDatabase) {
                             onRequestCreateAccount = { reqType -> prefilledCreatePocketType = reqType; showCreatePocketDialog = true }
                         )
 
-                        2 -> IntelligenceScreen(pocketBalances, completedTransactions, recurringTemplates, emptyList(), dailyBurnCeiling, solvencyDeck.trueSafeLiquid, isPrivacyMode, theme)
+                        2 -> IntelligenceScreen(uiState.pocketBalances, uiState.completedTransactions, uiState.recurringTemplates, emptyList(), viewModel.dailyBurnCeiling.value, uiState.solvencyDeck.trueSafeLiquid, isPrivacyMode, theme)
 
                         3 -> SettingsCardsList(
                             theme = theme, currentSha = currentInstalledSha, lastUpdatedDate = lastInstalledTimeFormatted, masterPin = masterSecurityPin,
-                            autoSplitEnabled = autoSplitEnabled, activeThemeMode = activeThemeMode, availableUpdate = availableUpdateInfo,
+                            autoSplitEnabled = viewModel.autoSplitEnabled.collectAsState().value, activeThemeMode = activeThemeMode, availableUpdate = availableUpdateInfo,
                             isCheckingUpdate = isCheckingForUpdate, downloadState = downloadState,
                             onOpenSetPinDialog = { showSetPinDialog = true },
                             onCheckUpdate = {
@@ -454,10 +422,10 @@ fun DashboardScreen(db: AppDatabase) {
                             onStartStreamDownload = { info -> scope.launch { AppUpdateEngine.startStreamDownload(context, info.downloadUrl, info.latestVersion) } },
                             onInstallDownloadedApk = {},
                             onOpenFeedback = { showFeedbackDialog = true },
-                            onAutoSplitToggled = { autoSplitEnabled = it; prefs.edit().putBoolean("auto_split_debit", it).apply() },
+                            onAutoSplitToggled = { viewModel.toggleAutoSplit(it) },
                             onThemeSelected = { mode -> activeThemeMode = mode; prefs.edit().putString("selected_theme", mode.name).apply() },
-                            onExportPdf = { scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, completedTransactions) } },
-                            onExportCsv = { CsvExporter.exportAndShareTransactions(context, completedTransactions) },
+                            onExportPdf = { scope.launch { PdfDossierExporter.generateAndShareDossier(context, uiState.pocketBalances, uiState.completedTransactions) } },
+                            onExportCsv = { CsvExporter.exportAndShareTransactions(context, uiState.completedTransactions) },
                             onExportEncryptedBackup = { backupExportLauncher.launch("inout_vault_backup_${System.currentTimeMillis()}.vault") },
                             onRestoreEncryptedBackup = { backupRestoreLauncher.launch(arrayOf("application/json", "*/*")) },
                             onClearLedger = { showClearLedgerConfirmation = true }
@@ -467,64 +435,52 @@ fun DashboardScreen(db: AppDatabase) {
 
                 if (isFabExpanded) { Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { isFabExpanded = false }) }
 
+                // --- MODALS RENDERED HERE ---
+                
                 activeLoanRepaymentPocket?.let { loanPocket ->
-                    val debtBal = abs(pocketBalances[loanPocket.id] ?: 0.0)
+                    val debtBal = abs(uiState.pocketBalances[loanPocket.id] ?: 0.0)
                     LogLoanRepaymentModal(
-                        loanPocket = loanPocket, outstandingBalance = debtBal, liquidPockets = liquidPockets, theme = theme, onDismiss = { activeLoanRepaymentPocket = null },
+                        loanPocket = loanPocket, outstandingBalance = debtBal, liquidPockets = uiState.liquidPockets, theme = theme, onDismiss = { activeLoanRepaymentPocket = null },
                         onRecordRepayment = { amt, sourceBankId ->
-                            scope.launch {
-                                val res = ledgerEngine.recordMovement(MovementNature.EMI_PRINCIPAL, sourceBankId, loanPocket.id, amt, "Loan EMI", "EMI for ${loanPocket.name}")
-                                if (res is VaultExecutionResult.Success) { alertManager.showAlert("Logged repayment of ₹${amt.toInt()}", AlertType.SUCCESS); activeLoanRepaymentPocket = null }
-                                else if (res is VaultExecutionResult.OverdraftError) alertManager.showAlert(res.message, AlertType.ERROR)
-                            }
+                            viewModel.executeMasterEntryTrigger(MovementNature.EMI_PRINCIPAL, sourceBankId, loanPocket.id, amt, "Loan EMI", "EMI for ${loanPocket.name}", System.currentTimeMillis(), false, "NONE", false, false, { alertManager.showAlert(it, AlertType.SUCCESS); activeLoanRepaymentPocket = null }, { alertManager.showAlert(it, AlertType.ERROR) }, { alertManager.showAlert(it, AlertType.WARNING) })
                         }
                     )
                 }
 
                 activePeerSettlementPocket?.let { peerPocket ->
-                    val peerBal = pocketBalances[peerPocket.id] ?: 0.0
+                    val peerBal = uiState.pocketBalances[peerPocket.id] ?: 0.0
                     SettlePeerBalanceModal(
-                        peerPocket = peerPocket, currentBalance = peerBal, liquidPockets = liquidPockets, theme = theme, onDismiss = { activePeerSettlementPocket = null },
+                        peerPocket = peerPocket, currentBalance = peerBal, liquidPockets = uiState.liquidPockets, theme = theme, onDismiss = { activePeerSettlementPocket = null },
                         onSettle = { isLend, amt, bankId ->
-                            scope.launch {
-                                val srcId = if (isLend) peerPocket.id else bankId
-                                val tgtId = if (isLend) bankId else peerPocket.id
-                                val res = ledgerEngine.recordMovement(MovementNature.TRANSFER, srcId, tgtId, amt, "Peer Settlement", "Settlement with ${peerPocket.name}")
-                                if (res is VaultExecutionResult.Success) { alertManager.showAlert("Settled ₹${amt.toInt()} with ${peerPocket.name}", AlertType.SUCCESS); activePeerSettlementPocket = null }
-                                else if (res is VaultExecutionResult.OverdraftError) alertManager.showAlert(res.message, AlertType.ERROR)
-                            }
+                            val srcId = if (isLend) peerPocket.id else bankId
+                            val tgtId = if (isLend) bankId else peerPocket.id
+                            viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, srcId, tgtId, amt, "Peer Settlement", "Settlement with ${peerPocket.name}", System.currentTimeMillis(), false, "NONE", false, false, { alertManager.showAlert(it, AlertType.SUCCESS); activePeerSettlementPocket = null }, { alertManager.showAlert(it, AlertType.ERROR) }, { alertManager.showAlert(it, AlertType.WARNING) })
                         }
                     )
                 }
 
                 activeGoalSweepPocket?.let { goalPocket ->
-                    val goalBal = pocketBalances[goalPocket.id] ?: 0.0
+                    val goalBal = uiState.pocketBalances[goalPocket.id] ?: 0.0
                     SweepGoalSavingsModal(
-                        goalPocket = goalPocket, currentBalance = goalBal, liquidPockets = liquidPockets, theme = theme, onDismiss = { activeGoalSweepPocket = null },
+                        goalPocket = goalPocket, currentBalance = goalBal, liquidPockets = uiState.liquidPockets, theme = theme, onDismiss = { activeGoalSweepPocket = null },
                         onSweep = { isAdding, amt, bankId ->
-                            scope.launch {
-                                val srcId = if (isAdding) bankId else goalPocket.id
-                                val tgtId = if (isAdding) goalPocket.id else bankId
-                                val res = ledgerEngine.recordMovement(MovementNature.TRANSFER, srcId, tgtId, amt, "Goal Transfer", "Sweep for ${goalPocket.name}")
-                                if (res is VaultExecutionResult.Success) { alertManager.showAlert("Swept ₹${amt.toInt()}", AlertType.SUCCESS); activeGoalSweepPocket = null }
-                                else if (res is VaultExecutionResult.OverdraftError) alertManager.showAlert(res.message, AlertType.ERROR)
-                            }
+                            val srcId = if (isAdding) bankId else goalPocket.id
+                            val tgtId = if (isAdding) goalPocket.id else bankId
+                            viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, srcId, tgtId, amt, "Goal Transfer", "Sweep for ${goalPocket.name}", System.currentTimeMillis(), false, "NONE", false, false, { alertManager.showAlert(it, AlertType.SUCCESS); activeGoalSweepPocket = null }, { alertManager.showAlert(it, AlertType.ERROR) }, { alertManager.showAlert(it, AlertType.WARNING) })
                         }
                     )
                 }
 
                 activeAssetRevaluationPocket?.let { assetPocket ->
-                    val currentBal = pocketBalances[assetPocket.id] ?: 0.0
+                    val currentBal = uiState.pocketBalances[assetPocket.id] ?: 0.0
                     RevalueAssetPortfolioModal(
                         assetPocket = assetPocket, currentBookValue = currentBal, theme = theme, onDismiss = { activeAssetRevaluationPocket = null },
                         onUpdateValuation = { newMarketVal, note ->
-                            scope.launch {
-                                val drift = newMarketVal - currentBal
-                                if (drift != 0.0) {
-                                    val nature = if (drift > 0) MovementNature.VALUATION_MARK else MovementNature.DEPRECIATION_WRITE
-                                    ledgerEngine.recordMovement(nature, assetPocket.id, null, abs(drift), "Revaluation", note)
-                                    alertManager.showAlert("Valuation updated to ₹${newMarketVal.toInt()}", AlertType.SUCCESS)
-                                }
+                            val drift = newMarketVal - currentBal
+                            if (drift != 0.0) {
+                                val nature = if (drift > 0) MovementNature.VALUATION_MARK else MovementNature.DEPRECIATION_WRITE
+                                viewModel.executeMasterEntryTrigger(nature, assetPocket.id, null, abs(drift), "Revaluation", note, System.currentTimeMillis(), false, "NONE", false, false, { alertManager.showAlert("Valuation updated to ₹${newMarketVal.toInt()}", AlertType.SUCCESS); activeAssetRevaluationPocket = null }, { alertManager.showAlert(it, AlertType.ERROR) }, { alertManager.showAlert(it, AlertType.WARNING) })
+                            } else {
                                 activeAssetRevaluationPocket = null
                             }
                         }
@@ -546,30 +502,31 @@ fun DashboardScreen(db: AppDatabase) {
 
                 if (showUnifiedEntrySheet) {
                     UnifiedEntrySheet(
-                        allPockets = rawPockets, prefilledPocketId = selectedPocketIdForEntry, prefilledTargetPocketId = selectedTargetPocketIdForEntry,
+                        allPockets = uiState.rawPockets, prefilledPocketId = selectedPocketIdForEntry, prefilledTargetPocketId = selectedTargetPocketIdForEntry,
                         forcedRail = forcedEntryRail, prefilledNote = ocrPrefilledNote, prefilledAmount = ocrPrefilledAmount,
                         onDismiss = { showUnifiedEntrySheet = false },
-                        onSubmitTransaction = { n, s, t, a, c, no, d, isR, f, tax, reimb -> executeMasterEntryTrigger(n, s, t, a, c, no, d, isR, f, tax, reimb) },
+                        onSubmitTransaction = { n, s, t, a, c, no, d, isR, f, tax, reimb -> 
+                            viewModel.executeMasterEntryTrigger(n, s, t, a, c, no, d, isR, f, tax, reimb, { alertManager.showAlert(it, AlertType.SUCCESS); showUnifiedEntrySheet = false }, { alertManager.showAlert(it, AlertType.ERROR) }, { alertManager.showAlert(it, AlertType.WARNING) }) 
+                        },
                         onNavigateToCreatePocket = { showUnifiedEntrySheet = false; showCreatePocketDialog = true }
                     )
                 }
 
-                if (showNoticesDialog) CenteredNoticesModal(unreadNotices, theme, { showNoticesDialog = false }) { scope.launch { for (notice in unreadNotices) db.ledgerDao().markNoticeAsRead(notice.id); showNoticesDialog = false } }
+                if (showNoticesDialog) CenteredNoticesModal(uiState.unreadNotices, theme, { showNoticesDialog = false }) { scope.launch { for (notice in uiState.unreadNotices) db.ledgerDao().markNoticeAsRead(notice.id); showNoticesDialog = false } }
                 if (showSetPinDialog) ThemeSetPinDialog({ showSetPinDialog = false }) { newPin -> masterSecurityPin = newPin; prefs.edit().putString("master_security_pin", newPin).apply(); showSetPinDialog = false; alertManager.showAlert("Master PIN updated", AlertType.SUCCESS) }
                 
                 if (showCreatePocketDialog) {
                     CreateAccountDialog(
-                        initialType = prefilledCreatePocketType, allLiquidPockets = liquidPockets, theme = theme, onDismiss = { showCreatePocketDialog = false },
+                        initialType = prefilledCreatePocketType, allLiquidPockets = uiState.liquidPockets, theme = theme, onDismiss = { showCreatePocketDialog = false },
                         onSave = { name, type, limit, dueDay, targetAmt, targetDateEpoch, initialVal, interestRate, linkedAssetType ->
                             scope.launch {
                                 val pocketId = db.ledgerDao().insertPocket(LedgerPocket(name = name, type = type, creditLimit = limit, billDueDay = dueDay, targetGoalAmount = targetAmt, goalTargetDate = targetDateEpoch))
-                                
                                 if (type == PocketType.LIABILITY_LOAN && linkedAssetType != null && initialVal > 0.0) {
                                     val assetId = db.ledgerDao().insertPocket(LedgerPocket(name = "$name - Asset", type = linkedAssetType))
-                                    ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "Loan Principal baseline", System.currentTimeMillis())
-                                    ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, assetId, null, initialVal, "Initial Position", "Asset Acquisition via Loan", System.currentTimeMillis())
+                                    viewModel.ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "Loan Principal baseline", System.currentTimeMillis())
+                                    viewModel.ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, assetId, null, initialVal, "Initial Position", "Asset Acquisition via Loan", System.currentTimeMillis())
                                 } else if (initialVal > 0.0) {
-                                    ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "Opening baseline for $name", System.currentTimeMillis())
+                                    viewModel.ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "Opening baseline for $name", System.currentTimeMillis())
                                 }
                                 showCreatePocketDialog = false; alertManager.showAlert("Created '$name'", AlertType.SUCCESS)
                             }
@@ -581,14 +538,14 @@ fun DashboardScreen(db: AppDatabase) {
                                 if (amount > 0.0 && fundingPocketId != null) {
                                     val srcId = if (isLend) fundingPocketId else peerPocketId
                                     val tgtId = if (isLend) peerPocketId else fundingPocketId
-                                    val res = ledgerEngine.recordMovement(MovementNature.TRANSFER, srcId, tgtId, amount, if (isLend) "Peer Debt" else "Peer Advance", if (isLend) "Lent to $contactName" else "Borrowed from $contactName")
+                                    val res = viewModel.ledgerEngine.recordMovement(MovementNature.TRANSFER, srcId, tgtId, amount, if (isLend) "Peer Debt" else "Peer Advance", if (isLend) "Lent to $contactName" else "Borrowed from $contactName")
                                     if (res is VaultExecutionResult.OverdraftError) {
                                         db.ledgerDao().deletePocket(peerPocketId)
                                         alertManager.showAlert(res.message, AlertType.ERROR)
                                         return@launch
                                     }
                                 } else if (amount > 0.0) {
-                                    ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, peerPocketId, null, amount, "Initial Position", "Opening peer ledger for $contactName")
+                                    viewModel.ledgerEngine.recordMovement(MovementNature.OPENING_BASELINE, peerPocketId, null, amount, "Initial Position", "Opening peer ledger for $contactName")
                                 }
                                 showCreatePocketDialog = false
                                 alertManager.showAlert("Added Peer ledger for '$contactName'", AlertType.SUCCESS)
@@ -609,7 +566,7 @@ fun DashboardScreen(db: AppDatabase) {
                 if (showFeedbackDialog) FeedbackDialog(theme, { msg, isErr -> alertManager.showAlert(msg, if (isErr) AlertType.ERROR else AlertType.SUCCESS) }) { showFeedbackDialog = false }
 
                 if (showBurnEditDialog) {
-                    var burnInput by remember { mutableStateOf(dailyBurnCeiling.toInt().toString()) }
+                    var burnInput by remember { mutableStateOf(viewModel.dailyBurnCeiling.value.toInt().toString()) }
                     Dialog(onDismissRequest = { showBurnEditDialog = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
                         Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { showBurnEditDialog = false }, contentAlignment = Alignment.Center) {
                             Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 400.dp).border(1.dp, theme.borderLight, RoundedCornerShape(16.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
@@ -619,7 +576,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     CompactInputField(value = burnInput, onValueChange = { input -> if (input.all { c -> c.isDigit() }) burnInput = input }, placeholder = "500", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                                     val isValid = (burnInput.toDoubleOrNull() ?: 0.0) > 0.0
                                     Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(onClick = { if (isValid) { dailyBurnCeiling = burnInput.toDouble(); prefs.edit().putFloat("daily_burn_ceiling", burnInput.toFloat()).apply(); showBurnEditDialog = false } }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
+                                        Button(onClick = { if (isValid) { viewModel.updateBurnCeiling(burnInput.toDouble()); showBurnEditDialog = false } }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
                                             Text("Save", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                         }
                                         OutlinedButton(onClick = { showBurnEditDialog = false }, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)) {
@@ -632,7 +589,7 @@ fun DashboardScreen(db: AppDatabase) {
                     }
                 }
 
-                if (showClearLedgerConfirmation) CenteredMasterPinPurgeModal(masterSecurityPin, theme, { showClearLedgerConfirmation = false }) { scope.launch { completedTransactions.forEach { db.ledgerDao().deleteTransaction(it) }; rawPockets.forEach { db.ledgerDao().updatePocket(it.copy(isArchived = true)) }; alertManager.showAlert("All vault records purged", AlertType.SUCCESS); showClearLedgerConfirmation = false } }
+                if (showClearLedgerConfirmation) CenteredMasterPinPurgeModal(masterSecurityPin, theme, { showClearLedgerConfirmation = false }) { scope.launch { uiState.completedTransactions.forEach { db.ledgerDao().deleteTransaction(it) }; uiState.rawPockets.forEach { db.ledgerDao().updatePocket(it.copy(isArchived = true)) }; alertManager.showAlert("All vault records purged", AlertType.SUCCESS); showClearLedgerConfirmation = false } }
                 
                 editingRecurringRule?.let { rule ->
                     EditRecurringRuleModal(
@@ -658,355 +615,15 @@ fun DashboardScreen(db: AppDatabase) {
 
                 if (showAllRecordsSheet) {
                     AllTransactionsSearchSheet(
-                        flowRecords = if (prefilledHistoryFilterPocketId != null) completedTransactions.filter { it.sourcePocketId == prefilledHistoryFilterPocketId || it.targetPocketId == prefilledHistoryFilterPocketId } else completedTransactions,
-                        rawPockets = rawPockets, isPrivacyMode = isPrivacyMode, isProUser = isProUnlocked, onDismiss = { showAllRecordsSheet = false },
-                        onEditRecord = { tx -> editingTransaction = tx }, onExportCsv = { CsvExporter.exportAndShareTransactions(context, completedTransactions) },
-                        onExportPdfDossier = { scope.launch { PdfDossierExporter.generateAndShareDossier(context, pocketBalances, completedTransactions) } }
+                        flowRecords = if (prefilledHistoryFilterPocketId != null) uiState.completedTransactions.filter { it.sourcePocketId == prefilledHistoryFilterPocketId || it.targetPocketId == prefilledHistoryFilterPocketId } else uiState.completedTransactions,
+                        rawPockets = uiState.rawPockets, isPrivacyMode = isPrivacyMode, isProUser = isProUnlocked, onDismiss = { showAllRecordsSheet = false },
+                        onEditRecord = { tx -> editingTransaction = tx }, onExportCsv = { CsvExporter.exportAndShareTransactions(context, uiState.completedTransactions) },
+                        onExportPdfDossier = { scope.launch { PdfDossierExporter.generateAndShareDossier(context, uiState.pocketBalances, uiState.completedTransactions) } }
                     )
                 }
             }
 
             VaultFloatingTopOverlay(alertManager = alertManager, theme = theme)
-        }
-    }
-}
-
-@Composable
-private fun LogLoanRepaymentModal(
-    loanPocket: LedgerPocket,
-    outstandingBalance: Double,
-    liquidPockets: List<LedgerPocket>,
-    theme: ThemeColors,
-    onDismiss: () -> Unit,
-    onRecordRepayment: (amount: Double, sourceBankId: Long) -> Unit
-) {
-    var amountInput by remember { mutableStateOf("") }
-    var selectedBankId by remember(liquidPockets) { mutableStateOf(liquidPockets.firstOrNull()?.id) }
-    var showDropdown by remember { mutableStateOf(false) }
-
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
-            Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 400.dp).border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
-                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("🏛 LOG LOAN REPAYMENT", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
-                    
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Account: ${loanPocket.name}", color = theme.textMuted, fontSize = 11.5.sp)
-                        val balColor = if (outstandingBalance == 0.0) theme.textBright else theme.mildRed
-                        Text("Outstanding Balance: ₹ ${String.format("%,.0f", outstandingBalance)}", color = balColor, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    CompactInputField(value = amountInput, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) amountInput = input }, placeholder = "Repayment Amount ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
-
-                    val activeBank = liquidPockets.firstOrNull { it.id == selectedBankId }
-                    Box(
-                        modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showDropdown = true }.padding(horizontal = 12.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text(text = "Paid From: ${activeBank?.name ?: "Select Bank"}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
-                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = theme.accent)
-                        }
-                        DropdownMenu(expanded = showDropdown, onDismissRequest = { showDropdown = false }, modifier = Modifier.background(theme.surface)) {
-                            liquidPockets.forEach { pocket -> DropdownMenuItem(text = { Text(pocket.name, color = theme.textBright) }, onClick = { selectedBankId = pocket.id; showDropdown = false }) }
-                        }
-                    }
-
-                    val isValid = (amountInput.toDoubleOrNull() ?: 0.0) > 0.0 && selectedBankId != null
-                    Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { onRecordRepayment(amountInput.toDouble(), selectedBankId!!) }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
-                            Text("Record Repayment", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)) {
-                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SettlePeerBalanceModal(
-    peerPocket: LedgerPocket,
-    currentBalance: Double,
-    liquidPockets: List<LedgerPocket>,
-    theme: ThemeColors,
-    onDismiss: () -> Unit,
-    onSettle: (isReceiving: Boolean, amount: Double, bankId: Long) -> Unit
-) {
-    var amountInput by remember { mutableStateOf("") }
-    var selectedBankId by remember(liquidPockets) { mutableStateOf(liquidPockets.firstOrNull()?.id) }
-    var isLend by remember { mutableStateOf(currentBalance > 0) }
-    var showDropdown by remember { mutableStateOf(false) }
-
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
-            Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 400.dp).border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
-                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("🤝 LEND / BORROW OR TRANSACT", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
-                    
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Peer: ${peerPocket.name}", color = theme.textMuted, fontSize = 11.5.sp)
-                        val statText = if (currentBalance > 0) "They Owe You ₹ ${String.format("%,.0f", currentBalance)}" else if (currentBalance < 0) "You Owe Them ₹ ${String.format("%,.0f", abs(currentBalance))}" else "Settled (₹0)"
-                        val statColor = if (currentBalance > 0) theme.mildGreen else if (currentBalance < 0) theme.mildRed else theme.textBright
-                        Text("Current Status: $statText", color = statColor, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isLend) theme.mildGreen.copy(alpha = 0.25f) else theme.surfaceAlt).border(1.dp, if (isLend) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isLend = true }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                            Text("Lend", color = if (isLend) theme.mildGreen else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (!isLend) theme.mildRed.copy(alpha = 0.25f) else theme.surfaceAlt).border(1.dp, if (!isLend) theme.mildRed else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isLend = false }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                            Text("Borrow", color = if (!isLend) theme.mildRed else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    CompactInputField(value = amountInput, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) amountInput = input }, placeholder = "Settlement Amount ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
-
-                    val activeBank = liquidPockets.firstOrNull { it.id == selectedBankId }
-                    Box(
-                        modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showDropdown = true }.padding(horizontal = 12.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text(text = "Bank Account: ${activeBank?.name ?: "Select Bank"}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
-                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = theme.accent)
-                        }
-                        DropdownMenu(expanded = showDropdown, onDismissRequest = { showDropdown = false }, modifier = Modifier.background(theme.surface)) {
-                            liquidPockets.forEach { pocket -> DropdownMenuItem(text = { Text(pocket.name, color = theme.textBright) }, onClick = { selectedBankId = pocket.id; showDropdown = false }) }
-                        }
-                    }
-
-                    val isValid = (amountInput.toDoubleOrNull() ?: 0.0) > 0.0 && selectedBankId != null
-                    Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { onSettle(isLend, amountInput.toDouble(), selectedBankId!!) }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
-                            Text("Settle Balance", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)) {
-                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun SweepGoalSavingsModal(
-    goalPocket: LedgerPocket,
-    currentBalance: Double,
-    liquidPockets: List<LedgerPocket>,
-    theme: ThemeColors,
-    onDismiss: () -> Unit,
-    onSweep: (isAdding: Boolean, amount: Double, bankId: Long) -> Unit
-) {
-    var amountInput by remember { mutableStateOf("") }
-    var selectedBankId by remember(liquidPockets) { mutableStateOf(liquidPockets.firstOrNull()?.id) }
-    var isAdding by remember { mutableStateOf(true) }
-    var showDropdown by remember { mutableStateOf(false) }
-
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
-            Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 400.dp).border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
-                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("🎯 SWEEP SAVINGS", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
-                    
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Goal: ${goalPocket.name}", color = theme.textMuted, fontSize = 11.5.sp)
-                        Text("Target: ₹ ${String.format("%,.0f", goalPocket.targetGoalAmount)} • Saved: ₹ ${String.format("%,.0f", currentBalance)}", color = theme.accent, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isAdding) theme.mildGreen.copy(alpha = 0.25f) else theme.surfaceAlt).border(1.dp, if (isAdding) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isAdding = true }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                            Text("Add to Goal", color = if (isAdding) theme.mildGreen else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (!isAdding) theme.mildRed.copy(alpha = 0.25f) else theme.surfaceAlt).border(1.dp, if (!isAdding) theme.mildRed else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isAdding = false }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                            Text("Withdraw to Bank", color = if (!isAdding) theme.mildRed else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    CompactInputField(value = amountInput, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) amountInput = input }, placeholder = "Sweep Amount ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
-
-                    val activeBank = liquidPockets.firstOrNull { it.id == selectedBankId }
-                    Box(
-                        modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showDropdown = true }.padding(horizontal = 12.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text(text = "Source/Dest Bank: ${activeBank?.name ?: "Select Bank"}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
-                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = theme.accent)
-                        }
-                        DropdownMenu(expanded = showDropdown, onDismissRequest = { showDropdown = false }, modifier = Modifier.background(theme.surface)) {
-                            liquidPockets.forEach { pocket -> DropdownMenuItem(text = { Text(pocket.name, color = theme.textBright) }, onClick = { selectedBankId = pocket.id; showDropdown = false }) }
-                        }
-                    }
-
-                    val isValid = (amountInput.toDoubleOrNull() ?: 0.0) > 0.0 && selectedBankId != null
-                    Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { onSweep(isAdding, amountInput.toDouble(), selectedBankId!!) }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
-                            Text("Sweep Funds", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)) {
-                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun RevalueAssetPortfolioModal(
-    assetPocket: LedgerPocket,
-    currentBookValue: Double,
-    theme: ThemeColors,
-    onDismiss: () -> Unit,
-    onUpdateValuation: (newValuation: Double, note: String) -> Unit
-) {
-    var valuationInput by remember { mutableStateOf("") }
-    var note by remember { mutableStateOf("") }
-
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
-            Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 400.dp).border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
-                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("📈 REVALUE ASSET PORTFOLIO", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
-                    
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Asset: ${assetPocket.name}", color = theme.textMuted, fontSize = 11.5.sp)
-                        val balColor = if (currentBookValue == 0.0) theme.textBright else theme.accent
-                        Text("Current Book Value: ₹ ${String.format("%,.0f", currentBookValue)}", color = balColor, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    CompactInputField(value = valuationInput, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) valuationInput = input }, placeholder = "New Market Valuation ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
-                    CompactInputField(value = note, onValueChange = { note = it }, placeholder = "Audit Note (e.g. Q3 Rally)", modifier = Modifier.fillMaxWidth())
-
-                    val isValid = (valuationInput.toDoubleOrNull() ?: 0.0) > 0.0
-                    Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { onUpdateValuation(valuationInput.toDouble(), note) }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
-                            Text("Update Valuation", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)) {
-                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun EditLedgerEntryModal(
-    tx: LedgerTransaction,
-    theme: ThemeColors,
-    onDismiss: () -> Unit,
-    onSave: (amount: Double, desc: String, category: String, date: Long, isTax: Boolean, isReimb: Boolean) -> Unit,
-    onDelete: () -> Unit
-) {
-    var rawAmount by remember { mutableStateOf(String.format("%.0f", tx.amount)) }
-    var description by remember { mutableStateOf(tx.description) }
-    var selectedCategory by remember { mutableStateOf(tx.category) }
-    var selectedDateEpoch by remember { mutableStateOf(tx.timestamp) }
-    var isTaxDeductible by remember { mutableStateOf(tx.isTaxDeductible) }
-    var isReimbursable by remember { mutableStateOf(tx.isReimbursable) }
-    var showDatePicker by remember { mutableStateOf(false) }
-
-    val dateFormatted = remember(selectedDateEpoch) { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateEpoch)) }
-    val categories = listOf("Food & Dining", "Groceries", "Transport", "Bills", "Shopping", "Health", "General", "Salary", "Income")
-
-    if (showDatePicker) CustomCalendarDialog(initialDateMillis = selectedDateEpoch, onDismiss = { showDatePicker = false }) { selectedDateEpoch = it; showDatePicker = false }
-
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
-            Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 420.dp).border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
-                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("EDIT TRANSACTION ENTRY", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
-                        Text("Delete 🗑", color = theme.mildRed, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.clickable { onDelete() })
-                    }
-
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        CompactInputField(value = rawAmount, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) rawAmount = input }, placeholder = "Amount ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f))
-                        Box(modifier = Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showDatePicker = true }.padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text(dateFormatted, color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                                Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(14.dp))
-                            }
-                        }
-                    }
-
-                    CompactInputField(value = description, onValueChange = { description = it }, placeholder = "Merchant / Narration", modifier = Modifier.fillMaxWidth())
-
-                    Text("CATEGORY", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    FlowRow(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        categories.forEach { cat ->
-                            val isSel = selectedCategory == cat
-                            Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(if (isSel) theme.accent.copy(alpha = 0.22f) else theme.surfaceAlt).border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(6.dp)).clickable { selectedCategory = cat }.padding(horizontal = 8.dp, vertical = 5.dp)) {
-                                Text(cat, color = if (isSel) theme.accent else theme.textBright, fontSize = 10.5.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
-                            }
-                        }
-                    }
-
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isTaxDeductible) theme.accent.copy(alpha = 0.2f) else theme.surfaceAlt).border(1.dp, if (isTaxDeductible) theme.accent else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isTaxDeductible = !isTaxDeductible }.padding(vertical = 7.dp), contentAlignment = Alignment.Center) { Text("🏷 80C Tag", color = if (isTaxDeductible) theme.accent else theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold) }
-                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isReimbursable) theme.mildGreen.copy(alpha = 0.2f) else theme.surfaceAlt).border(1.dp, if (isReimbursable) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isReimbursable = !isReimbursable }.padding(vertical = 7.dp), contentAlignment = Alignment.Center) { Text("💼 Reimbursable", color = if (isReimbursable) theme.mildGreen else theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold) }
-                    }
-
-                    val isValid = (rawAmount.toDoubleOrNull() ?: 0.0) > 0.0
-                    Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { val amt = rawAmount.toDoubleOrNull() ?: return@Button; onSave(amt, description, selectedCategory, selectedDateEpoch, isTaxDeductible, isReimbursable) }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
-                            Text("Update Entry", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight), colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)) {
-                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun CenteredSafePurgeGuardModal(
-    pocket: LedgerPocket,
-    balance: Double,
-    theme: ThemeColors,
-    onDismiss: () -> Unit,
-    onConfirm: () -> Unit
-) {
-    val canDeactivate = balance == 0.0
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
-            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 380.dp).border(1.dp, theme.borderLight, RoundedCornerShape(14.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(if (pocket.name.startsWith("Recurring")) "TERMINATE MANDATE" else if (pocket.name.startsWith("Transaction")) "DELETE ENTRY" else "DEACTIVATE ACCOUNT", color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    Text("Are you sure you want to proceed with \"${pocket.name}\"?", color = theme.textMuted, fontSize = 12.sp)
-
-                    if (!canDeactivate) {
-                        Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(theme.mildRed.copy(alpha = 0.15f)).padding(10.dp)) {
-                            Text("Active balance is ₹${String.format("%,.0f", abs(balance))}. Settle balance to ₹0 first before deactivating.", color = theme.mildRed, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                        }
-                    } else {
-                        Text("Action confirmed. Affected balances will recalculate automatically.", color = theme.mildGreen, fontSize = 11.5.sp)
-                    }
-
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = onConfirm, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), colors = ButtonDefaults.buttonColors(containerColor = theme.mildRed), enabled = canDeactivate) {
-                            Text("Confirm & Delete", color = Color.White, fontWeight = FontWeight.Bold)
-                        }
-                        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)) {
-                            Text("Cancel", color = theme.textMuted)
-                        }
-                    }
-                }
-            }
         }
     }
 }
