@@ -44,7 +44,6 @@ class VaultLedgerEngine(
         val sourcePocket = dao.getPocketById(sourcePocketId)
             ?: return@withContext VaultExecutionResult.OverdraftError("Source account not found. Please select an active account.")
 
-        // Enforce credit card inflow rules: only allow specific categories and disallow overcrediting
         if (movementNature == MovementNature.OPERATING_INCOME && sourcePocket.type == PocketType.CREDIT_CARD) {
             val validCardInflowCategories = listOf("Cashback", "Reward Credit", "Merchant Refund")
             if (!validCardInflowCategories.any { it.equals(category, ignoreCase = true) }) {
@@ -67,12 +66,33 @@ class VaultLedgerEngine(
             }
         }
 
-        // Intercept Loan / EMI Logic to enforce double-entry repayment routing
+        // Enforce Loan Target Caps and Directionality
         val effectiveNature = if (movementNature == MovementNature.OPERATING_EXPENSE && targetPocketId != null) {
             val target = dao.getPocketById(targetPocketId)
             if (target?.type == PocketType.LIABILITY_LOAN) MovementNature.EMI_PRINCIPAL else movementNature
         } else {
             movementNature
+        }
+
+        if (targetPocketId != null) {
+            val tgtPocket = dao.getPocketById(targetPocketId)
+            if (tgtPocket != null) {
+                if (effectiveNature == MovementNature.EMI_PRINCIPAL && tgtPocket.type == PocketType.LIABILITY_LOAN) {
+                    val tgtBal = dao.computePocketBalance(tgtPocket.id, System.currentTimeMillis())
+                    val outstanding = abs(tgtBal)
+                    if (amount > outstanding) {
+                        return@withContext VaultExecutionResult.OverdraftError("Repayment of ₹${String.format("%,.0f", amount)} exceeds outstanding loan principal of ₹${String.format("%,.0f", outstanding)}.")
+                    }
+                }
+                
+                if (effectiveNature == MovementNature.TRANSFER && tgtPocket.type == PocketType.CREDIT_CARD) {
+                    val tgtBal = dao.computePocketBalance(tgtPocket.id, System.currentTimeMillis())
+                    val outstanding = abs(tgtBal)
+                    if (amount > outstanding) {
+                        return@withContext VaultExecutionResult.OverdraftError("Payment of ₹${String.format("%,.0f", amount)} exceeds outstanding card dues of ₹${String.format("%,.0f", outstanding)}.")
+                    }
+                }
+            }
         }
 
         if (effectiveNature == MovementNature.TRANSFER || effectiveNature == MovementNature.EMI_PRINCIPAL) {
@@ -125,6 +145,8 @@ class VaultLedgerEngine(
                         "Charge of ₹${String.format("%,.0f", amount)} exceeds available limit on ${sourcePocket.name} (Available: ₹${String.format("%,.0f", remainingCredit)})."
                     )
                 }
+            } else if (sourcePocket.type == PocketType.LIABILITY_LOAN) {
+                return@withContext VaultExecutionResult.OverdraftError("Cannot withdraw or transfer directly from a Liability Loan account.")
             }
         }
 
