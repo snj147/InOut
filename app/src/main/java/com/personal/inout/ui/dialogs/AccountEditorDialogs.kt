@@ -121,7 +121,7 @@ fun CreateAccountDialog(
                     Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text("NEW ACCOUNT SETUP", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
-                            OutlinedButton(onClick = { documentPickerLauncher.launch(arrayOf("application/pdf", "image/*")) }, shape = RoundedCornerShape(6.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.accent), enabled = !isProcessingDocument) {
+                            OutlinedButton(onClick = { documentPickerLauncher.launch(arrayOf("application/pdf", "image/*", "text/csv", "text/plain")) }, shape = RoundedCornerShape(6.dp), contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.accent), enabled = !isProcessingDocument) {
                                 Icon(Icons.Default.UploadFile, contentDescription = null, tint = theme.accent, modifier = Modifier.size(13.dp))
                                 Spacer(Modifier.width(4.dp))
                                 Text(if (isProcessingDocument) "Scanning..." else "Import PDF / Sheet", color = theme.accent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
@@ -189,10 +189,12 @@ fun CreateAccountDialog(
                                         }
                                     }
                                     CompactInputField(value = initialValuation, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input }, placeholder = "Amount ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                                    
                                     val activeFundingPocket = allLiquidPockets.firstOrNull { it.id == peerFundingPocketId }
                                     Box(modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showFundingDropdown = true }.padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                            Text(text = if (peerIsLendMode) "Debited From: ${activeFundingPocket?.name ?: "No Bank Account"}" else "Credited To: ${activeFundingPocket?.name ?: "No Bank Account"}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                                            val directionTxt = if (peerIsLendMode) "Lent From:" else "Borrowed Into:"
+                                            Text(text = "$directionTxt${activeFundingPocket?.name ?: "Must select bank account"}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
                                             Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = theme.accent)
                                         }
                                         DropdownMenu(expanded = showFundingDropdown, onDismissRequest = { showFundingDropdown = false }, modifier = Modifier.background(theme.surface)) {
@@ -224,9 +226,13 @@ fun CreateAccountDialog(
                             }
                         }
 
+                        // STRICT Validation Rule to prevent ghost peer transactions
                         val isFormValid = when (type) {
                             PocketType.LIABILITY_LOAN -> name.isNotBlank() && (initialValuation.toDoubleOrNull() ?: 0.0) > 0.0 && (targetAmt.toDoubleOrNull() ?: 0.0) > 0.0 && (dueDay.toIntOrNull() ?: 0) in 1..31
-                            PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE -> name.isNotBlank() && (initialValuation.toDoubleOrNull() ?: 0.0) > 0.0
+                            PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE -> {
+                                val amt = initialValuation.toDoubleOrNull() ?: 0.0
+                                name.isNotBlank() && (amt == 0.0 || (amt > 0.0 && peerFundingPocketId != null))
+                            }
                             PocketType.CREDIT_CARD -> name.isNotBlank() && (limit.toDoubleOrNull() ?: 0.0) > 0.0
                             else -> name.isNotBlank()
                         }
@@ -288,46 +294,4 @@ fun BatchBalanceSheetStagingView(stagedItems: List<StagedStatementLineItem>, the
 }
 
 @Composable
-fun EditAccountDialog(pocket: LedgerPocket, theme: ThemeColors, onDismiss: () -> Unit, onSave: (String, Double, Int, Double, Long) -> Unit) {
-    var name by remember { mutableStateOf(pocket.name) }
-    var limit by remember { mutableStateOf(if (pocket.creditLimit > 0.0) String.format("%.0f", pocket.creditLimit) else "") }
-    var dueDay by remember { mutableStateOf(if (pocket.billDueDay > 0) pocket.billDueDay.toString() else "") }
-    var targetAmt by remember { mutableStateOf(if (pocket.targetGoalAmount > 0.0) String.format("%.0f", pocket.targetGoalAmount) else "") }
-    var targetDateEpoch by remember { mutableStateOf(if (pocket.goalTargetDate > 0) pocket.goalTargetDate else System.currentTimeMillis() + (30L * 24 * 3600 * 1000L)) }
-    var showDatePicker by remember { mutableStateOf(false) }
-
-    val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(targetDateEpoch))
-    if (showDatePicker) CustomCalendarDialog(initialDateMillis = targetDateEpoch, onDismiss = { showDatePicker = false }) { targetDateEpoch = it; showDatePicker = false }
-
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
-            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.9f).widthIn(max = 400.dp).border(1.dp, theme.borderLight, RoundedCornerShape(14.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
-                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(text = "EDIT ${pocket.name.uppercase(Locale.getDefault())}", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
-                    CompactInputField(value = name, onValueChange = { name = it }, placeholder = "Account Name", modifier = Modifier.fillMaxWidth())
-
-                    if (pocket.type == PocketType.CREDIT_CARD) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            CompactInputField(value = limit, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) limit = input }, placeholder = "Limit ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f))
-                            CompactInputField(value = dueDay, onValueChange = { input -> if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) dueDay = input }, placeholder = "Due Day (1-31)", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(0.9f))
-                        }
-                    }
-
-                    if (pocket.type == PocketType.GOAL_POT) {
-                        CompactInputField(value = targetAmt, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input }, placeholder = "Target Goal Amount ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
-                    }
-
-                    val isValid = name.isNotBlank()
-                    Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { if (isValid) onSave(name, limit.toDoubleOrNull() ?: pocket.creditLimit, dueDay.toIntOrNull() ?: pocket.billDueDay, targetAmt.toDoubleOrNull() ?: pocket.targetGoalAmount, targetDateEpoch) }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
-                            Text("Save Changes", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        }
-                        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight), colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)) {
-                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
+fun EditAccountDialog(pocket: LedgerPocket, theme: ThemeColors, onDismiss: () -> Unit, onSave: (String, Double, Int, Double, Long
