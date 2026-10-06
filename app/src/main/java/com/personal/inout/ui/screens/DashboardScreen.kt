@@ -523,10 +523,12 @@ fun DashboardScreen(db: AppDatabase) {
                         onSave = { name, type, limit, dueDay, targetAmt, targetDateEpoch, initialVal, interestRate, linkedAssetType ->
                             scope.launch {
                                 val pocketId = db.ledgerDao().insertPocket(LedgerPocket(name = name, type = type, creditLimit = limit, billDueDay = dueDay, targetGoalAmount = targetAmt, goalTargetDate = targetDateEpoch))
+                                
+                                // FIX: Clearer UX strings for Initial Position setups
                                 if (type == PocketType.LIABILITY_LOAN && linkedAssetType != null && initialVal > 0.0) {
                                     val assetId = db.ledgerDao().insertPocket(LedgerPocket(name = "$name - Asset", type = linkedAssetType))
-                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "Loan Principal baseline", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
-                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, assetId, null, initialVal, "Initial Position", "Asset Acquisition via Loan", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
+                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "$name Disbursement", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
+                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, assetId, null, initialVal, "Initial Position", "Asset Acquisition: $name", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
                                 } else if (initialVal > 0.0) {
                                     viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "Opening baseline for $name", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
                                 }
@@ -700,12 +702,13 @@ private fun FlatStreamRow(
     theme: ThemeColors,
     onLongClick: () -> Unit
 ) {
-    val isOut = tx.movementNature in listOf(MovementNature.OPERATING_EXPENSE, MovementNature.TRANSFER, MovementNature.DEPRECIATION_WRITE, MovementNature.EMI_PRINCIPAL)
+    // FIX: Explictly color Liability Baselines (Loans, Credit Cards, Peer Debt) as negative RED outputs
+    val sourcePocket = remember(tx, rawPockets) { rawPockets.firstOrNull { it.id == tx.sourcePocketId } }
+    val isDebtBaseline = tx.movementNature == MovementNature.OPENING_BASELINE && sourcePocket?.type in listOf(PocketType.LIABILITY_LOAN, PocketType.CREDIT_CARD, PocketType.PEER_PAYABLE)
+    val isOut = tx.movementNature in listOf(MovementNature.OPERATING_EXPENSE, MovementNature.TRANSFER, MovementNature.DEPRECIATION_WRITE, MovementNature.EMI_PRINCIPAL) || isDebtBaseline
+    
     val flowColor = if (isOut) theme.mildRed else theme.mildGreen
-
-    val accountName = remember(tx, rawPockets) {
-        rawPockets.firstOrNull { it.id == tx.sourcePocketId }?.name ?: "Account"
-    }
+    val accountName = sourcePocket?.name ?: "Account"
 
     Row(
         modifier = Modifier
