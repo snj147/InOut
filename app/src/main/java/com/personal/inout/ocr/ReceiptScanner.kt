@@ -112,16 +112,16 @@ object ReceiptScanner {
         val lowerCaseDocument = rawText.lowercase()
 
         val statementKeywords = listOf(
-            "balance sheet", "assets and liabilities", "statement of affairs",
+            "balance sheet", "assets", "liabilities", "statement of affairs",
             "schedule iii", "itr-3", "sundry debtors", "sundry creditors",
-            "capital account", "fixed assets", "trial balance", "portfolio valuation",
-            "account statement", "net worth statement"
+            "capital", "fixed assets", "trial balance", "portfolio",
+            "account statement", "net worth", "equity"
         )
 
         val balanceSheetHits = statementKeywords.count { lowerCaseDocument.contains(it) }
         val stagedItems = extractStagedBalanceSheetItems(lines)
 
-        val isBalanceSheetStatement = balanceSheetHits >= 1 || stagedItems.size >= 3
+        val isBalanceSheetStatement = balanceSheetHits >= 2 || stagedItems.size >= 3
 
         if (isBalanceSheetStatement && stagedItems.isNotEmpty()) {
             return ParsedReceipt(
@@ -193,53 +193,52 @@ object ReceiptScanner {
         val lineAmountPattern = Pattern.compile("""(.*?)[\s:₹rs\.]*([\d,]+\.?\d{0,2})$""")
 
         for (line in lines) {
-            val matcher = lineAmountPattern.matcher(line)
-            if (matcher.find()) {
-                val label = matcher.group(1)?.trim() ?: continue
-                val amountStr = matcher.group(2)?.replace(",", "") ?: continue
-                val amt = amountStr.toDoubleOrNull() ?: continue
+            var label = ""
+            var amt = 0.0
 
-                if (label.length in 3..50 && amt > 0.0) {
-                    val inferredType = when {
-                        label.contains("gold", ignoreCase = true) ||
-                                label.contains("property", ignoreCase = true) ||
-                                label.contains("vehicle", ignoreCase = true) ||
-                                label.contains("flat", ignoreCase = true) ||
-                                label.contains("land", ignoreCase = true) ||
-                                label.contains("car", ignoreCase = true) -> PocketType.FIXED_ASSET
-
-                        label.contains("fund", ignoreCase = true) ||
-                                label.contains("share", ignoreCase = true) ||
-                                label.contains("equity", ignoreCase = true) ||
-                                label.contains("ppf", ignoreCase = true) ||
-                                label.contains("nps", ignoreCase = true) ||
-                                label.contains("deposit", ignoreCase = true) ||
-                                label.contains("fd", ignoreCase = true) -> PocketType.INVESTMENT
-
-                        label.contains("loan", ignoreCase = true) ||
-                                label.contains("borrow", ignoreCase = true) ||
-                                label.contains("mortgage", ignoreCase = true) ||
-                                label.contains("overdraft", ignoreCase = true) -> PocketType.LIABILITY_LOAN
-
-                        label.contains("card", ignoreCase = true) -> PocketType.CREDIT_CARD
-
-                        label.contains("wallet", ignoreCase = true) -> PocketType.PREPAID_WALLET
-
-                        label.contains("receivable", ignoreCase = true) ||
-                                label.contains("debtor", ignoreCase = true) -> PocketType.PEER_RECEIVABLE
-
-                        else -> PocketType.LIQUID
+            // FIX: Smart CSV Splitting Logic
+            if (line.contains(",")) {
+                val tokens = line.split(",")
+                for (i in tokens.indices.reversed()) {
+                    val potentialNum = tokens[i].replace("\"", "").trim().toDoubleOrNull()
+                    if (potentialNum != null && potentialNum > 0) {
+                        amt = potentialNum
+                        // The label is usually the column directly preceding the amount
+                        label = if (i > 0) tokens[i-1].replace("\"", "").trim() else "Extracted Account"
+                        break
                     }
-
-                    staged.add(
-                        StagedStatementLineItem(
-                            rawExtractedName = label,
-                            inferredType = inferredType,
-                            extractedAmount = amt,
-                            isSelectedForCommit = true
-                        )
-                    )
                 }
+            } else {
+                // Fallback for raw standard text
+                val matcher = lineAmountPattern.matcher(line)
+                if (matcher.find()) {
+                    label = matcher.group(1)?.trim() ?: ""
+                    amt = matcher.group(2)?.replace(",", "")?.toDoubleOrNull() ?: 0.0
+                }
+            }
+
+            if (label.length in 3..60 && amt > 0.0) {
+                val lowerLabel = label.lowercase()
+                val inferredType = when {
+                    lowerLabel.contains("payable") || lowerLabel.contains("creditor") -> PocketType.PEER_PAYABLE
+                    lowerLabel.contains("receivable") || lowerLabel.contains("debtor") || lowerLabel.contains("advance") -> PocketType.PEER_RECEIVABLE
+                    lowerLabel.contains("loan") || lowerLabel.contains("borrow") || lowerLabel.contains("mortgage") -> PocketType.LIABILITY_LOAN
+                    lowerLabel.contains("card") -> PocketType.CREDIT_CARD
+                    lowerLabel.contains("gold") || lowerLabel.contains("property") || lowerLabel.contains("vehicle") || lowerLabel.contains("computer") || lowerLabel.contains("equipment") || lowerLabel.contains("asset") -> PocketType.FIXED_ASSET
+                    lowerLabel.contains("fund") || lowerLabel.contains("share") || lowerLabel.contains("equity") || lowerLabel.contains("investment") -> PocketType.INVESTMENT
+                    lowerLabel.contains("capital") || lowerLabel.contains("retained") || lowerLabel.contains("profit") -> PocketType.GOAL_POT
+                    lowerLabel.contains("wallet") || lowerLabel.contains("prepaid") -> PocketType.PREPAID_WALLET
+                    else -> PocketType.LIQUID
+                }
+
+                staged.add(
+                    StagedStatementLineItem(
+                        rawExtractedName = label,
+                        inferredType = inferredType,
+                        extractedAmount = amt,
+                        isSelectedForCommit = true
+                    )
+                )
             }
         }
         return staged
