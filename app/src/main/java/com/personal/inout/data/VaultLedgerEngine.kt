@@ -42,7 +42,7 @@ class VaultLedgerEngine(
         if (movementNature == MovementNature.OPERATING_EXPENSE || movementNature == MovementNature.TRANSFER || movementNature == MovementNature.EMI_PRINCIPAL) {
             val availableBal = dao.computePocketBalance(sourcePocketId)
             
-            // FIX: Exempt Peer Accounts from overdraft so you can borrow money into a 0 balance account
+            // FIX: Exempt Peer Accounts from overdraft blocks so you can borrow money
             val isExemptFromOverdraft = srcPocket.type in listOf(PocketType.CREDIT_CARD, PocketType.LIABILITY_LOAN, PocketType.PEER_PAYABLE, PocketType.PEER_RECEIVABLE)
 
             if (availableBal < amount && !isExemptFromOverdraft) {
@@ -145,7 +145,7 @@ class VaultLedgerEngine(
             set(Calendar.MILLISECOND, 0)
         }.timeInMillis
         
-        val txs = dao.observeHistoricalTransactions().firstOrNull() ?: emptyList()
+        val txs = dao.observeHistoricalTransactions(Long.MAX_VALUE).firstOrNull() ?: emptyList()
         val todayBurn = txs.filter { it.timestamp >= todayStart && it.movementNature == MovementNature.OPERATING_EXPENSE }.sumOf { it.amount }
 
         SolvencyMetricDeck(
@@ -225,40 +225,44 @@ class VaultLedgerEngine(
 
     suspend fun catchUpRecurringRules(): Int = withContext(Dispatchers.IO) {
         val now = System.currentTimeMillis()
-        val templates = dao.observeHistoricalTransactions(now).firstOrNull()?.filter { it.isRecurring && it.recurringFrequency != "NONE" } ?: return@withContext 0
+        // Pull absolutely all historical transactions to find templates
+        val allTxs = dao.observeHistoricalTransactions(Long.MAX_VALUE).firstOrNull() ?: emptyList()
+        val activeTemplates = allTxs.filter { it.isRecurring && it.recurringFrequency != "NONE" }
         
         var executedCount = 0
-        val newTxs = mutableListOf<LedgerTransaction>()
 
-        for (template in templates) {
-            var executionTime = template.timestamp
-            
-            // FIX: Write the transaction for the CURRENT cycle before advancing the clock
-            while (executionTime <= now) {
-                newTxs.add(template.copy(id = 0, timestamp = executionTime, isRecurring = false, recurringFrequency = "NONE"))
-                executedCount++
+        for (template in activeTemplates) {
+            if (template.timestamp <= now) {
+                var currentExecutionTime = template.timestamp
                 
-                val cal = Calendar.getInstance().apply { timeInMillis = executionTime }
-                when (template.recurringFrequency) {
-                    "DAILY" -> cal.add(Calendar.DAY_OF_YEAR, 1)
-                    "WEEKLY" -> cal.add(Calendar.WEEK_OF_YEAR, 1)
-                    "MONTHLY" -> cal.add(Calendar.MONTH, 1)
-                    "YEARLY" -> cal.add(Calendar.YEAR, 1)
-                    else -> break
+                // 1. Convert the current instance into a standard, non-recurring ledger entry
+                dao.updateTransaction(template.copy(isRecurring = false, recurringFrequency = "NONE"))
+                
+                // 2. Spawn missed instances, and eventually set the new future template
+                while (true) {
+                    val cal = Calendar.getInstance().apply { timeInMillis = currentExecutionTime }
+                    when (template.recurringFrequency) {
+                        "DAILY" -> cal.add(Calendar.DAY_OF_YEAR, 1)
+                        "WEEKLY" -> cal.add(Calendar.WEEK_OF_YEAR, 1)
+                        "MONTHLY" -> cal.add(Calendar.MONTH, 1)
+                        "YEARLY" -> cal.add(Calendar.YEAR, 1)
+                        else -> break
+                    }
+                    val nextExecutionTime = cal.timeInMillis
+                    
+                    if (nextExecutionTime <= now) {
+                        // Spawn missed execution in the past
+                        dao.insertTransaction(template.copy(id = 0, timestamp = nextExecutionTime, isRecurring = false, recurringFrequency = "NONE"))
+                        executedCount++
+                        currentExecutionTime = nextExecutionTime
+                    } else {
+                        // Spawn the NEXT active template in the future
+                        dao.insertTransaction(template.copy(id = 0, timestamp = nextExecutionTime, isRecurring = true, recurringFrequency = template.recurringFrequency))
+                        break
+                    }
                 }
-                executionTime = cal.timeInMillis
-            }
-            
-            // Save the next future date back to the template
-            if (executionTime > template.timestamp) {
-                dao.updateTransaction(template.copy(timestamp = executionTime))
             }
         }
-
-        if (newTxs.isNotEmpty()) {
-            dao.insertTransactionsBatch(newTxs)
-        }
-
         executedCount
     }
 }
