@@ -524,7 +524,7 @@ fun DashboardScreen(db: AppDatabase) {
                             scope.launch {
                                 val pocketId = db.ledgerDao().insertPocket(LedgerPocket(name = name, type = type, creditLimit = limit, billDueDay = dueDay, targetGoalAmount = targetAmt, goalTargetDate = targetDateEpoch))
                                 
-                                // FIX: Clearer UX strings for Initial Position setups
+                                // FIX: Clearer UX strings for Initial Position setups (e.g. "[Name] Disbursement")
                                 if (type == PocketType.LIABILITY_LOAN && linkedAssetType != null && initialVal > 0.0) {
                                     val assetId = db.ledgerDao().insertPocket(LedgerPocket(name = "$name - Asset", type = linkedAssetType))
                                     viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "$name Disbursement", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
@@ -702,8 +702,9 @@ private fun FlatStreamRow(
     theme: ThemeColors,
     onLongClick: () -> Unit
 ) {
-    // FIX: Explictly color Liability Baselines (Loans, Credit Cards, Peer Debt) as negative RED outputs
     val sourcePocket = remember(tx, rawPockets) { rawPockets.firstOrNull { it.id == tx.sourcePocketId } }
+    
+    // FIX: Force liability/debt baselines to render strictly as Negative Red items
     val isDebtBaseline = tx.movementNature == MovementNature.OPENING_BASELINE && sourcePocket?.type in listOf(PocketType.LIABILITY_LOAN, PocketType.CREDIT_CARD, PocketType.PEER_PAYABLE)
     val isOut = tx.movementNature in listOf(MovementNature.OPERATING_EXPENSE, MovementNature.TRANSFER, MovementNature.DEPRECIATION_WRITE, MovementNature.EMI_PRINCIPAL) || isDebtBaseline
     
