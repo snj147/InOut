@@ -8,6 +8,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
@@ -42,12 +43,32 @@ object ReceiptScanner {
 
     suspend fun processDocumentUri(context: Context, uri: Uri): ParsedReceipt = withContext(Dispatchers.IO) {
         val mimeType = context.contentResolver.getType(uri) ?: ""
-        if (mimeType.contains("pdf", ignoreCase = true) || uri.toString().endsWith(".pdf", ignoreCase = true)) {
+        val filename = getFileName(context, uri)
+
+        // FIX: Route raw text/CSV files directly to the parser, bypassing the ImageDecoder
+        if (mimeType.contains("text") || mimeType.contains("csv") || filename.endsWith(".csv", ignoreCase = true) || filename.endsWith(".txt", ignoreCase = true)) {
+            val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
+            parseDocumentText(text)
+        } else if (mimeType.contains("pdf", ignoreCase = true) || filename.endsWith(".pdf", ignoreCase = true)) {
             processPdfUri(context, uri)
         } else {
             val bitmap = loadBitmapFromUri(context, uri)
             processReceiptBitmap(bitmap)
         }
+    }
+
+    private fun getFileName(context: Context, uri: Uri): String {
+        var result = ""
+        if (uri.scheme == "content") {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (index != -1) result = cursor.getString(index)
+                }
+            }
+        }
+        if (result.isEmpty()) result = uri.path ?: ""
+        return result
     }
 
     suspend fun processReceiptBitmap(bitmap: Bitmap): ParsedReceipt = withContext(Dispatchers.IO) {
@@ -196,20 +217,17 @@ object ReceiptScanner {
             var label = ""
             var amt = 0.0
 
-            // FIX: Smart CSV Splitting Logic
             if (line.contains(",")) {
                 val tokens = line.split(",")
                 for (i in tokens.indices.reversed()) {
                     val potentialNum = tokens[i].replace("\"", "").trim().toDoubleOrNull()
                     if (potentialNum != null && potentialNum > 0) {
                         amt = potentialNum
-                        // The label is usually the column directly preceding the amount
                         label = if (i > 0) tokens[i-1].replace("\"", "").trim() else "Extracted Account"
                         break
                     }
                 }
             } else {
-                // Fallback for raw standard text
                 val matcher = lineAmountPattern.matcher(line)
                 if (matcher.find()) {
                     label = matcher.group(1)?.trim() ?: ""
