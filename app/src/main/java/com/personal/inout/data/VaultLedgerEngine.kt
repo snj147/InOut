@@ -42,7 +42,10 @@ class VaultLedgerEngine(
         if (movementNature == MovementNature.OPERATING_EXPENSE || movementNature == MovementNature.TRANSFER || movementNature == MovementNature.EMI_PRINCIPAL) {
             val availableBal = dao.computePocketBalance(sourcePocketId)
             
-            if (availableBal < amount && srcPocket.type != PocketType.CREDIT_CARD && srcPocket.type != PocketType.LIABILITY_LOAN) {
+            // FIX: Exempt Peer Accounts from overdraft so you can borrow money into a 0 balance account
+            val isExemptFromOverdraft = srcPocket.type in listOf(PocketType.CREDIT_CARD, PocketType.LIABILITY_LOAN, PocketType.PEER_PAYABLE, PocketType.PEER_RECEIVABLE)
+
+            if (availableBal < amount && !isExemptFromOverdraft) {
                 if (autoSplitEnabled && movementNature == MovementNature.OPERATING_EXPENSE) {
                     val shortfall = amount - availableBal
                     val secondaryAccounts = dao.getAllActivePocketsSnapshot()
@@ -125,7 +128,6 @@ class VaultLedgerEngine(
 
         val trueSafeLiquid = (totalLiquid - totalCardDues).coerceAtLeast(0.0)
 
-        // Strict type-based asset and liability calculation for Indian accounting principles
         val assetTypes = listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET, PocketType.INVESTMENT, PocketType.FIXED_ASSET, PocketType.GOAL_POT, PocketType.PEER_RECEIVABLE)
         val liabilityTypes = listOf(PocketType.CREDIT_CARD, PocketType.LIABILITY_LOAN, PocketType.PEER_PAYABLE)
 
@@ -136,7 +138,6 @@ class VaultLedgerEngine(
         val dailyBurnCeiling = prefs.getFloat("daily_burn_ceiling", 500f).toDouble()
         val runwayDays = if (dailyBurnCeiling > 0) (trueSafeLiquid / dailyBurnCeiling).toLong() else 0L
 
-        // Calculate actual daily burn rate for today
         val todayStart = Calendar.getInstance().apply {
             set(Calendar.HOUR_OF_DAY, 0)
             set(Calendar.MINUTE, 0)
@@ -230,9 +231,14 @@ class VaultLedgerEngine(
         val newTxs = mutableListOf<LedgerTransaction>()
 
         for (template in templates) {
-            var nextExecution = template.timestamp
-            while (nextExecution <= now) {
-                val cal = Calendar.getInstance().apply { timeInMillis = nextExecution }
+            var executionTime = template.timestamp
+            
+            // FIX: Write the transaction for the CURRENT cycle before advancing the clock
+            while (executionTime <= now) {
+                newTxs.add(template.copy(id = 0, timestamp = executionTime, isRecurring = false, recurringFrequency = "NONE"))
+                executedCount++
+                
+                val cal = Calendar.getInstance().apply { timeInMillis = executionTime }
                 when (template.recurringFrequency) {
                     "DAILY" -> cal.add(Calendar.DAY_OF_YEAR, 1)
                     "WEEKLY" -> cal.add(Calendar.WEEK_OF_YEAR, 1)
@@ -240,15 +246,12 @@ class VaultLedgerEngine(
                     "YEARLY" -> cal.add(Calendar.YEAR, 1)
                     else -> break
                 }
-                nextExecution = cal.timeInMillis
-
-                if (nextExecution <= now) {
-                    newTxs.add(template.copy(id = 0, timestamp = nextExecution, isRecurring = false, recurringFrequency = "NONE"))
-                    executedCount++
-                }
+                executionTime = cal.timeInMillis
             }
-            if (nextExecution > template.timestamp) {
-                dao.updateTransaction(template.copy(timestamp = nextExecution))
+            
+            // Save the next future date back to the template
+            if (executionTime > template.timestamp) {
+                dao.updateTransaction(template.copy(timestamp = executionTime))
             }
         }
 
