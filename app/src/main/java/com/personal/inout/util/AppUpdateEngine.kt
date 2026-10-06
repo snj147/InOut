@@ -34,10 +34,12 @@ object AppUpdateEngine {
 
     suspend fun checkForUpdate(context: Context): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         try {
-            val url = URL(GITHUB_REPO_API)
+            // FIX: Add cache-busting timestamp to bypass GitHub's stale API cache
+            val url = URL("$GITHUB_REPO_API?t=${System.currentTimeMillis()}")
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
             conn.setRequestProperty("Accept", "application/vnd.github.v3+json")
+            conn.setRequestProperty("Cache-Control", "no-cache")
 
             if (conn.responseCode == 200) {
                 val response = conn.inputStream.bufferedReader().readText()
@@ -57,7 +59,10 @@ object AppUpdateEngine {
 
                 val currentVersion = context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0.0"
                 
-                val hasUpdate = compareVersions(tagName.replace("v", ""), currentVersion.replace("v", "")) > 0
+                val cleanTag = tagName.replace(Regex("[^0-9.]"), "")
+                val cleanCurrent = currentVersion.replace(Regex("[^0-9.]"), "")
+                
+                val hasUpdate = compareVersions(cleanTag, cleanCurrent) > 0
                 Result.success(UpdateInfo(hasUpdate, tagName, downloadUrl, releaseNotes))
             } else {
                 Result.failure(Exception("GitHub API returned ${conn.responseCode}"))
@@ -126,7 +131,6 @@ object AppUpdateEngine {
                         zis.copyTo(fos)
                     }
                     
-                    // We check the internal timestamp of the zip entry to ensure we grab the most recent compile
                     if (entryTime > latestTime) {
                         latestApk?.delete() // Delete the older apk
                         latestApk = tempOutFile
