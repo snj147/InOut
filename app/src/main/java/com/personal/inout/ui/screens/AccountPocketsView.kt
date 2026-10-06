@@ -110,10 +110,8 @@ fun AccountPocketsView(
                     UnifiedStatementGroup(theme) {
                         debtPockets.forEachIndexed { index, pocket ->
                             val bal = pocketBalances[pocket.id] ?: 0.0
-                            val outstanding = abs(bal) // Strict absolute value to remove mathematical minus signs
+                            val outstanding = abs(bal)
                             val dueStr = if (pocket.billDueDay > 0) "Due ${pocket.billDueDay}th" else "Statement Balance"
-                            
-                            // If a credit card has a positive mathematical balance, it means it's overpaid (cashback/refund)
                             val isCardOverpaid = pocket.type == PocketType.CREDIT_CARD && bal > 0.0
                             val balColor = if (outstanding == 0.0) theme.textBright else if (isCardOverpaid) theme.mildGreen else theme.mildRed
 
@@ -143,18 +141,19 @@ fun AccountPocketsView(
                     UnifiedStatementGroup(theme) {
                         capitalPockets.forEachIndexed { index, pocket ->
                             val bal = pocketBalances[pocket.id] ?: 0.0
-                            val absoluteBal = abs(bal) // Removes minus signs even if a peer overpays
+                            val absoluteBal = abs(bal)
                             val icon = when (pocket.type) { PocketType.INVESTMENT -> Icons.Default.TrendingUp; PocketType.GOAL_POT -> Icons.Default.Adjust; PocketType.FIXED_ASSET -> Icons.Default.Domain; else -> Icons.Default.People }
                             
                             val isNegativeAsset = bal < 0.0
-                            val balColor = if (absoluteBal == 0.0) theme.textBright else if (isNegativeAsset) theme.mildRed else theme.accent
+                            // FIX: Capital Assets and Receivables now render purely green unless they're strictly negative
+                            val balColor = if (absoluteBal == 0.0) theme.textBright else if (isNegativeAsset) theme.mildRed else theme.mildGreen
 
                             UnifiedAccountRow(
                                 title = pocket.name,
                                 sub = when (pocket.type) { PocketType.INVESTMENT -> "Mark-to-Market Portfolio Asset"; PocketType.GOAL_POT -> "Quarantined Target: ${pocket.targetGoalAmount.toIndianRupee()}"; PocketType.FIXED_ASSET -> "WDV Capital Asset"; else -> "Sundry Debtor (Receivable)" },
                                 balanceDisplay = if (isPrivacyMode) "₹ •••" else if (absoluteBal == 0.0) "₹ 0" else absoluteBal.toIndianRupee(),
                                 balanceColor = balColor,
-                                icon = icon, iconColor = theme.accent, theme = theme,
+                                icon = icon, iconColor = theme.mildGreen, theme = theme,
                                 onLongPress = { selectedContextPocket = pocket to bal }
                             )
                             if (index < capitalPockets.lastIndex) HorizontalDivider(color = theme.borderLight.copy(alpha = 0.4f), thickness = 0.5.dp)
