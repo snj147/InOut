@@ -22,6 +22,12 @@ import kotlin.math.abs
 
 object PdfDossierExporter {
 
+    private val TAX_LIMITS = mapOf(
+        "80C" to 150000L * 100L,
+        "80D" to 75000L * 100L,
+        "80CCD(1B) NPS" to 50000L * 100L
+    )
+
     suspend fun generateAndShareDossier(
         context: Context,
         fyStartYear: Int
@@ -40,7 +46,6 @@ object PdfDossierExporter {
             val rawPockets = dao.getAllActivePocketsSnapshot()
             val balances = rawPockets.associate { it.id to dao.computePocketBalance(it.id, toEpoch) }
 
-            // 1. Capital Reconciliation Prep
             val openingTxs = dao.getTransactionsBetween(0, fromEpoch - 1)
             var openingCapital = 0L
             openingTxs.forEach { tx ->
@@ -60,7 +65,7 @@ object PdfDossierExporter {
 
             val incomeByHead = mutableMapOf("Salary" to 0L, "Business/Profession" to 0L, "Capital Gains" to 0L, "House Property" to 0L, "Other Sources" to 0L)
             val taxDeductions = mutableMapOf<String, Long>()
-            val monthlyFlows = mutableMapOf<String, Pair<Long, Long>>() // Month -> (Income, Expense)
+            val monthlyFlows = mutableMapOf<String, Pair<Long, Long>>()
 
             val monthFormatter = SimpleDateFormat("MMM yyyy", Locale.getDefault())
 
@@ -109,11 +114,11 @@ object PdfDossierExporter {
 
             val closingCapital = openingCapital + fySurplus - fyDrawings
 
-            // PDF Setup
             val document = PdfDocument()
             val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
             
             val titlePaint = Paint().apply { textSize = 16f; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); color = Color.BLACK }
+            val subPaint = Paint().apply { textSize = 10f; color = Color.DKGRAY }
             val secPaint = Paint().apply { textSize = 12f; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); color = Color.BLACK }
             val boldPaint = Paint().apply { textSize = 10f; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); color = Color.BLACK }
             val textPaint = Paint().apply { textSize = 10f; color = Color.DKGRAY }
@@ -195,7 +200,6 @@ object PdfDossierExporter {
             
             val duplicateCount = fyTxs.groupBy { "${it.amount}_${it.timestamp / 86400000}" }.count { it.value.size > 1 }
             
-            // Check 1: Balance Sheet Tally
             var totalAssets = 0L; var totalLiabs = 0L
             rawPockets.forEach { p -> 
                 val b = balances[p.id] ?: 0L
@@ -318,7 +322,6 @@ object PdfDossierExporter {
             
             document.finishPage(page)
 
-            // Final Write
             val exportDir = File(context.cacheDir, "dossiers").apply { mkdirs() }
             val file = File(exportDir, "InOut_Financial_Report_FY${fyStartYear}.pdf")
             FileOutputStream(file).use { out -> document.writeTo(out) }
