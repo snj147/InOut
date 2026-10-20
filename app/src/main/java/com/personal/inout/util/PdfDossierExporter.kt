@@ -122,7 +122,6 @@ object PdfDossierExporter {
                 }
             }
 
-            // Using derived actual capital to prevent single-entry mismatches from breaking the sheet
             var totalAssets = 0L; var totalLiabs = 0L
             rawPockets.forEach { p -> 
                 val b = balances[p.id] ?: 0L
