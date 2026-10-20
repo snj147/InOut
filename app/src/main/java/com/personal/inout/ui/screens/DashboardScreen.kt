@@ -232,7 +232,7 @@ fun DashboardScreen(db: AppDatabase) {
             Scaffold(
                 containerColor = theme.bg,
                 topBar = { 
-                    DashboardHeader((uiState.totalInflowLifetime.toDouble() / 100.0), (uiState.totalOutflowLifetime.toDouble() / 100.0), isProUnlocked, isPrivacyMode) { isPrivacyMode = !isPrivacyMode } 
+                    DashboardHeader((uiState.totalInflowLifetime / 100.0), (uiState.totalOutflowLifetime / 100.0), isProUnlocked, isPrivacyMode) { isPrivacyMode = !isPrivacyMode } 
                 },
                 bottomBar = {
                     NavigationBar(
@@ -404,7 +404,7 @@ fun DashboardScreen(db: AppDatabase) {
                             onRequestCreateAccount = { reqType -> prefilledCreatePocketType = reqType; showCreatePocketDialog = true }
                         )
 
-                        2 -> IntelligenceScreen(uiState.rawPockets, uiState.pocketBalances, uiState.completedTransactions, uiState.recurringTemplates, emptyList(), (viewModel.dailyBurnCeiling.value * 100).toLong(), uiState.solvencyDeck.trueSafeLiquid, isPrivacyMode, theme)
+                        2 -> IntelligenceScreen(uiState.rawPockets, uiState.pocketBalances, uiState.completedTransactions, uiState.recurringTemplates, emptyList(), uiState.solvencyDeck.dailyBurnCeiling, uiState.solvencyDeck.trueSafeLiquid, isPrivacyMode, theme)
 
                         3 -> SettingsCardsList(
                             theme = theme, currentSha = currentInstalledSha, lastUpdatedDate = lastInstalledTimeFormatted, masterPin = masterSecurityPin,
@@ -428,7 +428,7 @@ fun DashboardScreen(db: AppDatabase) {
                             onOpenFeedback = { showFeedbackDialog = true },
                             onAutoSplitToggled = { viewModel.toggleAutoSplit(it) },
                             onThemeSelected = { mode -> activeThemeMode = mode; prefs.edit().putString("selected_theme", mode.name).apply() },
-                            onExportPdf = { scope.launch { PdfDossierExporter.generateAndShareDossier(context, uiState.pocketBalances, uiState.completedTransactions) } },
+                            onExportPdf = { fyYear -> scope.launch { PdfDossierExporter.generateAndShareDossier(context, fyYear) } },
                             onExportCsv = { CsvExporter.exportAndShareTransactions(context, uiState.completedTransactions) },
                             onExportEncryptedBackup = { backupExportLauncher.launch("inout_vault_backup_${System.currentTimeMillis()}.vault") },
                             onRestoreEncryptedBackup = { backupRestoreLauncher.launch(arrayOf("application/json", "*/*")) },
@@ -574,7 +574,7 @@ fun DashboardScreen(db: AppDatabase) {
                 if (showFeedbackDialog) FeedbackDialog(theme, { msg, isErr -> alertManager.showAlert(msg, if (isErr) AlertType.ERROR else AlertType.SUCCESS) }) { showFeedbackDialog = false }
 
                 if (showBurnEditDialog) {
-                    var burnInput by remember { mutableStateOf(viewModel.dailyBurnCeiling.value.toInt().toString()) }
+                    var burnInput by remember { mutableStateOf((viewModel.dailyBurnCeiling.value / 100.0).toInt().toString()) }
                     Dialog(onDismissRequest = { showBurnEditDialog = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
                         Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { showBurnEditDialog = false }, contentAlignment = Alignment.Center) {
                             Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 400.dp).border(1.dp, theme.borderLight, RoundedCornerShape(16.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
@@ -584,7 +584,7 @@ fun DashboardScreen(db: AppDatabase) {
                                     CompactInputField(value = burnInput, onValueChange = { input -> if (input.all { c -> c.isDigit() }) burnInput = input }, placeholder = "500", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
                                     val isValid = (burnInput.toDoubleOrNull() ?: 0.0) > 0.0
                                     Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Button(onClick = { if (isValid) { viewModel.updateBurnCeiling(burnInput.toDouble()); showBurnEditDialog = false } }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
+                                        Button(onClick = { if (isValid) { viewModel.updateBurnCeiling(burnInput.toDouble() * 100.0); showBurnEditDialog = false } }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
                                             Text("Save", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                                         }
                                         OutlinedButton(onClick = { showBurnEditDialog = false }, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)) {
@@ -626,7 +626,7 @@ fun DashboardScreen(db: AppDatabase) {
                         flowRecords = if (prefilledHistoryFilterPocketId != null) uiState.completedTransactions.filter { it.sourcePocketId == prefilledHistoryFilterPocketId || it.targetPocketId == prefilledHistoryFilterPocketId } else uiState.completedTransactions,
                         rawPockets = uiState.rawPockets, isPrivacyMode = isPrivacyMode, isProUser = isProUnlocked, onDismiss = { showAllRecordsSheet = false },
                         onEditRecord = { tx -> editingTransaction = tx }, onExportCsv = { CsvExporter.exportAndShareTransactions(context, uiState.completedTransactions) },
-                        onExportPdfDossier = { scope.launch { PdfDossierExporter.generateAndShareDossier(context, uiState.pocketBalances, uiState.completedTransactions) } }
+                        onExportPdfDossier = { showFySelectorForPdf(context, scope) }
                     )
                 }
             }
@@ -634,6 +634,16 @@ fun DashboardScreen(db: AppDatabase) {
             VaultFloatingTopOverlay(alertManager = alertManager, theme = theme)
         }
     }
+}
+
+// Helper to spawn FY selector from Search Sheet
+private fun showFySelectorForPdf(context: Context, scope: kotlinx.coroutines.CoroutineScope) {
+    // For simplicity from the deep sheet, we'll default to the current FY export.
+    // The main settings screen has the full explicit selector dialog.
+    val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+    val month = Calendar.getInstance().get(Calendar.MONTH)
+    val defaultFy = if (month >= Calendar.APRIL) currentYear else currentYear - 1
+    scope.launch { PdfDossierExporter.generateAndShareDossier(context, defaultFy) }
 }
 
 @Composable
