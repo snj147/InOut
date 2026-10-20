@@ -35,7 +35,7 @@ import kotlin.math.abs
 @Composable
 fun AccountPocketsView(
     rawPockets: List<LedgerPocket>,
-    pocketBalances: Map<Long, Long>, // MIGRATED TO PAISE
+    pocketBalances: Map<Long, Long>,
     recurringTransactions: List<LedgerTransaction>,
     isPrivacyMode: Boolean,
     onTransactPocket: (LedgerPocket) -> Unit,
@@ -197,7 +197,9 @@ fun AccountPocketsView(
 
     selectedContextPocket?.let { (pocket, bal) ->
         CenteredAccountVoucherModal(
-            pocket = pocket, balance = bal, theme = theme,
+            pocket = pocket, 
+            balance = bal / 100.0, 
+            theme = theme,
             onDismiss = { selectedContextPocket = null },
             onQuickAction = { selectedContextPocket = null; onTransactPocket(pocket) },
             onViewHistory = { selectedContextPocket = null; onViewTransactions(pocket.id) },
