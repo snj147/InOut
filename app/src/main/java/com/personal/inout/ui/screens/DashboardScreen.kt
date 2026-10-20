@@ -232,7 +232,7 @@ fun DashboardScreen(db: AppDatabase) {
             Scaffold(
                 containerColor = theme.bg,
                 topBar = { 
-                    DashboardHeader(uiState.totalInflowLifetime, uiState.totalOutflowLifetime, isProUnlocked, isPrivacyMode) { isPrivacyMode = !isPrivacyMode } 
+                    DashboardHeader((uiState.totalInflowLifetime.toDouble() / 100.0), (uiState.totalOutflowLifetime.toDouble() / 100.0), isProUnlocked, isPrivacyMode) { isPrivacyMode = !isPrivacyMode } 
                 },
                 bottomBar = {
                     NavigationBar(
@@ -324,10 +324,10 @@ fun DashboardScreen(db: AppDatabase) {
                                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxWidth()) { page ->
                                             when (page) {
-                                                0 -> MetricCarouselCard("SPENDABLE CASH (UPI/NEFT)", if (uiState.solvencyDeck.trueSafeLiquid > 0) "Solvent" else "Deficit", uiState.solvencyDeck.trueSafeLiquid > 0, if (isPrivacyMode) "₹ •••" else uiState.solvencyDeck.trueSafeLiquid.toIndianRupee(), "Spendable cash without debt", "Net Worth: ${uiState.solvencyDeck.totalNetWorth.toIndianRupee()}", theme) {}
-                                                1 -> MetricCarouselCard("RUNWAY SURVIVAL HORIZON", if (uiState.solvencyDeck.runwayDays > 30) "Comfortable" else "Critical", uiState.solvencyDeck.runwayDays > 30, if (isPrivacyMode) "•• Days" else "${uiState.solvencyDeck.runwayDays} Days", "Daily Target: ${viewModel.dailyBurnCeiling.value.toIndianRupee()}/day ✎", if (uiState.solvencyDeck.burnStatus == BurnPacingStatus.ON_TRACK) "Pacing Normal" else "Burn Spiked", theme) { showBurnEditDialog = true }
-                                                2 -> MetricCarouselCard("MONTH-END CASH FORECAST", if (uiState.solvencyDeck.hasEarlyDeficitAlert) "Deficit Alert" else "Healthy", !uiState.solvencyDeck.hasEarlyDeficitAlert, if (isPrivacyMode) "₹ •••" else uiState.solvencyDeck.projectedClosingLiquid.toIndianRupee(), "Deterministic Commitments", "Fixed Outflows Factored", theme) {}
-                                                3 -> MetricCarouselCard("STATUTORY NET WORTH (CAPITAL)", if (uiState.solvencyDeck.totalNetWorth >= 0) "Positive" else "Insolvent", uiState.solvencyDeck.totalNetWorth >= 0, if (isPrivacyMode) "₹ •••" else uiState.solvencyDeck.totalNetWorth.toIndianRupee(), "Assets Less Liabilities", "Balance Sheet", theme) {}
+                                                0 -> MetricCarouselCard("SPENDABLE CASH (UPI/NEFT)", if (uiState.solvencyDeck.trueSafeLiquid > 0L) "Solvent" else "Deficit", uiState.solvencyDeck.trueSafeLiquid > 0L, if (isPrivacyMode) "₹ •••" else (uiState.solvencyDeck.trueSafeLiquid / 100.0).toIndianRupee(), "Spendable cash without debt", "Net Worth: ${(uiState.solvencyDeck.totalNetWorth / 100.0).toIndianRupee()}", theme) {}
+                                                1 -> MetricCarouselCard("RUNWAY SURVIVAL HORIZON", if (uiState.solvencyDeck.runwayDays > 30) "Comfortable" else "Critical", uiState.solvencyDeck.runwayDays > 30, if (isPrivacyMode) "•• Days" else "${uiState.solvencyDeck.runwayDays} Days", "Daily Target: ${(uiState.solvencyDeck.dailyBurnCeiling / 100.0).toIndianRupee()}/day ✎", if (uiState.solvencyDeck.burnStatus == BurnPacingStatus.ON_TRACK) "Pacing Normal" else "Burn Spiked", theme) { showBurnEditDialog = true }
+                                                2 -> MetricCarouselCard("MONTH-END CASH FORECAST", if (uiState.solvencyDeck.hasEarlyDeficitAlert) "Deficit Alert" else "Healthy", !uiState.solvencyDeck.hasEarlyDeficitAlert, if (isPrivacyMode) "₹ •••" else (uiState.solvencyDeck.projectedClosingLiquid / 100.0).toIndianRupee(), "Deterministic Commitments", "Fixed Outflows Factored", theme) {}
+                                                3 -> MetricCarouselCard("FINANCIAL NET WORTH (CAPITAL)", if (uiState.solvencyDeck.totalNetWorth >= 0L) "Positive" else "Insolvent", uiState.solvencyDeck.totalNetWorth >= 0L, if (isPrivacyMode) "₹ •••" else (uiState.solvencyDeck.totalNetWorth / 100.0).toIndianRupee(), "Assets Less Liabilities", "Balance Sheet", theme) {}
                                             }
                                         }
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
@@ -393,7 +393,7 @@ fun DashboardScreen(db: AppDatabase) {
                             },
                             onEditPocket = { editingPocket = it },
                             onDeletePocketSafe = { pocket, bal ->
-                                if (bal != 0.0) alertManager.showAlert("Cannot archive account with active balance of ${bal.toIndianRupee()}", AlertType.WARNING)
+                                if (bal != 0L) alertManager.showAlert("Cannot archive account with active balance of ${(bal / 100.0).toIndianRupee()}", AlertType.WARNING)
                                 else scope.launch { db.ledgerDao().updatePocket(pocket.copy(isArchived = true)); alertManager.showAlert("${pocket.name} archived", AlertType.SUCCESS) }
                             },
                             onTogglePauseRecurring = { tx ->
@@ -404,7 +404,7 @@ fun DashboardScreen(db: AppDatabase) {
                             onRequestCreateAccount = { reqType -> prefilledCreatePocketType = reqType; showCreatePocketDialog = true }
                         )
 
-                        2 -> IntelligenceScreen(uiState.rawPockets, uiState.pocketBalances, uiState.completedTransactions, uiState.recurringTemplates, emptyList(), viewModel.dailyBurnCeiling.value, uiState.solvencyDeck.trueSafeLiquid, isPrivacyMode, theme)
+                        2 -> IntelligenceScreen(uiState.rawPockets, uiState.pocketBalances, uiState.completedTransactions, uiState.recurringTemplates, emptyList(), (viewModel.dailyBurnCeiling.value * 100).toLong(), uiState.solvencyDeck.trueSafeLiquid, isPrivacyMode, theme)
 
                         3 -> SettingsCardsList(
                             theme = theme, currentSha = currentInstalledSha, lastUpdatedDate = lastInstalledTimeFormatted, masterPin = masterSecurityPin,
@@ -440,46 +440,47 @@ fun DashboardScreen(db: AppDatabase) {
                 if (isFabExpanded) { Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { isFabExpanded = false }) }
 
                 activeLoanRepaymentPocket?.let { loanPocket ->
-                    val debtBal = abs(uiState.pocketBalances[loanPocket.id] ?: 0.0)
+                    val debtBal = abs(uiState.pocketBalances[loanPocket.id] ?: 0L)
                     LogLoanRepaymentModal(
-                        loanPocket = loanPocket, outstandingBalance = debtBal, liquidPockets = uiState.liquidPockets, theme = theme, onDismiss = { activeLoanRepaymentPocket = null },
+                        loanPocket = loanPocket, outstandingBalance = debtBal / 100.0, liquidPockets = uiState.liquidPockets, theme = theme, onDismiss = { activeLoanRepaymentPocket = null },
                         onRecordRepayment = { amt, sourceBankId ->
-                            viewModel.executeMasterEntryTrigger(MovementNature.EMI_PRINCIPAL, sourceBankId, loanPocket.id, amt, "Loan EMI", "EMI for ${loanPocket.name}", System.currentTimeMillis(), false, "NONE", false, false, { alertManager.showAlert(it, AlertType.SUCCESS); activeLoanRepaymentPocket = null }, { alertManager.showAlert(it, AlertType.ERROR) }, { alertManager.showAlert(it, AlertType.WARNING) })
+                            viewModel.executeMasterEntryTrigger(MovementNature.EMI_PRINCIPAL, sourceBankId, loanPocket.id, (amt * 100).toLong(), "Loan EMI", "EMI for ${loanPocket.name}", System.currentTimeMillis(), false, "NONE", false, false, { alertManager.showAlert(it, AlertType.SUCCESS); activeLoanRepaymentPocket = null }, { alertManager.showAlert(it, AlertType.ERROR) }, { alertManager.showAlert(it, AlertType.WARNING) })
                         }
                     )
                 }
 
                 activePeerSettlementPocket?.let { peerPocket ->
-                    val peerBal = uiState.pocketBalances[peerPocket.id] ?: 0.0
+                    val peerBal = uiState.pocketBalances[peerPocket.id] ?: 0L
                     SettlePeerBalanceModal(
                         peerPocket = peerPocket, currentBalance = peerBal, liquidPockets = uiState.liquidPockets, theme = theme, onDismiss = { activePeerSettlementPocket = null },
-                        onSettle = { isLend, amt, bankId ->
-                            val srcId = if (isLend) peerPocket.id else bankId
-                            val tgtId = if (isLend) bankId else peerPocket.id
-                            viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, srcId, tgtId, amt, "Peer Settlement", "Settlement with ${peerPocket.name}", System.currentTimeMillis(), false, "NONE", false, false, { alertManager.showAlert(it, AlertType.SUCCESS); activePeerSettlementPocket = null }, { alertManager.showAlert(it, AlertType.ERROR) }, { alertManager.showAlert(it, AlertType.WARNING) })
+                        onSettle = { isOutgoing, amtDouble, bankId ->
+                            val amtPaise = (amtDouble * 100).toLong()
+                            val srcId = if (isOutgoing) bankId else peerPocket.id
+                            val tgtId = if (isOutgoing) peerPocket.id else bankId
+                            viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, srcId, tgtId, amtPaise, "Peer Settlement", "Settlement with ${peerPocket.name}", System.currentTimeMillis(), false, "NONE", false, false, { alertManager.showAlert(it, AlertType.SUCCESS); activePeerSettlementPocket = null }, { alertManager.showAlert(it, AlertType.ERROR) }, { alertManager.showAlert(it, AlertType.WARNING) })
                         }
                     )
                 }
 
                 activeGoalSweepPocket?.let { goalPocket ->
-                    val goalBal = uiState.pocketBalances[goalPocket.id] ?: 0.0
+                    val goalBal = uiState.pocketBalances[goalPocket.id] ?: 0L
                     SweepGoalSavingsModal(
-                        goalPocket = goalPocket, currentBalance = goalBal, liquidPockets = uiState.liquidPockets, theme = theme, onDismiss = { activeGoalSweepPocket = null },
+                        goalPocket = goalPocket, currentBalance = goalBal / 100.0, liquidPockets = uiState.liquidPockets, theme = theme, onDismiss = { activeGoalSweepPocket = null },
                         onSweep = { isAdding, amt, bankId ->
                             val srcId = if (isAdding) bankId else goalPocket.id
                             val tgtId = if (isAdding) goalPocket.id else bankId
-                            viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, srcId, tgtId, amt, "Goal Transfer", "Sweep for ${goalPocket.name}", System.currentTimeMillis(), false, "NONE", false, false, { alertManager.showAlert(it, AlertType.SUCCESS); activeGoalSweepPocket = null }, { alertManager.showAlert(it, AlertType.ERROR) }, { alertManager.showAlert(it, AlertType.WARNING) })
+                            viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, srcId, tgtId, (amt * 100).toLong(), "Goal Transfer", "Sweep for ${goalPocket.name}", System.currentTimeMillis(), false, "NONE", false, false, { alertManager.showAlert(it, AlertType.SUCCESS); activeGoalSweepPocket = null }, { alertManager.showAlert(it, AlertType.ERROR) }, { alertManager.showAlert(it, AlertType.WARNING) })
                         }
                     )
                 }
 
                 activeAssetRevaluationPocket?.let { assetPocket ->
-                    val currentBal = uiState.pocketBalances[assetPocket.id] ?: 0.0
+                    val currentBal = uiState.pocketBalances[assetPocket.id] ?: 0L
                     RevalueAssetPortfolioModal(
-                        assetPocket = assetPocket, currentBookValue = currentBal, theme = theme, onDismiss = { activeAssetRevaluationPocket = null },
+                        assetPocket = assetPocket, currentBookValue = currentBal / 100.0, theme = theme, onDismiss = { activeAssetRevaluationPocket = null },
                         onUpdateValuation = { newMarketVal, note ->
-                            val drift = newMarketVal - currentBal
-                            if (drift != 0.0) {
+                            val drift = (newMarketVal * 100).toLong() - currentBal
+                            if (drift != 0L) {
                                 val nature = if (drift > 0) MovementNature.VALUATION_MARK else MovementNature.DEPRECIATION_WRITE
                                 viewModel.executeMasterEntryTrigger(nature, assetPocket.id, null, abs(drift), "Revaluation", note, System.currentTimeMillis(), false, "NONE", false, false, { alertManager.showAlert("Valuation updated to ${newMarketVal.toIndianRupee()}", AlertType.SUCCESS); activeAssetRevaluationPocket = null }, { alertManager.showAlert(it, AlertType.ERROR) }, { alertManager.showAlert(it, AlertType.WARNING) })
                             } else {
@@ -508,7 +509,7 @@ fun DashboardScreen(db: AppDatabase) {
                         forcedRail = forcedEntryRail, prefilledNote = ocrPrefilledNote, prefilledAmount = ocrPrefilledAmount,
                         onDismiss = { showUnifiedEntrySheet = false },
                         onSubmitTransaction = { n, s, t, a, c, no, d, isR, f, tax, reimb -> 
-                            viewModel.executeMasterEntryTrigger(n, s, t, a, c, no, d, isR, f, tax, reimb, { alertManager.showAlert(it, AlertType.SUCCESS); showUnifiedEntrySheet = false }, { alertManager.showAlert(it, AlertType.ERROR) }, { alertManager.showAlert(it, AlertType.WARNING) }) 
+                            viewModel.executeMasterEntryTrigger(n, s, t, (a * 100).toLong(), c, no, d, isR, f, tax, reimb, { alertManager.showAlert(it, AlertType.SUCCESS); showUnifiedEntrySheet = false }, { alertManager.showAlert(it, AlertType.ERROR) }, { alertManager.showAlert(it, AlertType.WARNING) }) 
                         },
                         onNavigateToCreatePocket = { showUnifiedEntrySheet = false; showCreatePocketDialog = true }
                     )
@@ -522,15 +523,15 @@ fun DashboardScreen(db: AppDatabase) {
                         initialType = prefilledCreatePocketType, allLiquidPockets = uiState.liquidPockets, theme = theme, onDismiss = { showCreatePocketDialog = false },
                         onSave = { name, type, limit, dueDay, targetAmt, targetDateEpoch, initialVal, interestRate, linkedAssetType ->
                             scope.launch {
-                                val pocketId = db.ledgerDao().insertPocket(LedgerPocket(name = name, type = type, creditLimit = limit, billDueDay = dueDay, targetGoalAmount = targetAmt, goalTargetDate = targetDateEpoch))
+                                val pocketId = db.ledgerDao().insertPocket(LedgerPocket(name = name, type = type, creditLimit = (limit * 100).toLong(), billDueDay = dueDay, targetGoalAmount = (targetAmt * 100).toLong(), goalTargetDate = targetDateEpoch))
                                 
-                                // FIX: Clearer UX strings for Initial Position setups (e.g. "[Name] Disbursement")
-                                if (type == PocketType.LIABILITY_LOAN && linkedAssetType != null && initialVal > 0.0) {
+                                val initPaise = (initialVal * 100).toLong()
+                                if (type == PocketType.LIABILITY_LOAN && linkedAssetType != null && initPaise > 0L) {
                                     val assetId = db.ledgerDao().insertPocket(LedgerPocket(name = "$name - Asset", type = linkedAssetType))
-                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "$name Disbursement", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
-                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, assetId, null, initialVal, "Initial Position", "Asset Acquisition: $name", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
-                                } else if (initialVal > 0.0) {
-                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initialVal, "Initial Position", "Opening baseline for $name", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
+                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initPaise, "Initial Position", "$name Disbursement", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
+                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, assetId, null, initPaise, "Initial Position", "Asset Acquisition: $name", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
+                                } else if (initPaise > 0L) {
+                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initPaise, "Initial Position", "Opening balance for $name", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
                                 }
                                 showCreatePocketDialog = false; alertManager.showAlert("Created '$name'", AlertType.SUCCESS)
                             }
@@ -539,16 +540,17 @@ fun DashboardScreen(db: AppDatabase) {
                             scope.launch {
                                 val peerType = if (isLend) PocketType.PEER_RECEIVABLE else PocketType.PEER_PAYABLE
                                 val peerPocketId = db.ledgerDao().insertPocket(LedgerPocket(name = contactName, type = peerType))
-                                if (amount > 0.0 && fundingPocketId != null) {
+                                val amtPaise = (amount * 100).toLong()
+                                if (amtPaise > 0L && fundingPocketId != null) {
                                     val srcId = if (isLend) fundingPocketId else peerPocketId
                                     val tgtId = if (isLend) peerPocketId else fundingPocketId
-                                    viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, srcId, tgtId, amount, if (isLend) "Peer Debt" else "Peer Advance", if (isLend) "Lent to $contactName" else "Borrowed from $contactName", System.currentTimeMillis(), false, "NONE", false, false, 
+                                    viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, srcId, tgtId, amtPaise, if (isLend) "Peer Debt" else "Peer Advance", if (isLend) "Lent to $contactName" else "Borrowed from $contactName", System.currentTimeMillis(), false, "NONE", false, false, 
                                         { showCreatePocketDialog = false; alertManager.showAlert("Added Peer ledger for '$contactName'", AlertType.SUCCESS) },
                                         { scope.launch { db.ledgerDao().deletePocket(db.ledgerDao().getPocketById(peerPocketId)!!) }; alertManager.showAlert(it, AlertType.ERROR) },
                                         { alertManager.showAlert(it, AlertType.WARNING) }
                                     )
-                                } else if (amount > 0.0) {
-                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, peerPocketId, null, amount, "Initial Position", "Opening peer ledger for $contactName", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
+                                } else if (amtPaise > 0L) {
+                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, peerPocketId, null, amtPaise, "Initial Position", "Opening peer ledger for $contactName", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
                                     showCreatePocketDialog = false
                                     alertManager.showAlert("Added Peer ledger for '$contactName'", AlertType.SUCCESS)
                                 } else {
@@ -564,7 +566,7 @@ fun DashboardScreen(db: AppDatabase) {
                     EditAccountDialog(
                         pocket = pocket, theme = theme, onDismiss = { editingPocket = null },
                         onSave = { updatedName, updatedLimit, updatedDueDay, updatedTarget, updatedDateEpoch ->
-                            scope.launch { db.ledgerDao().updatePocket(pocket.copy(name = updatedName, creditLimit = updatedLimit, billDueDay = updatedDueDay, targetGoalAmount = updatedTarget, goalTargetDate = updatedDateEpoch)); editingPocket = null; alertManager.showAlert("${pocket.name} updated", AlertType.SUCCESS) }
+                            scope.launch { db.ledgerDao().updatePocket(pocket.copy(name = updatedName, creditLimit = (updatedLimit * 100).toLong(), billDueDay = updatedDueDay, targetGoalAmount = (updatedTarget * 100).toLong(), goalTargetDate = updatedDateEpoch)); editingPocket = null; alertManager.showAlert("${pocket.name} updated", AlertType.SUCCESS) }
                         }
                     )
                 }
@@ -600,21 +602,21 @@ fun DashboardScreen(db: AppDatabase) {
                 editingRecurringRule?.let { rule ->
                     EditRecurringRuleModal(
                         rule = rule, theme = theme, onDismiss = { editingRecurringRule = null },
-                        onSave = { updatedDesc, updatedAmt, updatedFreq, updatedDateEpoch -> scope.launch { db.ledgerDao().updateTransaction(rule.copy(description = updatedDesc, amount = updatedAmt, recurringFrequency = updatedFreq, timestamp = updatedDateEpoch)); editingRecurringRule = null; alertManager.showAlert("Mandate updated", AlertType.SUCCESS) } }
+                        onSave = { updatedDesc, updatedAmt, updatedFreq, updatedDateEpoch -> scope.launch { db.ledgerDao().updateTransaction(rule.copy(description = updatedDesc, amount = (updatedAmt * 100).toLong(), recurringFrequency = updatedFreq, timestamp = updatedDateEpoch)); editingRecurringRule = null; alertManager.showAlert("Mandate updated", AlertType.SUCCESS) } }
                     )
                 }
 
                 editingTransaction?.let { tx ->
                     EditLedgerEntryModal(
                         tx = tx, theme = theme, onDismiss = { editingTransaction = null },
-                        onSave = { updatedAmount, updatedDesc, updatedCategory, updatedDateEpoch, updatedTax, updatedReimb -> scope.launch { db.ledgerDao().updateTransaction(tx.copy(amount = updatedAmount, description = updatedDesc, category = updatedCategory, timestamp = updatedDateEpoch, isTaxDeductible = updatedTax, isReimbursable = updatedReimb)); editingTransaction = null; alertManager.showAlert("Ledger entry updated", AlertType.SUCCESS) } },
+                        onSave = { updatedAmount, updatedDesc, updatedCategory, updatedDateEpoch, updatedTax, updatedReimb -> scope.launch { db.ledgerDao().updateTransaction(tx.copy(amount = (updatedAmount * 100).toLong(), description = updatedDesc, category = updatedCategory, timestamp = updatedDateEpoch, isTaxDeductible = updatedTax, isReimbursable = updatedReimb)); editingTransaction = null; alertManager.showAlert("Ledger entry updated", AlertType.SUCCESS) } },
                         onDelete = { transactionPendingDeletion = tx; editingTransaction = null }
                     )
                 }
 
                 transactionPendingDeletion?.let { tx ->
                     CenteredSafePurgeGuardModal(
-                        pocket = LedgerPocket(name = "Transaction: ${tx.amount}", type = PocketType.LIQUID), balance = 0.0, theme = theme, onDismiss = { transactionPendingDeletion = null },
+                        pocket = LedgerPocket(name = "Transaction: ${tx.amount / 100.0}", type = PocketType.LIQUID), balance = 0.0, theme = theme, onDismiss = { transactionPendingDeletion = null },
                         onConfirm = { scope.launch { db.ledgerDao().deleteTransaction(tx); transactionPendingDeletion = null; alertManager.showAlert("Transaction deleted. Balance restored.", AlertType.SUCCESS) } }
                     )
                 }
@@ -704,7 +706,6 @@ private fun FlatStreamRow(
 ) {
     val sourcePocket = remember(tx, rawPockets) { rawPockets.firstOrNull { it.id == tx.sourcePocketId } }
     
-    // FIX: Force liability/debt baselines to render strictly as Negative Red items
     val isDebtBaseline = tx.movementNature == MovementNature.OPENING_BASELINE && sourcePocket?.type in listOf(PocketType.LIABILITY_LOAN, PocketType.CREDIT_CARD, PocketType.PEER_PAYABLE)
     val isOut = tx.movementNature in listOf(MovementNature.OPERATING_EXPENSE, MovementNature.TRANSFER, MovementNature.DEPRECIATION_WRITE, MovementNature.EMI_PRINCIPAL) || isDebtBaseline
     
@@ -724,7 +725,8 @@ private fun FlatStreamRow(
             Text(text = "${tx.category} • $accountName", color = theme.textMuted, fontSize = 10.5.sp)
         }
 
-        val amtStr = if (isPrivacyMode) "₹ •••" else "${if (isOut) "-" else "+"} ₹ ${tx.amount.toIndianRupeeRaw()}"
+        val amtDouble = tx.amount / 100.0
+        val amtStr = if (isPrivacyMode) "₹ •••" else "${if (isOut) "-" else "+"} ₹ ${String.format("%,.0f", amtDouble)}"
         Text(text = amtStr, color = flowColor, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
     }
 }
