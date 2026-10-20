@@ -28,7 +28,7 @@ enum class DocumentIntent {
 
 data class ParsedReceipt(
     val merchant: String,
-    val total: Double?,
+    val total: Double?, // Kept double for UI extraction convenience, converted to Long at DB entry
     val dateEpoch: Long?,
     val rawText: String,
     val documentIntent: DocumentIntent = DocumentIntent.SINGLE_EXPENSE_RECEIPT,
@@ -45,7 +45,6 @@ object ReceiptScanner {
         val mimeType = context.contentResolver.getType(uri) ?: ""
         val filename = getFileName(context, uri)
 
-        // FIX: Route raw text/CSV files directly to the parser, bypassing the ImageDecoder
         if (mimeType.contains("text") || mimeType.contains("csv") || filename.endsWith(".csv", ignoreCase = true) || filename.endsWith(".txt", ignoreCase = true)) {
             val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
             parseDocumentText(text)
@@ -146,8 +145,8 @@ object ReceiptScanner {
 
         if (isBalanceSheetStatement && stagedItems.isNotEmpty()) {
             return ParsedReceipt(
-                merchant = "Audited Financial Statement",
-                total = stagedItems.sumOf { it.extractedAmount },
+                merchant = "Financial Statement Extract",
+                total = (stagedItems.sumOf { it.extractedAmount } / 100.0),
                 dateEpoch = System.currentTimeMillis(),
                 rawText = rawText,
                 documentIntent = DocumentIntent.FINANCIAL_BALANCE_SHEET_STATEMENT,
@@ -253,7 +252,7 @@ object ReceiptScanner {
                     StagedStatementLineItem(
                         rawExtractedName = label,
                         inferredType = inferredType,
-                        extractedAmount = amt,
+                        extractedAmount = (amt * 100).toLong(), // MIGRATED TO LONG PAISE
                         isSelectedForCommit = true
                     )
                 )
