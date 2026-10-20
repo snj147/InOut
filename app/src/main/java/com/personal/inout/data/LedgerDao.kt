@@ -6,8 +6,6 @@ import kotlinx.coroutines.flow.Flow
 @Dao
 interface LedgerDao {
 
-    // --- Pockets Management ---
-
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertPocket(pocket: LedgerPocket): Long
 
@@ -34,8 +32,6 @@ interface LedgerDao {
 
     @Query("SELECT COUNT(*) FROM ledger_pockets WHERE isArchived = 0")
     suspend fun getActivePocketCount(): Int
-
-    // --- Transactions & Double Entry ---
 
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertTransaction(tx: LedgerTransaction): Long
@@ -80,9 +76,7 @@ interface LedgerDao {
           AND timestamp BETWEEN (:timestamp - 172800000) AND (:timestamp + 172800000)
         LIMIT 1
     """)
-    suspend fun findPotentialDuplicate(pocketId: Long, amount: Double, timestamp: Long): LedgerTransaction?
-
-    // --- Dynamic Balance Engine Computations ---
+    suspend fun findPotentialDuplicate(pocketId: Long, amount: Long, timestamp: Long): LedgerTransaction?
 
     @Query("""
         SELECT COALESCE(
@@ -91,26 +85,22 @@ interface LedgerDao {
                     WHEN targetPocketId = :pocketId THEN amount
                     WHEN sourcePocketId = :pocketId AND movementNature IN ('OPERATING_INCOME', 'OPENING_BASELINE', 'VALUATION_MARK') THEN amount
                     WHEN sourcePocketId = :pocketId AND movementNature IN ('OPERATING_EXPENSE', 'TRANSFER', 'DEPRECIATION_WRITE', 'EMI_PRINCIPAL') THEN -amount
-                    ELSE 0.0 
+                    ELSE 0 
                 END
-            ), 0.0
+            ), 0
         )
         FROM ledger_transactions
         WHERE (sourcePocketId = :pocketId OR targetPocketId = :pocketId)
           AND timestamp <= :asOfEpoch
           AND status = 'CLEARED'
     """)
-    suspend fun computePocketBalance(pocketId: Long, asOfEpoch: Long = System.currentTimeMillis()): Double
-
-    // --- Forensic Audit Trail ---
+    suspend fun computePocketBalance(pocketId: Long, asOfEpoch: Long = System.currentTimeMillis()): Long
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAuditEntry(auditEntry: LedgerAuditEntry)
 
     @Query("SELECT * FROM ledger_audit_journal ORDER BY timestamp DESC LIMIT 500")
     fun observeAuditJournal(): Flow<List<LedgerAuditEntry>>
-
-    // --- System Notices ---
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertNotice(notice: SystemNotice)
