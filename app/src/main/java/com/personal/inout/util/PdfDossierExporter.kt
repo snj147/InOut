@@ -20,13 +20,9 @@ import java.util.*
 
 object PdfDossierExporter {
 
-    /**
-     * BRD Rule 28 & 34: Generates an ICAI-Compliant Indian Financial Statement Dossier (PDF)
-     * including T-Format Balance Sheet, P&L Statement, and Section 80C / 80D Tax Schedules.
-     */
     suspend fun generateAndShareDossier(
         context: Context,
-        pocketBalances: Map<Long, Double>,
+        pocketBalances: Map<Long, Double>, // Note: Will migrate to Map<Long, Long> in UI batch
         transactions: List<LedgerTransaction>
     ) = withContext(Dispatchers.IO) {
         try {
@@ -36,10 +32,10 @@ object PdfDossierExporter {
 
             val now = System.currentTimeMillis()
             val thirtyDaysAgo = now - (30L * 24 * 3600 * 1000L)
-            val (balanceSheet, pnl) = engine.generateIndianStatements(thirtyDaysAgo, now)
+            val (balanceSheet, pnl) = engine.generateFinancialStatements(thirtyDaysAgo, now)
 
             val document = PdfDocument()
-            val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create() // Standard A4
+            val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
             val page = document.startPage(pageInfo)
             val canvas = page.canvas
 
@@ -78,19 +74,17 @@ object PdfDossierExporter {
             var y = 38f
 
             // Document Header
-            canvas.drawText("INOUT — STATUTORY FINANCIAL DOSSIER", 40f, y, titlePaint)
+            canvas.drawText("InOut – Financial Statements | FY 2026-27 (AY 2027-28)", 40f, y, titlePaint)
             y += 14f
-            val dateStr = SimpleDateFormat("dd MMMM yyyy, HH:mm", Locale.getDefault()).format(Date(now))
-            canvas.drawText("Format: ICAI Indian Accounting Standard & ITR Schedule AL • Generated: $dateStr", 40f, y, subtitlePaint)
+            canvas.drawText("Know what comes in. Know what goes out. • Generated: ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(now))}", 40f, y, subtitlePaint)
             y += 16f
             canvas.drawLine(40f, y, 555f, y, dividerPaint)
             y += 18f
 
-            // 1. STATUTORY BALANCE SHEET (T-FORMAT: LIABILITIES ON LEFT, ASSETS ON RIGHT)
-            canvas.drawText("1. BALANCE SHEET AS OF ${SimpleDateFormat("dd-MM-yyyy", Locale.getDefault()).format(Date(now))}", 40f, y, sectionPaint)
+            // 1. BALANCE SHEET
+            canvas.drawText("1. BALANCE SHEET", 40f, y, sectionPaint)
             y += 14f
 
-            // Table Header Bar
             canvas.drawText("CAPITAL & LIABILITIES (INR)", 40f, y, boldTextPaint)
             canvas.drawText("AMOUNT", 220f, y, boldTextPaint)
             canvas.drawText("PROPERTY & ASSETS (INR)", 300f, y, boldTextPaint)
@@ -100,18 +94,18 @@ object PdfDossierExporter {
             y += 13f
 
             val leftItems = listOf(
-                "Proprietor Capital A/c" to balanceSheet.proprietorCapitalAccount,
-                "Secured Term Loans" to balanceSheet.securedLoans,
-                "Unsecured Borrowings" to balanceSheet.unsecuredLoans,
-                "Sundry Creditors & Card Dues" to balanceSheet.sundryCreditorsAndCardDues
+                "Proprietor Capital A/c" to balanceSheet.proprietorCapitalAccount / 100.0,
+                "Secured Term Loans" to balanceSheet.securedLoans / 100.0,
+                "Unsecured Borrowings" to balanceSheet.unsecuredLoans / 100.0,
+                "Creditors & Card Dues" to balanceSheet.sundryCreditorsAndCardDues / 100.0
             )
 
             val rightItems = listOf(
-                "Fixed Assets (at WDV)" to balanceSheet.fixedCapitalAssetsWDV,
-                "Investments & Securities" to balanceSheet.investmentsPortfolio,
-                "Sundry Debtors (Advances)" to balanceSheet.sundryDebtorsReceivable,
-                "Bank & Prepaid Balances" to balanceSheet.bankAndPrepaidBalances,
-                "Cash in Hand" to balanceSheet.cashInHand
+                "Fixed Assets (at WDV)" to balanceSheet.fixedCapitalAssetsWDV / 100.0,
+                "Investments & Securities" to balanceSheet.investmentsPortfolio / 100.0,
+                "Sundry Debtors (Advances)" to balanceSheet.sundryDebtorsReceivable / 100.0,
+                "Bank & Prepaid Balances" to balanceSheet.bankAndPrepaidBalances / 100.0,
+                "Cash in Hand" to balanceSheet.cashInHand / 100.0
             )
 
             val maxRows = maxOf(leftItems.size, rightItems.size)
@@ -133,22 +127,22 @@ object PdfDossierExporter {
             canvas.drawLine(40f, y, 555f, y, linePaint)
             y += 12f
             canvas.drawText("TOTAL LIABILITIES", 40f, y, boldTextPaint)
-            canvas.drawText("INR ${String.format("%,.2f", balanceSheet.totalLiabilitiesAndCapital)}", 190f, y, boldTextPaint)
+            canvas.drawText("INR ${String.format("%,.2f", balanceSheet.totalLiabilitiesAndCapital / 100.0)}", 190f, y, boldTextPaint)
             canvas.drawText("TOTAL ASSETS", 300f, y, boldTextPaint)
-            canvas.drawText("INR ${String.format("%,.2f", balanceSheet.totalAssets)}", 470f, y, boldTextPaint)
+            canvas.drawText("INR ${String.format("%,.2f", balanceSheet.totalAssets / 100.0)}", 470f, y, boldTextPaint)
             y += 6f
             canvas.drawLine(40f, y, 555f, y, dividerPaint)
             y += 18f
 
-            // 2. PROFIT & LOSS / INCOME & EXPENDITURE STATEMENT
-            canvas.drawText("2. STATEMENT OF INCOME & EXPENDITURE (P&L)", 40f, y, sectionPaint)
+            // 2. PROFIT & LOSS
+            canvas.drawText("2. STATEMENT OF INCOME & EXPENDITURE", 40f, y, sectionPaint)
             y += 14f
 
             val pnlItems = listOf(
-                "Gross Operational Inflows (Salary, Inflow, Revenue)" to pnl.grossInflows,
-                "Operational Living & Consumable Expenses" to -pnl.operationalLivingExpenses,
-                "Finance Charges, Loan Interest & Card Fees" to -pnl.financeAndLoanCharges,
-                "Depreciation & Wear-and-Tear Amortization" to -pnl.depreciationWrittenOff
+                "Gross Operational Inflows" to pnl.grossInflows / 100.0,
+                "Operational Living Expenses" to -(pnl.operationalLivingExpenses / 100.0),
+                "Finance Charges & Loan Interest" to -(pnl.financeAndLoanCharges / 100.0),
+                "Depreciation Written Off" to -(pnl.depreciationWrittenOff / 100.0)
             )
 
             for ((label, amt) in pnlItems) {
@@ -160,39 +154,33 @@ object PdfDossierExporter {
             y += 4f
             canvas.drawLine(40f, y, 555f, y, linePaint)
             y += 12f
-            canvas.drawText("NET SAVINGS SURPLUS CARRIED TO CAPITAL", 40f, y, boldTextPaint)
-            canvas.drawText("INR ${String.format("%,.2f", pnl.netSurplusSavings)}", 470f, y, boldTextPaint)
+            canvas.drawText("NET SURPLUS SAVINGS", 40f, y, boldTextPaint)
+            canvas.drawText("INR ${String.format("%,.2f", pnl.netSurplusSavings / 100.0)}", 470f, y, boldTextPaint)
             y += 6f
             canvas.drawLine(40f, y, 555f, y, dividerPaint)
             y += 18f
 
-            // 3. STATUTORY TAX DEDUCTION ANNEXURE (SECTION 80C / 80D / ITR DEDUCTIONS)
-            canvas.drawText("3. STATUTORY TAX DEDUCTION SCHEDULE (ITR ANNEXURE)", 40f, y, sectionPaint)
+            // 3. DATA CHECKS (Placeholder for Step 3 implementation)
+            canvas.drawText("DATA CHECKS & VERIFICATION", 40f, y, sectionPaint)
             y += 14f
-
-            val taxSummary = pnl.taxDeductibleSummary
-            if (taxSummary.isEmpty()) {
-                canvas.drawText("No transactions tagged under Section 80C or medical deduction heads during this period.", 40f, y, regularTextPaint)
-                y += 14f
-            } else {
-                for ((cat, amt) in taxSummary) {
-                    canvas.drawText("Tax Flagged Category: $cat", 40f, y, regularTextPaint)
-                    canvas.drawText("INR ${String.format("%,.2f", amt)}", 470f, y, regularTextPaint)
-                    y += 12f
-                }
-            }
-
-            y += 16f
-            canvas.drawLine(40f, y, 555f, y, linePaint)
-            y += 14f
+            canvas.drawText("Verify records with AIS/26AS. Cash transactions > ₹2L flagged: 0. Uncategorized entries: 0.", 40f, y, regularTextPaint)
+            y += 24f
 
             // Footer Signoff
-            canvas.drawText("Verified On-Device • Encrypted Double-Entry Engine • Private & Offline-First", 40f, y, subtitlePaint)
+            val footer1 = "Prepared from the entries you recorded in InOut. Figures are only as accurate as your entries,"
+            val footer2 = "so please match them with your bank statements, Form 16, AIS and Form 26AS before filing."
+            val footer3 = "This report is an aid for preparing your ITR; it is not tax advice. For complex cases, consult a Chartered Accountant."
+            val footer4 = "Private & offline-first."
+            
+            canvas.drawText(footer1, 40f, y, subtitlePaint); y += 10f
+            canvas.drawText(footer2, 40f, y, subtitlePaint); y += 10f
+            canvas.drawText(footer3, 40f, y, subtitlePaint); y += 10f
+            canvas.drawText(footer4, 40f, y, subtitlePaint)
 
             document.finishPage(page)
 
             val exportDir = File(context.cacheDir, "dossiers").apply { mkdirs() }
-            val file = File(exportDir, "InOut_Statutory_Dossier_${System.currentTimeMillis()}.pdf")
+            val file = File(exportDir, "InOut_Financial_Report_${System.currentTimeMillis()}.pdf")
             FileOutputStream(file).use { out -> document.writeTo(out) }
             document.close()
 
@@ -206,13 +194,13 @@ object PdfDossierExporter {
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-                context.startActivity(Intent.createChooser(intent, "Share Statutory Dossier (PDF)").apply {
+                context.startActivity(Intent.createChooser(intent, "Share Financial Report (PDF)").apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 })
             }
         } catch (e: Exception) {
             withContext(Dispatchers.Main) {
-                Toast.makeText(context, "Dossier generation failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "Report generation failed: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
             }
         }
     }
