@@ -40,10 +40,10 @@ enum class CockpitDisplayMode {
 @Composable
 fun DynamicCockpit(
     rawPockets: List<LedgerPocket>,
-    pocketBalances: Map<Long, Double>,
+    pocketBalances: Map<Long, Long>, // MIGRATED TO LONG PAISE
     transactions: List<LedgerTransaction>,
     mode: CockpitDisplayMode,
-    configuredDailyBurn: Double,
+    configuredDailyBurn: Long, // MIGRATED TO LONG PAISE
     isPrivacyMode: Boolean
 ) {
     val theme = LocalThemeColors.current
@@ -51,21 +51,21 @@ fun DynamicCockpit(
     val totalLiquid = remember(rawPockets, pocketBalances) {
         rawPockets
             .filter { it.type == PocketType.LIQUID || it.type == PocketType.PREPAID_WALLET }
-            .sumOf { pocketBalances[it.id]?.coerceAtLeast(0.0) ?: 0.0 }
+            .sumOf { pocketBalances[it.id]?.coerceAtLeast(0L) ?: 0L }
     }
 
     val totalCardDues = remember(rawPockets, pocketBalances) {
         rawPockets
             .filter { it.type == PocketType.CREDIT_CARD }
             .sumOf {
-                val bal = pocketBalances[it.id] ?: 0.0
-                if (bal < 0.0) abs(bal) else 0.0
+                val bal = pocketBalances[it.id] ?: 0L
+                if (bal < 0L) abs(bal) else 0L
             }
     }
 
-    val dailyPace = if (configuredDailyBurn > 0) configuredDailyBurn else 500.0
-    val safeLiquid = (totalLiquid - totalCardDues).coerceAtLeast(0.0)
-    val maxAvailableDays = if (dailyPace > 0) (safeLiquid / dailyPace).toInt() else 0
+    val dailyPace = if (configuredDailyBurn > 0L) configuredDailyBurn else 50000L
+    val safeLiquid = (totalLiquid - totalCardDues).coerceAtLeast(0L)
+    val maxAvailableDays = if (dailyPace > 0L) (safeLiquid / dailyPace).toInt() else 0
 
     var selectedSurvivalDayTarget by remember { mutableFloatStateOf(maxAvailableDays.toFloat().coerceAtMost(90f)) }
 
@@ -88,13 +88,13 @@ fun DynamicCockpit(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Column {
-                            Text("RUNWAY SURVIVAL HORIZON (RULE 13)", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
+                            Text("RUNWAY SURVIVAL HORIZON", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
                             val daysText = if (isPrivacyMode) "•• Days" else "$maxAvailableDays Days"
                             Text(daysText, color = theme.textBright, fontSize = 24.sp, fontWeight = FontWeight.Black)
-                            Text("Safe liquid cushion at ₹${dailyPace.toInt()}/day burn", color = theme.textMuted, fontSize = 10.sp)
+                            Text("Safe liquid cushion at ₹${(dailyPace / 100.0).toInt()}/day burn", color = theme.textMuted, fontSize = 10.sp)
                         }
 
-                        val reserveRatio = if (totalLiquid > 0) (safeLiquid / totalLiquid).toFloat().coerceIn(0f, 1f) else 0f
+                        val reserveRatio = if (totalLiquid > 0L) (safeLiquid.toDouble() / totalLiquid.toDouble()).toFloat().coerceIn(0f, 1f) else 0f
                         BatteryCanvas(ratio = reserveRatio, theme = theme)
                     }
 
@@ -105,7 +105,7 @@ fun DynamicCockpit(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text("Survival Plan Pacing", color = theme.accent, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            val planCashNeeded = (selectedSurvivalDayTarget * dailyPace).toInt()
+                            val planCashNeeded = (selectedSurvivalDayTarget * (dailyPace / 100.0)).toInt()
                             Text("Target: ${selectedSurvivalDayTarget.toInt()} Days (₹$planCashNeeded)", color = theme.textBright, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
 
@@ -138,7 +138,7 @@ fun DynamicCockpit(
                 }
 
                 CockpitDisplayMode.CASH_VS_DEBT_RADAR -> {
-                    Text("CASH VS UNBILLED LIABILITIES (RULE 3 & 4)", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
+                    Text("CASH VS UNBILLED LIABILITIES", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -146,31 +146,31 @@ fun DynamicCockpit(
                     ) {
                         Column {
                             Text("Liquid Banks & Cash", color = theme.textMuted, fontSize = 11.sp)
-                            val liqColor = if (totalLiquid == 0.0) theme.textBright else theme.mildGreen
-                            Text(if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", totalLiquid)}", color = liqColor, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            val liqColor = if (totalLiquid == 0L) theme.textBright else theme.mildGreen
+                            Text(if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", totalLiquid / 100.0)}", color = liqColor, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text("Card Dues & Borrowings", color = theme.textMuted, fontSize = 11.sp)
-                            val debtColor = if (totalCardDues == 0.0) theme.textBright else theme.mildRed
-                            Text(if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", totalCardDues)}", color = debtColor, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            val debtColor = if (totalCardDues == 0L) theme.textBright else theme.mildRed
+                            Text(if (isPrivacyMode) "₹ •••" else "₹ ${String.format("%,.0f", totalCardDues / 100.0)}", color = debtColor, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         }
                     }
-                    val netAvailable = (totalLiquid - totalCardDues).coerceAtLeast(0.0)
+                    val netAvailable = (totalLiquid - totalCardDues).coerceAtLeast(0L)
                     LinearProgressIndicator(
-                        progress = { if (totalLiquid + totalCardDues > 0) (totalLiquid / (totalLiquid + totalCardDues)).toFloat().coerceIn(0f, 1f) else 1f },
+                        progress = { if (totalLiquid + totalCardDues > 0L) (totalLiquid.toDouble() / (totalLiquid + totalCardDues).toDouble()).toFloat().coerceIn(0f, 1f) else 1f },
                         color = theme.mildGreen,
                         trackColor = theme.mildRed,
                         modifier = Modifier.fillMaxWidth().height(7.dp).clip(RoundedCornerShape(3.dp))
                     )
                     
-                    val netAvailableColor = if (netAvailable == 0.0) theme.textBright else theme.accent
-                    Text("True Safe Liquid Headroom: ₹${String.format("%,.0f", netAvailable)}", color = netAvailableColor, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
+                    val netAvailableColor = if (netAvailable == 0L) theme.textBright else theme.accent
+                    Text("True Safe Liquid Headroom: ₹${String.format("%,.0f", netAvailable / 100.0)}", color = netAvailableColor, fontSize = 10.5.sp, fontWeight = FontWeight.SemiBold)
                 }
 
                 CockpitDisplayMode.WEEKLY_SPEND_PULSE -> {
                     Text("DAILY SPENDING EQUALIZER (LAST 7 DAYS)", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 1.2.sp)
                     val last7DaysSpend = remember(transactions) {
-                        val dayBuckets = DoubleArray(7) { 0.0 }
+                        val dayBuckets = LongArray(7) { 0L }
                         val now = System.currentTimeMillis()
                         transactions.filter { it.movementNature == MovementNature.OPERATING_EXPENSE }.forEach { tx ->
                             val diffDays = ((now - tx.timestamp) / (1000 * 60 * 60 * 24)).toInt()
@@ -180,7 +180,7 @@ fun DynamicCockpit(
                         }
                         dayBuckets.toList()
                     }
-                    val maxVal = max(last7DaysSpend.maxOrNull() ?: 1.0, 100.0).toFloat()
+                    val maxVal = max(last7DaysSpend.maxOrNull() ?: 1L, 10000L).toFloat()
                     Row(
                         modifier = Modifier.fillMaxWidth().height(42.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -198,8 +198,8 @@ fun DynamicCockpit(
                             )
                         }
                     }
-                    val todayBurnColor = if (last7DaysSpend.last() == 0.0) theme.textBright else theme.textBright
-                    Text("Today's burn: ₹${last7DaysSpend.last().toInt()}", color = todayBurnColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    val todayBurnColor = if (last7DaysSpend.last() == 0L) theme.textBright else theme.textBright
+                    Text("Today's burn: ₹${(last7DaysSpend.last() / 100.0).toInt()}", color = todayBurnColor, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
