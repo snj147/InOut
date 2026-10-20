@@ -25,13 +25,7 @@ android {
 
     signingConfigs {
         create("release") {
-            val keystoreFile = file("debug.keystore")
-            if (keystoreFile.exists()) {
-                storeFile = keystoreFile
-                storePassword = "androiddebug"
-                keyAlias = "androiddebugkey"
-                keyPassword = "androiddebug"
-            }
+            // Secrets removed. Use system environment variables or local.properties for production CI/CD.
         }
     }
 
@@ -47,7 +41,7 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             isDebuggable = true
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
 
@@ -81,26 +75,16 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
 
-    // Room Database
     val roomVersion = "2.6.1"
     implementation("androidx.room:room-runtime:$roomVersion")
     implementation("androidx.room:room-ktx:$roomVersion")
     kapt("androidx.room:room-compiler:$roomVersion")
 
-    // Google Play In-App Billing
     implementation("com.android.billingclient:billing-ktx:7.1.1")
-
-    // ML Kit On-Device OCR
     implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
-
-    // OkHttp (Streaming updates)
     implementation(libs.okhttp)
-
-    // Coroutines & Lifecycle
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
-
-    // Android App Widget & Core RemoteViews
     implementation("androidx.core:core-remoteviews:1.1.0")
 
     debugImplementation(libs.androidx.ui.tooling)
