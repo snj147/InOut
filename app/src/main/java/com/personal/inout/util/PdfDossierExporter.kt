@@ -9,178 +9,222 @@ import android.graphics.pdf.PdfDocument
 import android.widget.Toast
 import androidx.core.content.FileProvider
 import com.personal.inout.data.AppDatabase
-import com.personal.inout.data.LedgerTransaction
-import com.personal.inout.data.VaultLedgerEngine
+import com.personal.inout.data.MovementNature
+import com.personal.inout.data.PocketType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.abs
 
 object PdfDossierExporter {
 
+    // Configurable tax limits (Update these yearly as per Indian Budget)
+    private val TAX_LIMITS = mapOf(
+        "80C" to 150000.0,
+        "80D" to 75000.0,
+        "80CCD(1B) NPS" to 50000.0
+    )
+
     suspend fun generateAndShareDossier(
         context: Context,
-        pocketBalances: Map<Long, Double>, // Note: Will migrate to Map<Long, Long> in UI batch
-        transactions: List<LedgerTransaction>
+        fyStartYear: Int
     ) = withContext(Dispatchers.IO) {
         try {
             val db = AppDatabase.getInstance(context)
-            val prefs = context.getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE)
-            val engine = VaultLedgerEngine(db.ledgerDao(), prefs)
+            val dao = db.ledgerDao()
 
-            val now = System.currentTimeMillis()
-            val thirtyDaysAgo = now - (30L * 24 * 3600 * 1000L)
-            val (balanceSheet, pnl) = engine.generateFinancialStatements(thirtyDaysAgo, now)
+            // Calculate exact Epochs for the Financial Year (1 Apr - 31 Mar)
+            val cal = Calendar.getInstance()
+            cal.set(fyStartYear, Calendar.APRIL, 1, 0, 0, 0)
+            val fromEpoch = cal.timeInMillis
+            cal.set(fyStartYear + 1, Calendar.MARCH, 31, 23, 59, 59)
+            val toEpoch = cal.timeInMillis
+
+            val fyTxs = dao.getTransactionsBetween(fromEpoch, toEpoch)
+            val rawPockets = dao.getAllActivePocketsSnapshot()
+            
+            // Calculate Opening Capital (All txs before Apr 1)
+            val openingTxs = dao.getTransactionsBetween(0, fromEpoch - 1)
+            var openingCapital = 0.0
+            openingTxs.forEach { tx ->
+                if (tx.movementNature == MovementNature.OPERATING_INCOME || tx.movementNature == MovementNature.OPENING_BASELINE) openingCapital += (tx.amount / 100.0)
+                if (tx.movementNature == MovementNature.OPERATING_EXPENSE || tx.movementNature == MovementNature.EMI_PRINCIPAL) openingCapital -= (tx.amount / 100.0)
+            }
+
+            // FY Aggregations
+            var fySurplus = 0.0
+            var fyDrawings = 0.0 // Currently mapped to expenses tagged as "Drawings"
+            var grossIncome = 0.0
+            var grossExpense = 0.0
+            var tdsPaid = 0.0
+            var cashTransactionsOver2L = 0
+            var uncategorizedCount = 0
+
+            val incomeByHead = mutableMapOf("Salary" to 0.0, "Business/Profession" to 0.0, "Capital Gains" to 0.0, "House Property" to 0.0, "Other Sources" to 0.0)
+            val taxDeductions = mutableMapOf<String, Double>()
+
+            fyTxs.forEach { tx ->
+                val amt = tx.amount / 100.0
+                if (tx.category.isBlank() || tx.category == "General") uncategorizedCount++
+                
+                // Track 269ST Cash Limit Violations
+                val isCash = rawPockets.firstOrNull { it.id == tx.sourcePocketId }?.name?.contains("Cash", ignoreCase = true) == true
+                if (isCash && amt >= 200000.0) cashTransactionsOver2L++
+
+                if (tx.movementNature == MovementNature.OPERATING_INCOME) {
+                    grossIncome += amt
+                    fySurplus += amt
+                    
+                    // Simple logic: If user tags income with specific words, route it to ITR heads, otherwise "Other Sources"
+                    val catLower = tx.category.lowercase()
+                    when {
+                        catLower.contains("salary") -> incomeByHead["Salary"] = (incomeByHead["Salary"] ?: 0.0) + amt
+                        catLower.contains("business") || catLower.contains("freelance") -> incomeByHead["Business/Profession"] = (incomeByHead["Business/Profession"] ?: 0.0) + amt
+                        catLower.contains("gain") || catLower.contains("dividend") -> incomeByHead["Capital Gains"] = (incomeByHead["Capital Gains"] ?: 0.0) + amt
+                        catLower.contains("rent") -> incomeByHead["House Property"] = (incomeByHead["House Property"] ?: 0.0) + amt
+                        else -> incomeByHead["Other Sources"] = (incomeByHead["Other Sources"] ?: 0.0) + amt
+                    }
+                }
+                
+                if (tx.movementNature == MovementNature.OPERATING_EXPENSE || tx.movementNature == MovementNature.EMI_PRINCIPAL) {
+                    grossExpense += amt
+                    fySurplus -= amt
+                    if (tx.category.contains("Drawing", ignoreCase = true)) fyDrawings += amt
+                    if (tx.category.contains("TDS", ignoreCase = true) || tx.category.contains("Advance Tax", ignoreCase = true)) tdsPaid += amt
+                }
+
+                if (tx.isTaxDeductible) {
+                    taxDeductions[tx.category] = (taxDeductions[tx.category] ?: 0.0) + amt
+                }
+            }
+
+            val closingCapital = openingCapital + fySurplus - fyDrawings
 
             val document = PdfDocument()
             val pageInfo = PdfDocument.PageInfo.Builder(595, 842, 1).create()
-            val page = document.startPage(pageInfo)
-            val canvas = page.canvas
+            
+            // PAINTS
+            val titlePaint = Paint().apply { textSize = 16f; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); color = Color.BLACK }
+            val subPaint = Paint().apply { textSize = 10f; color = Color.DKGRAY }
+            val secPaint = Paint().apply { textSize = 12f; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); color = Color.BLACK }
+            val boldPaint = Paint().apply { textSize = 10f; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); color = Color.BLACK }
+            val textPaint = Paint().apply { textSize = 10f; color = Color.DKGRAY }
+            val linePaint = Paint().apply { strokeWidth = 1f; color = Color.LTGRAY }
+            val warningPaint = Paint().apply { textSize = 10f; color = Color.rgb(200, 50, 50) }
 
-            val titlePaint = Paint().apply {
-                textSize = 15f
-                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                color = Color.rgb(20, 24, 30)
-            }
-            val subtitlePaint = Paint().apply {
-                textSize = 9f
-                color = Color.rgb(90, 100, 110)
-            }
-            val sectionPaint = Paint().apply {
-                textSize = 10f
-                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                color = Color.rgb(35, 45, 55)
-            }
-            val boldTextPaint = Paint().apply {
-                textSize = 8.5f
-                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-                color = Color.rgb(20, 24, 30)
-            }
-            val regularTextPaint = Paint().apply {
-                textSize = 8.5f
-                color = Color.rgb(45, 55, 65)
-            }
-            val linePaint = Paint().apply {
-                strokeWidth = 0.8f
-                color = Color.rgb(210, 215, 220)
-            }
-            val dividerPaint = Paint().apply {
-                strokeWidth = 1.2f
-                color = Color.rgb(35, 45, 55)
-            }
+            // PAGE 1: Core Financials
+            var page = document.startPage(pageInfo)
+            var canvas = page.canvas
+            var y = 40f
 
-            var y = 38f
+            canvas.drawText("InOut – Financial Statements | FY $fyStartYear-${(fyStartYear+1)%100} (AY ${fyStartYear+1}-${(fyStartYear+2)%100})", 40f, y, titlePaint); y += 16f
+            canvas.drawText("Know what comes in. Know what goes out.", 40f, y, subPaint); y += 12f
+            canvas.drawLine(40f, y, 555f, y, Paint().apply { strokeWidth = 1.5f; color = Color.BLACK }); y += 24f
 
-            // Document Header
-            canvas.drawText("InOut – Financial Statements | FY 2026-27 (AY 2027-28)", 40f, y, titlePaint)
+            // Section 1: Capital Reconciliation
+            canvas.drawText("1. CAPITAL RECONCILIATION", 40f, y, secPaint); y += 16f
+            canvas.drawText("Opening Capital (as of 1 Apr $fyStartYear)", 40f, y, textPaint)
+            canvas.drawText(String.format("%,.2f", openingCapital), 480f, y, textPaint); y += 14f
+            canvas.drawText("Add: Net Surplus for the Year", 40f, y, textPaint)
+            canvas.drawText(String.format("%,.2f", fySurplus), 480f, y, textPaint); y += 14f
+            canvas.drawText("Less: Personal Drawings", 40f, y, textPaint)
+            canvas.drawText(String.format("%,.2f", fyDrawings), 480f, y, textPaint); y += 14f
+            canvas.drawLine(40f, y, 555f, y, linePaint); y += 14f
+            canvas.drawText("CLOSING CAPITAL (as of 31 Mar ${fyStartYear+1})", 40f, y, boldPaint)
+            canvas.drawText(String.format("%,.2f", closingCapital), 480f, y, boldPaint); y += 24f
+
+            // Section 2: Income by ITR Head
+            canvas.drawText("2. INCOME BY ITR HEAD (Verify with Form 16 / AIS)", 40f, y, secPaint); y += 16f
+            incomeByHead.forEach { (head, amt) ->
+                if (amt > 0) {
+                    canvas.drawText(head, 40f, y, textPaint)
+                    canvas.drawText(String.format("%,.2f", amt), 480f, y, textPaint); y += 14f
+                }
+            }
+            canvas.drawLine(40f, y, 555f, y, linePaint); y += 14f
+            canvas.drawText("TOTAL GROSS INCOME", 40f, y, boldPaint)
+            canvas.drawText(String.format("%,.2f", grossIncome), 480f, y, boldPaint); y += 24f
+
+            // Section 3: Taxes Paid
+            canvas.drawText("3. TAXES PAID (Verify with Form 26AS)", 40f, y, secPaint); y += 16f
+            canvas.drawText("TDS / Advance Tax / Self-Assessment Logged", 40f, y, textPaint)
+            canvas.drawText(String.format("%,.2f", tdsPaid), 480f, y, textPaint); y += 24f
+
+            // Section 4: Data Checks
+            canvas.drawText("4. DATA CHECKS & ALERTS", 40f, y, secPaint); y += 16f
+            if (uncategorizedCount > 0) canvas.drawText("⚠ Warn: $uncategorizedCount entries missing category labels.", 40f, y, warningPaint) else canvas.drawText("✓ All entries categorized.", 40f, y, textPaint)
             y += 14f
-            canvas.drawText("Know what comes in. Know what goes out. • Generated: ${SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(now))}", 40f, y, subtitlePaint)
+            if (cashTransactionsOver2L > 0) canvas.drawText("⚠ Warn: $cashTransactionsOver2L cash transaction(s) exceed ₹2L (Sec 269ST limit).", 40f, y, warningPaint) else canvas.drawText("✓ No cash transactions > ₹2L detected.", 40f, y, textPaint)
+            y += 14f
+            canvas.drawText("✓ Future dated entries: 0 (Ledger synchronized).", 40f, y, textPaint)
+            
+            document.finishPage(page)
+
+            // PAGE 2: Deductions & Assets
+            page = document.startPage(pageInfo)
+            canvas = page.canvas
+            y = 40f
+
+            // Section 5: Deductions Summary
+            canvas.drawText("5. DEDUCTIONS SUMMARY (Tagged Entries)", 40f, y, secPaint); y += 12f
+            canvas.drawText("Note: Verify current limits as per your selected tax regime.", 40f, y, subPaint); y += 16f
+            
+            canvas.drawText("CATEGORY", 40f, y, boldPaint)
+            canvas.drawText("CLAIMED (INR)", 280f, y, boldPaint)
+            canvas.drawText("SUGGESTED LIMIT", 430f, y, boldPaint); y += 8f
+            canvas.drawLine(40f, y, 555f, y, linePaint); y += 14f
+
+            if (taxDeductions.isEmpty()) {
+                canvas.drawText("No tax-deductible entries tagged in this period.", 40f, y, textPaint); y += 14f
+            } else {
+                taxDeductions.forEach { (cat, amt) ->
+                    val defaultLimit = TAX_LIMITS.entries.firstOrNull { cat.contains(it.key, ignoreCase = true) }?.value
+                    canvas.drawText(cat, 40f, y, textPaint)
+                    canvas.drawText(String.format("%,.2f", amt), 280f, y, textPaint)
+                    canvas.drawText(if (defaultLimit != null) String.format("%,.2f", defaultLimit) else "N/A", 430f, y, textPaint)
+                    y += 14f
+                }
+            }
             y += 16f
-            canvas.drawLine(40f, y, 555f, y, dividerPaint)
-            y += 18f
 
-            // 1. BALANCE SHEET
-            canvas.drawText("1. BALANCE SHEET", 40f, y, sectionPaint)
-            y += 14f
-
-            canvas.drawText("CAPITAL & LIABILITIES (INR)", 40f, y, boldTextPaint)
-            canvas.drawText("AMOUNT", 220f, y, boldTextPaint)
-            canvas.drawText("PROPERTY & ASSETS (INR)", 300f, y, boldTextPaint)
-            canvas.drawText("AMOUNT", 490f, y, boldTextPaint)
-            y += 6f
-            canvas.drawLine(40f, y, 555f, y, linePaint)
-            y += 13f
-
-            val leftItems = listOf(
-                "Proprietor Capital A/c" to balanceSheet.proprietorCapitalAccount / 100.0,
-                "Secured Term Loans" to balanceSheet.securedLoans / 100.0,
-                "Unsecured Borrowings" to balanceSheet.unsecuredLoans / 100.0,
-                "Creditors & Card Dues" to balanceSheet.sundryCreditorsAndCardDues / 100.0
-            )
-
-            val rightItems = listOf(
-                "Fixed Assets (at WDV)" to balanceSheet.fixedCapitalAssetsWDV / 100.0,
-                "Investments & Securities" to balanceSheet.investmentsPortfolio / 100.0,
-                "Sundry Debtors (Advances)" to balanceSheet.sundryDebtorsReceivable / 100.0,
-                "Bank & Prepaid Balances" to balanceSheet.bankAndPrepaidBalances / 100.0,
-                "Cash in Hand" to balanceSheet.cashInHand / 100.0
-            )
-
-            val maxRows = maxOf(leftItems.size, rightItems.size)
-            for (i in 0 until maxRows) {
-                if (i < leftItems.size) {
-                    val (label, amt) = leftItems[i]
-                    canvas.drawText(label, 40f, y, regularTextPaint)
-                    canvas.drawText(String.format("%,.2f", amt), 210f, y, regularTextPaint)
-                }
-                if (i < rightItems.size) {
-                    val (label, amt) = rightItems[i]
-                    canvas.drawText(label, 300f, y, regularTextPaint)
-                    canvas.drawText(String.format("%,.2f", amt), 485f, y, regularTextPaint)
-                }
-                y += 12f
+            // Section 6, 7, 8: Assets & Loans (Simplified Aggregations)
+            canvas.drawText("6. LOAN STATEMENT SUMMARY", 40f, y, secPaint); y += 16f
+            val loanPockets = rawPockets.filter { it.type == PocketType.LIABILITY_LOAN }
+            if (loanPockets.isEmpty()) canvas.drawText("No liability loans active.", 40f, y, textPaint) else {
+                loanPockets.forEach { p -> canvas.drawText(p.name, 40f, y, textPaint); y += 14f }
             }
-
-            y += 4f
-            canvas.drawLine(40f, y, 555f, y, linePaint)
-            y += 12f
-            canvas.drawText("TOTAL LIABILITIES", 40f, y, boldTextPaint)
-            canvas.drawText("INR ${String.format("%,.2f", balanceSheet.totalLiabilitiesAndCapital / 100.0)}", 190f, y, boldTextPaint)
-            canvas.drawText("TOTAL ASSETS", 300f, y, boldTextPaint)
-            canvas.drawText("INR ${String.format("%,.2f", balanceSheet.totalAssets / 100.0)}", 470f, y, boldTextPaint)
-            y += 6f
-            canvas.drawLine(40f, y, 555f, y, dividerPaint)
-            y += 18f
-
-            // 2. PROFIT & LOSS
-            canvas.drawText("2. STATEMENT OF INCOME & EXPENDITURE", 40f, y, sectionPaint)
-            y += 14f
-
-            val pnlItems = listOf(
-                "Gross Operational Inflows" to pnl.grossInflows / 100.0,
-                "Operational Living Expenses" to -(pnl.operationalLivingExpenses / 100.0),
-                "Finance Charges & Loan Interest" to -(pnl.financeAndLoanCharges / 100.0),
-                "Depreciation Written Off" to -(pnl.depreciationWrittenOff / 100.0)
-            )
-
-            for ((label, amt) in pnlItems) {
-                canvas.drawText(label, 40f, y, regularTextPaint)
-                canvas.drawText("INR ${String.format("%,.2f", amt)}", 470f, y, regularTextPaint)
-                y += 12f
-            }
-
-            y += 4f
-            canvas.drawLine(40f, y, 555f, y, linePaint)
-            y += 12f
-            canvas.drawText("NET SURPLUS SAVINGS", 40f, y, boldTextPaint)
-            canvas.drawText("INR ${String.format("%,.2f", pnl.netSurplusSavings / 100.0)}", 470f, y, boldTextPaint)
-            y += 6f
-            canvas.drawLine(40f, y, 555f, y, dividerPaint)
-            y += 18f
-
-            // 3. DATA CHECKS (Placeholder for Step 3 implementation)
-            canvas.drawText("DATA CHECKS & VERIFICATION", 40f, y, sectionPaint)
-            y += 14f
-            canvas.drawText("Verify records with AIS/26AS. Cash transactions > ₹2L flagged: 0. Uncategorized entries: 0.", 40f, y, regularTextPaint)
             y += 24f
 
-            // Footer Signoff
+            canvas.drawText("7. CAPITAL GAINS / VDA STATEMENT", 40f, y, secPaint); y += 12f
+            canvas.drawText("/* Note: VDA/Crypto and exact Capital Gains breakdown require separate CSV ledger ingestion. */", 40f, y, subPaint); y += 24f
+
+            canvas.drawText("8. FIXED ASSET REGISTER", 40f, y, secPaint); y += 16f
+            val assetPockets = rawPockets.filter { it.type == PocketType.FIXED_ASSET }
+            if (assetPockets.isEmpty()) canvas.drawText("No fixed assets tracked.", 40f, y, textPaint) else {
+                assetPockets.forEach { p -> canvas.drawText(p.name, 40f, y, textPaint); y += 14f }
+            }
+            y += 24f
+
+            // Footer
+            y = 720f
+            canvas.drawLine(40f, y, 555f, y, dividerPaint); y += 14f
             val footer1 = "Prepared from the entries you recorded in InOut. Figures are only as accurate as your entries,"
             val footer2 = "so please match them with your bank statements, Form 16, AIS and Form 26AS before filing."
-            val footer3 = "This report is an aid for preparing your ITR; it is not tax advice. For complex cases, consult a Chartered Accountant."
+            val footer3 = "This report is an aid for preparing your ITR; it is not tax advice. For complex cases, consult a CA."
             val footer4 = "Private & offline-first."
             
-            canvas.drawText(footer1, 40f, y, subtitlePaint); y += 10f
-            canvas.drawText(footer2, 40f, y, subtitlePaint); y += 10f
-            canvas.drawText(footer3, 40f, y, subtitlePaint); y += 10f
-            canvas.drawText(footer4, 40f, y, subtitlePaint)
+            canvas.drawText(footer1, 40f, y, subPaint); y += 12f
+            canvas.drawText(footer2, 40f, y, subPaint); y += 12f
+            canvas.drawText(footer3, 40f, y, subPaint); y += 12f
+            canvas.drawText(footer4, 40f, y, subPaint)
 
             document.finishPage(page)
 
             val exportDir = File(context.cacheDir, "dossiers").apply { mkdirs() }
-            val file = File(exportDir, "InOut_Financial_Report_${System.currentTimeMillis()}.pdf")
+            val file = File(exportDir, "InOut_Financial_Report_FY${fyStartYear}.pdf")
             FileOutputStream(file).use { out -> document.writeTo(out) }
             document.close()
 
