@@ -29,6 +29,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -40,8 +41,11 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -557,7 +561,6 @@ fun DashboardScreen(db: AppDatabase) {
                                     viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, srcId, tgtId, amtPaise, if (isLend) "Peer Debt" else "Peer Advance", if (isLend) "Lent to $contactName" else "Borrowed from $contactName", System.currentTimeMillis(), false, "NONE", false, false, 
                                         { showCreatePocketDialog = false; alertManager.showAlert("Logged transaction with '$contactName'", AlertType.SUCCESS) },
                                         { 
-                                            // Aggressively delete ghost pocket if transaction fails
                                             if (existingPocket == null) scope.launch { db.ledgerDao().deletePocket(db.ledgerDao().getPocketById(peerPocketId)!!) }
                                             alertManager.showAlert(it, AlertType.ERROR) 
                                         },
