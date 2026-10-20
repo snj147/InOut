@@ -137,7 +137,7 @@ object PdfDossierExporter {
                 val fY = 780f
                 canvas.drawLine(40f, fY - 10f, 555f, fY - 10f, linePaint)
                 canvas.drawText("Prepared from entries recorded in InOut. Verify with bank statements, Form 16, AIS, and Form 26AS.", 297f, fY, footerPaint)
-                canvas.drawText("This report is an aid for preparing your ITR; it is not tax advice. Private & offline-first. Page $pageNum", 297f, fY + 12f, footerPaint)
+                canvas.drawText("This report is an aid for preparing your ITR; it is NOT tax advice. Page $pageNum", 297f, fY + 12f, footerPaint)
             }
 
             var pageCount = 1
