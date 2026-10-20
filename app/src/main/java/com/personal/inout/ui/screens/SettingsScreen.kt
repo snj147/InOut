@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -17,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.personal.inout.ui.AppThemeMode
 import com.personal.inout.ui.ThemeColors
+import com.personal.inout.ui.dialogs.FinancialYearSelectorDialog
 import com.personal.inout.util.UpdateDownloadState
 import com.personal.inout.util.UpdateInfo
 import java.io.File
@@ -39,12 +40,25 @@ fun SettingsCardsList(
     onOpenFeedback: () -> Unit,
     onAutoSplitToggled: (Boolean) -> Unit,
     onThemeSelected: (AppThemeMode) -> Unit,
-    onExportPdf: () -> Unit,
+    onExportPdf: (Int) -> Unit,
     onExportCsv: () -> Unit,
     onExportEncryptedBackup: () -> Unit,
     onRestoreEncryptedBackup: () -> Unit,
     onClearLedger: () -> Unit
 ) {
+    var showFySelector by remember { mutableStateOf(false) }
+
+    if (showFySelector) {
+        FinancialYearSelectorDialog(
+            theme = theme,
+            onDismiss = { showFySelector = false },
+            onGenerate = { fy -> 
+                showFySelector = false
+                onExportPdf(fy) 
+            }
+        )
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -145,7 +159,7 @@ fun SettingsCardsList(
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(text = "Export Cryptographic Archive (.vault)", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(text = "Export Secure Backup (.vault)", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
 
                     OutlinedButton(
@@ -155,18 +169,18 @@ fun SettingsCardsList(
                         border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(text = "Restore Cryptographic Archive", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(text = "Restore Secure Backup", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
 
                     HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
 
                     Button(
-                        onClick = onExportPdf,
+                        onClick = { showFySelector = true },
                         colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(text = "Export Statutory PDF Dossier (ICAI Format)", color = theme.textBright, fontSize = 12.sp)
+                        Text(text = "Export Financial PDF Report (ITR Aid)", color = theme.textBright, fontSize = 12.sp)
                     }
 
                     Button(
@@ -175,7 +189,7 @@ fun SettingsCardsList(
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(text = "Export TallyPrime / Excel CSV Ledger", color = theme.textBright, fontSize = 12.sp)
+                        Text(text = "Export CSV Ledger", color = theme.textBright, fontSize = 12.sp)
                     }
                 }
             }
