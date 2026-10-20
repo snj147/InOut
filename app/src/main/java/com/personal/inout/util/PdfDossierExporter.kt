@@ -39,7 +39,6 @@ object PdfDossierExporter {
             val rawPockets = dao.getAllActivePocketsSnapshot()
             val balances = rawPockets.associate { it.id to dao.computePocketBalance(it.id, toEpoch) }
 
-            // FIX: Strict Opening Capital logic based on Asset/Liability evaluation at exactly Mar 31 of previous year
             val openingBalances = rawPockets.associate { it.id to dao.computePocketBalance(it.id, fromEpoch - 1) }
             var openingAssets = 0L
             var openingLiabs = 0L
@@ -127,11 +126,14 @@ object PdfDossierExporter {
             val warningPaint = Paint().apply { textSize = 10f; color = Color.rgb(200, 50, 50) }
             val successPaint = Paint().apply { textSize = 10f; color = Color.rgb(50, 150, 50) }
 
-            fun drawHeaderAndFooter(canvas: android.graphics.Canvas, pageNum: Int) {
+            // FIX: Added the missing pageTitle parameter back to the signature
+            fun drawHeaderAndFooter(canvas: android.graphics.Canvas, pageNum: Int, pageTitle: String) {
                 canvas.drawText("InOut – Financial Statements | FY $fyStartYear-${(fyStartYear+1)%100} (AY ${fyStartYear+1}-${(fyStartYear+2)%100})", 40f, 40f, titlePaint)
                 canvas.drawText("Know what comes in. Know what goes out.", 40f, 54f, textPaint)
                 canvas.drawLine(40f, 66f, 555f, 66f, Paint().apply { strokeWidth = 1.5f; color = Color.BLACK })
                 
+                canvas.drawText(pageTitle, 40f, 90f, secPaint)
+
                 val fY = 780f
                 canvas.drawLine(40f, fY - 10f, 555f, fY - 10f, linePaint)
                 canvas.drawText("Prepared from entries recorded in InOut. Verify with bank statements, Form 16, AIS, and Form 26AS.", 297f, fY, footerPaint)
@@ -144,10 +146,8 @@ object PdfDossierExporter {
             // --- PAGE 1: DATA CHECKS & ALERTS ---
             var page = document.startPage(pageInfo)
             var canvas = page.canvas
-            drawHeaderAndFooter(canvas, pageCount++)
-            y = 90f
-            
-            canvas.drawText("1. DATA CHECKS & VALIDATION ALERTS", 40f, y, secPaint); y += 24f
+            drawHeaderAndFooter(canvas, pageCount++, "1. DATA CHECKS & VALIDATION ALERTS")
+            y = 120f
             
             fun drawCheck(label: String, isWarning: Boolean) {
                 canvas.drawText(label, 40f, y, if (isWarning) warningPaint else successPaint)
@@ -177,10 +177,9 @@ object PdfDossierExporter {
             // --- PAGE 2: CAPITAL RECONCILIATION ---
             page = document.startPage(pageInfo)
             canvas = page.canvas
-            drawHeaderAndFooter(canvas, pageCount++)
-            y = 90f
+            drawHeaderAndFooter(canvas, pageCount++, "2. CAPITAL RECONCILIATION")
+            y = 120f
             
-            canvas.drawText("2. CAPITAL RECONCILIATION", 40f, y, secPaint); y += 24f
             canvas.drawText("Opening Capital (as of 1 Apr $fyStartYear)", 40f, y, textPaint)
             canvas.drawText(String.format("%,.2f", openingCapital / 100.0), 480f, y, textPaint); y += 18f
             canvas.drawText("Add: Net Surplus for the Year", 40f, y, textPaint)
@@ -195,10 +194,9 @@ object PdfDossierExporter {
             // --- PAGE 3: INCOME BY ITR HEAD ---
             page = document.startPage(pageInfo)
             canvas = page.canvas
-            drawHeaderAndFooter(canvas, pageCount++)
-            y = 90f
+            drawHeaderAndFooter(canvas, pageCount++, "3. INCOME BY ITR HEAD")
+            y = 120f
             
-            canvas.drawText("3. INCOME BY ITR HEAD", 40f, y, secPaint); y += 24f
             canvas.drawText("Verify these heads with your Form 16, AIS, and Annual Information Statement.", 40f, y, textPaint); y += 24f
             incomeByHead.forEach { (head, amt) ->
                 canvas.drawText(head, 40f, y, textPaint)
@@ -212,10 +210,9 @@ object PdfDossierExporter {
             // --- PAGE 4: TAXES PAID ---
             page = document.startPage(pageInfo)
             canvas = page.canvas
-            drawHeaderAndFooter(canvas, pageCount++)
-            y = 90f
+            drawHeaderAndFooter(canvas, pageCount++, "4. TAXES PAID")
+            y = 120f
             
-            canvas.drawText("4. TAXES PAID", 40f, y, secPaint); y += 24f
             canvas.drawText("TDS / Advance Tax / Self-Assessment Logged", 40f, y, textPaint)
             canvas.drawText(String.format("%,.2f", tdsPaid / 100.0), 480f, y, textPaint); y += 24f
             canvas.drawText("Verify with Form 26AS to ensure tax credits are accurately reflected by the IT Department.", 40f, y, textPaint)
@@ -224,10 +221,8 @@ object PdfDossierExporter {
             // --- PAGE 5: DEDUCTIONS SUMMARY ---
             page = document.startPage(pageInfo)
             canvas = page.canvas
-            drawHeaderAndFooter(canvas, pageCount++)
-            y = 90f
-            
-            canvas.drawText("5. DEDUCTIONS SUMMARY", 40f, y, secPaint); y += 24f
+            drawHeaderAndFooter(canvas, pageCount++, "5. DEDUCTIONS SUMMARY")
+            y = 120f
             
             canvas.drawText("CATEGORY", 40f, y, boldPaint)
             canvas.drawText("CLAIMED (INR)", 280f, y, boldPaint)
@@ -250,10 +245,9 @@ object PdfDossierExporter {
             // --- PAGE 6: LOAN STATEMENT ---
             page = document.startPage(pageInfo)
             canvas = page.canvas
-            drawHeaderAndFooter(canvas, pageCount++)
-            y = 90f
+            drawHeaderAndFooter(canvas, pageCount++, "6. LOAN STATEMENT")
+            y = 120f
             
-            canvas.drawText("6. LOAN STATEMENT", 40f, y, secPaint); y += 24f
             val loanPockets = rawPockets.filter { it.type == PocketType.LIABILITY_LOAN }
             if (loanPockets.isEmpty()) {
                 canvas.drawText("No liability loans tracked in this period.", 40f, y, textPaint)
@@ -271,10 +265,9 @@ object PdfDossierExporter {
             // --- PAGE 7: CAPITAL GAINS / VDA ---
             page = document.startPage(pageInfo)
             canvas = page.canvas
-            drawHeaderAndFooter(canvas, pageCount++)
-            y = 90f
+            drawHeaderAndFooter(canvas, pageCount++, "7. CAPITAL GAINS / VDA STATEMENT")
+            y = 120f
             
-            canvas.drawText("7. CAPITAL GAINS / VDA STATEMENT", 40f, y, secPaint); y += 24f
             val vdaTxs = fyTxs.filter { it.category.contains("Crypto", true) || it.category.contains("VDA", true) }
             val capGainsTxs = fyTxs.filter { it.category.contains("Capital Gain", true) || it.category.contains("Shares", true) }
             
@@ -286,10 +279,9 @@ object PdfDossierExporter {
             // --- PAGE 8: FIXED ASSET REGISTER ---
             page = document.startPage(pageInfo)
             canvas = page.canvas
-            drawHeaderAndFooter(canvas, pageCount++)
-            y = 90f
+            drawHeaderAndFooter(canvas, pageCount++, "8. FIXED ASSET REGISTER")
+            y = 120f
             
-            canvas.drawText("8. FIXED ASSET REGISTER", 40f, y, secPaint); y += 24f
             val assetPockets = rawPockets.filter { it.type == PocketType.FIXED_ASSET }
             if (assetPockets.isEmpty()) {
                 canvas.drawText("No fixed assets tracked in this period.", 40f, y, textPaint)
@@ -308,9 +300,8 @@ object PdfDossierExporter {
             page = document.startPage(pageInfo)
             canvas = page.canvas
             drawHeaderAndFooter(canvas, pageCount, "9. MONTH-WISE SUMMARY & RECEIVABLES")
-            y = 90f
+            y = 120f
             
-            canvas.drawText("9. MONTH-WISE SUMMARY", 40f, y, secPaint); y += 24f
             canvas.drawText("MONTH", 40f, y, boldPaint)
             canvas.drawText("INCOME", 200f, y, boldPaint)
             canvas.drawText("EXPENSE", 360f, y, boldPaint); y += 8f
@@ -322,7 +313,7 @@ object PdfDossierExporter {
                 canvas.drawText(String.format("%,.2f", flows.second / 100.0), 360f, y, textPaint)
                 y += 18f
             }
-            y += 24f
+            y += 16f
             
             canvas.drawText("SUNDRY DEBTORS (RECEIVABLES)", 40f, y, secPaint); y += 16f
             val debtors = rawPockets.filter { it.type == PocketType.PEER_RECEIVABLE }.filter { (balances[it.id] ?: 0L) >= 0L } +
