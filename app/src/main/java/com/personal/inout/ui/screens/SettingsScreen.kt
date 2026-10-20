@@ -34,7 +34,7 @@ fun SettingsCardsList(
     availableUpdate: UpdateInfo?,
     isCheckingUpdate: Boolean,
     downloadState: UpdateDownloadState,
-    completedTransactions: List<LedgerTransaction>, // ADDED THIS TO PASS TO DIALOG
+    completedTransactions: List<LedgerTransaction>,
     onOpenSetPinDialog: () -> Unit,
     onCheckUpdate: () -> Unit,
     onStartStreamDownload: (UpdateInfo) -> Unit,
