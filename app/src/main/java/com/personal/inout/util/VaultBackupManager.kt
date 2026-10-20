@@ -27,10 +27,6 @@ object VaultBackupManager {
     private const val ITERATION_COUNT = 65536
     private const val KEY_LENGTH_BIT = 256
 
-    /**
-     * BRD Rule 24 & Rule 34.4: Export complete uncompressed/encrypted database snapshot
-     * with SHA-256 integrity checksum verification.
-     */
     suspend fun exportEncryptedBackup(
         context: Context,
         db: AppDatabase,
@@ -116,9 +112,6 @@ object VaultBackupManager {
         }
     }
 
-    /**
-     * Restore and verify encrypted `.vault` archive with zero orphan artifacts.
-     */
     suspend fun restoreEncryptedBackup(
         context: Context,
         db: AppDatabase,
@@ -150,7 +143,6 @@ object VaultBackupManager {
             val pocketsArray = rootJson.getJSONArray("pockets")
             val txArray = rootJson.getJSONArray("transactions")
 
-            // Atomic clear of active ledger
             val existingTx = db.ledgerDao().observeAllTransactions().first()
             for (t in existingTx) {
                 db.ledgerDao().deleteTransaction(t)
@@ -165,10 +157,10 @@ object VaultBackupManager {
                     name = p.getString("name"),
                     type = pocketType,
                     currency = p.optString("currency", "INR"),
-                    creditLimit = p.optDouble("creditLimit", 0.0),
+                    creditLimit = p.optLong("creditLimit", 0L),
                     statementClosingDay = p.optInt("statementClosingDay", 0),
                     billDueDay = p.optInt("billDueDay", 0),
-                    targetGoalAmount = p.optDouble("targetGoalAmount", 0.0),
+                    targetGoalAmount = p.optLong("targetGoalAmount", 0L),
                     goalTargetDate = p.optLong("goalTargetDate", 0L),
                     peerContactName = p.optString("peerContactName", ""),
                     lastReconciledEpoch = p.optLong("lastReconciledEpoch", 0L),
@@ -184,7 +176,7 @@ object VaultBackupManager {
                 val txObj = LedgerTransaction(
                     id = t.optLong("id", 0L),
                     timestamp = t.getLong("timestamp"),
-                    amount = t.getDouble("amount"),
+                    amount = t.getLong("amount"),
                     description = t.getString("description"),
                     category = t.getString("category"),
                     movementNature = nature,
@@ -199,7 +191,7 @@ object VaultBackupManager {
                     recurringFrequency = t.optString("recurringFrequency", "NONE"),
                     recurringEndDate = t.optLong("recurringEndDate", 0L),
                     originalCurrency = t.optString("originalCurrency", "INR"),
-                    foreignAmount = t.optDouble("foreignAmount", 0.0)
+                    foreignAmount = t.optLong("foreignAmount", 0L)
                 )
                 db.ledgerDao().insertTransaction(txObj)
                 importedCount++
