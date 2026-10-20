@@ -280,8 +280,8 @@ fun BatchBalanceSheetStagingView(
                         Text(item.inferredType.name, color = theme.accent, fontSize = 9.5.sp)
                     }
                     val isOut = item.inferredType == PocketType.LIABILITY_LOAN || item.inferredType == PocketType.CREDIT_CARD
-                    val col = if (item.extractedAmount == 0.0) theme.textBright else if (isOut) theme.mildRed else theme.mildGreen
-                    Text("₹ ${String.format("%,.0f", item.extractedAmount)}", color = col, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    val col = if (item.extractedAmount == 0L) theme.textBright else if (isOut) theme.mildRed else theme.mildGreen
+                    Text("₹ ${String.format("%,.0f", item.extractedAmount / 100.0)}", color = col, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -305,9 +305,9 @@ fun EditAccountDialog(
     onSave: (name: String, limit: Double, dueDay: Int, targetAmt: Double, targetDateEpoch: Long) -> Unit
 ) {
     var name by remember { mutableStateOf(pocket.name) }
-    var limit by remember { mutableStateOf(if (pocket.creditLimit > 0.0) String.format("%.0f", pocket.creditLimit) else "") }
+    var limit by remember { mutableStateOf(if (pocket.creditLimit > 0L) String.format("%.0f", pocket.creditLimit / 100.0) else "") }
     var dueDay by remember { mutableStateOf(if (pocket.billDueDay > 0) pocket.billDueDay.toString() else "") }
-    var targetAmt by remember { mutableStateOf(if (pocket.targetGoalAmount > 0.0) String.format("%.0f", pocket.targetGoalAmount) else "") }
+    var targetAmt by remember { mutableStateOf(if (pocket.targetGoalAmount > 0L) String.format("%.0f", pocket.targetGoalAmount / 100.0) else "") }
     var targetDateEpoch by remember { mutableStateOf(if (pocket.goalTargetDate > 0) pocket.goalTargetDate else System.currentTimeMillis() + (30L * 24 * 3600 * 1000L)) }
     var showDatePicker by remember { mutableStateOf(false) }
 
@@ -334,7 +334,7 @@ fun EditAccountDialog(
 
                     val isValid = name.isNotBlank()
                     Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { if (isValid) onSave(name, limit.toDoubleOrNull() ?: pocket.creditLimit, dueDay.toIntOrNull() ?: pocket.billDueDay, targetAmt.toDoubleOrNull() ?: pocket.targetGoalAmount, targetDateEpoch) }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
+                        Button(onClick = { if (isValid) onSave(name, limit.toDoubleOrNull() ?: (pocket.creditLimit / 100.0), dueDay.toIntOrNull() ?: pocket.billDueDay, targetAmt.toDoubleOrNull() ?: (pocket.targetGoalAmount / 100.0), targetDateEpoch) }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
                             Text("Save Changes", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                         OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight), colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)) {
