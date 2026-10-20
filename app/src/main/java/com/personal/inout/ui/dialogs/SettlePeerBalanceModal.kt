@@ -29,36 +29,55 @@ import kotlin.math.abs
 @Composable
 fun SettlePeerBalanceModal(
     peerPocket: LedgerPocket,
-    currentBalance: Double,
+    currentBalance: Long, // STRICTLY PAISE
     liquidPockets: List<LedgerPocket>,
     theme: ThemeColors,
     onDismiss: () -> Unit,
-    onSettle: (isLend: Boolean, amount: Double, bankId: Long) -> Unit
+    onSettle: (isOutgoingFromBank: Boolean, amount: Double, bankId: Long) -> Unit
 ) {
     var amountInput by remember { mutableStateOf("") }
     var selectedBankId by remember(liquidPockets) { mutableStateOf(liquidPockets.firstOrNull()?.id) }
-    var isLend by remember { mutableStateOf(currentBalance > 0) }
     var showDropdown by remember { mutableStateOf(false) }
+
+    val isDebtor = currentBalance >= 0L
+    val displayBalDouble = abs(currentBalance) / 100.0
+
+    // true = Money leaves bank, goes to peer (Lend / Repay)
+    // false = Money leaves peer, enters bank (Collect / Borrow)
+    var isOutgoingFromBank by remember { mutableStateOf(isDebtor) } 
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
             Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 400.dp).border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
                 Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("🤝 LEND / BORROW OR TRANSACT", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
+                    Text("🤝 TRANSACT WITH PEER", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
                     
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("Peer: ${peerPocket.name}", color = theme.textMuted, fontSize = 11.5.sp)
-                        val statText = if (currentBalance > 0) "They Owe You ₹ ${String.format("%,.0f", currentBalance)}" else if (currentBalance < 0) "You Owe Them ₹ ${String.format("%,.0f", abs(currentBalance))}" else "Settled (₹0)"
-                        val statColor = if (currentBalance > 0) theme.mildGreen else if (currentBalance < 0) theme.mildRed else theme.textBright
+                        val statText = if (currentBalance > 0L) "They Owe You ₹ ${String.format("%,.0f", displayBalDouble)}" else if (currentBalance < 0L) "You Owe Them ₹ ${String.format("%,.0f", displayBalDouble)}" else "Settled (₹0)"
+                        val statColor = if (currentBalance > 0L) theme.mildGreen else if (currentBalance < 0L) theme.mildRed else theme.textBright
                         Text("Current Status: $statText", color = statColor, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                     }
 
+                    // DYNAMIC UX OPTIONS BASED ON DEBT STATE
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isLend) theme.mildGreen.copy(alpha = 0.25f) else theme.surfaceAlt).border(1.dp, if (isLend) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isLend = true }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                            Text("Lend", color = if (isLend) theme.mildGreen else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (!isLend) theme.mildRed.copy(alpha = 0.25f) else theme.surfaceAlt).border(1.dp, if (!isLend) theme.mildRed else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isLend = false }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                            Text("Borrow", color = if (!isLend) theme.mildRed else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        val activeBg = theme.accent.copy(alpha = 0.2f)
+                        val inactiveBg = theme.surfaceAlt
+
+                        if (isDebtor) {
+                            Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isOutgoingFromBank) activeBg else inactiveBg).border(1.dp, if (isOutgoingFromBank) theme.accent else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isOutgoingFromBank = true }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                                Text("Lend More", color = if (isOutgoingFromBank) theme.accent else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (!isOutgoingFromBank) activeBg else inactiveBg).border(1.dp, if (!isOutgoingFromBank) theme.accent else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isOutgoingFromBank = false }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                                Text("Collect Funds", color = if (!isOutgoingFromBank) theme.accent else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        } else {
+                            Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isOutgoingFromBank) activeBg else inactiveBg).border(1.dp, if (isOutgoingFromBank) theme.accent else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isOutgoingFromBank = true }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                                Text("Repay Debt", color = if (isOutgoingFromBank) theme.accent else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (!isOutgoingFromBank) activeBg else inactiveBg).border(1.dp, if (!isOutgoingFromBank) theme.accent else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isOutgoingFromBank = false }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                                Text("Borrow More", color = if (!isOutgoingFromBank) theme.accent else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
 
@@ -80,8 +99,8 @@ fun SettlePeerBalanceModal(
 
                     val isValid = (amountInput.toDoubleOrNull() ?: 0.0) > 0.0 && selectedBankId != null
                     Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { onSettle(isLend, amountInput.toDouble(), selectedBankId!!) }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
-                            Text("Settle Balance", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Button(onClick = { onSettle(isOutgoingFromBank, amountInput.toDouble(), selectedBankId!!) }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
+                            Text("Log Transaction", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
                         OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)) {
                             Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
