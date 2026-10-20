@@ -44,10 +44,11 @@ data class LedgerPocket(
     val name: String,
     val type: PocketType,
     val currency: String = "INR",
-    val creditLimit: Long = 0L,              // Stored in paise
+    val creditLimit: Long = 0L,              
     val statementClosingDay: Int = 0,        
     val billDueDay: Int = 0,                 
-    val targetGoalAmount: Long = 0L,         // Stored in paise
+    val targetGoalAmount: Long = 0L,         
+    val goalTargetDate: Long = 0L,           
     val peerContactName: String = "",        
     val lastReconciledEpoch: Long = 0L,      
     val isArchived: Boolean = false,
@@ -67,7 +68,7 @@ data class LedgerPocket(
 data class LedgerTransaction(
     @PrimaryKey(autoGenerate = true) val id: Long = 0L,
     val timestamp: Long = System.currentTimeMillis(),
-    val amount: Long,                        // Stored in paise
+    val amount: Long,                        
     val description: String,
     val category: String = "General",
     val movementNature: MovementNature = MovementNature.OPERATING_EXPENSE,
@@ -82,7 +83,7 @@ data class LedgerTransaction(
     val recurringFrequency: String = "NONE", 
     val recurringEndDate: Long = 0L,
     val originalCurrency: String = "INR",    
-    val foreignAmount: Long = 0L,            // Stored in paise
+    val foreignAmount: Long = 0L,            
     val splitParentId: Long? = null,         
     val idempotencyHash: String = ""         
 )
@@ -90,9 +91,9 @@ data class LedgerTransaction(
 @Entity(tableName = "category_budgets")
 data class CategoryBudget(
     @PrimaryKey val categoryName: String,
-    val monthlyLimit: Long,                  // Stored in paise
+    val monthlyLimit: Long,                  
     val rolloverMode: RolloverMode = RolloverMode.RESET,
-    val accumulatedDelta: Long = 0L          // Stored in paise
+    val accumulatedDelta: Long = 0L          
 )
 
 @Entity(
