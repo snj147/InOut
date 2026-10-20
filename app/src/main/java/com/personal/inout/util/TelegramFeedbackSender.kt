@@ -2,6 +2,7 @@ package com.personal.inout.util
 
 import android.content.Context
 import android.net.Uri
+import com.personal.inout.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.InputStream
@@ -10,13 +11,13 @@ import java.net.URL
 
 object TelegramFeedbackSender {
 
-    private const val BOT_TOKEN = "8932453873:AAE3ORsJu5gPsjyL5M50dFIG2wQe0gi0nTk" 
-    private const val CHAT_ID = "7679651355"
+    private val BOT_TOKEN: String = BuildConfig.TELEGRAM_BOT_TOKEN
+    private val CHAT_ID: String = BuildConfig.TELEGRAM_CHAT_ID
 
     suspend fun sendFeedback(context: Context, userMessage: String, imageUri: Uri?): Result<Boolean> = withContext(Dispatchers.IO) {
         try {
-            if (BOT_TOKEN == "YOUR_BOT_TOKEN_HERE") {
-                return@withContext Result.failure(Exception("Bot token not configured. Please add it to TelegramFeedbackSender.kt"))
+            if (BOT_TOKEN.isBlank() || CHAT_ID.isBlank()) {
+                return@withContext Result.failure(Exception("Telegram API credentials not configured in build."))
             }
 
             val textPayload = "🛡 *InOut Vault Alert*\n\n$userMessage"
