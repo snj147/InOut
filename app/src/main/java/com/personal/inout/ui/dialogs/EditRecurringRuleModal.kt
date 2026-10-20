@@ -35,7 +35,8 @@ fun EditRecurringRuleModal(
     onDismiss: () -> Unit,
     onSave: (desc: String, amount: Double, frequency: String, anchorDate: Long) -> Unit
 ) {
-    var rawAmount by remember { mutableStateOf(String.format("%.0f", rule.amount)) }
+    // FIX: Safely converted Long paise to Double for the UI formatter
+    var rawAmount by remember { mutableStateOf(String.format("%.0f", rule.amount / 100.0)) }
     var description by remember { mutableStateOf(rule.description) }
     var frequency by remember { mutableStateOf(rule.recurringFrequency) }
     var selectedDateEpoch by remember { mutableStateOf(rule.timestamp) }
