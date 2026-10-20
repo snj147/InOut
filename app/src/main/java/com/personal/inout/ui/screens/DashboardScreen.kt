@@ -29,7 +29,6 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -41,11 +40,8 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -410,6 +406,7 @@ fun DashboardScreen(db: AppDatabase) {
                             theme = theme, currentSha = currentInstalledSha, lastUpdatedDate = lastInstalledTimeFormatted, masterPin = masterSecurityPin,
                             autoSplitEnabled = viewModel.autoSplitEnabled.collectAsState().value, activeThemeMode = activeThemeMode, availableUpdate = availableUpdateInfo,
                             isCheckingUpdate = isCheckingForUpdate, downloadState = downloadState,
+                            completedTransactions = uiState.completedTransactions,
                             onOpenSetPinDialog = { showSetPinDialog = true },
                             onCheckUpdate = {
                                 scope.launch {
@@ -538,21 +535,34 @@ fun DashboardScreen(db: AppDatabase) {
                         },
                         onSavePeerWithFunding = { contactName, isLend, amount, fundingPocketId ->
                             scope.launch {
-                                val peerType = if (isLend) PocketType.PEER_RECEIVABLE else PocketType.PEER_PAYABLE
-                                val peerPocketId = db.ledgerDao().insertPocket(LedgerPocket(name = contactName, type = peerType))
                                 val amtPaise = (amount * 100).toLong()
+                                if (amtPaise > 0L && fundingPocketId == null) {
+                                    alertManager.showAlert("Must select a bank account to fund this transaction.", AlertType.ERROR)
+                                    return@launch
+                                }
+                                
+                                val existingPocket = db.ledgerDao().getAllActivePocketsSnapshot().firstOrNull { 
+                                    it.name.equals(contactName, ignoreCase = true) && 
+                                    (it.type == PocketType.PEER_RECEIVABLE || it.type == PocketType.PEER_PAYABLE) 
+                                }
+
+                                val peerPocketId = existingPocket?.id ?: db.ledgerDao().insertPocket(LedgerPocket(
+                                    name = contactName,
+                                    type = if (isLend) PocketType.PEER_RECEIVABLE else PocketType.PEER_PAYABLE
+                                ))
+
                                 if (amtPaise > 0L && fundingPocketId != null) {
                                     val srcId = if (isLend) fundingPocketId else peerPocketId
                                     val tgtId = if (isLend) peerPocketId else fundingPocketId
                                     viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, srcId, tgtId, amtPaise, if (isLend) "Peer Debt" else "Peer Advance", if (isLend) "Lent to $contactName" else "Borrowed from $contactName", System.currentTimeMillis(), false, "NONE", false, false, 
-                                        { showCreatePocketDialog = false; alertManager.showAlert("Added Peer ledger for '$contactName'", AlertType.SUCCESS) },
-                                        { scope.launch { db.ledgerDao().deletePocket(db.ledgerDao().getPocketById(peerPocketId)!!) }; alertManager.showAlert(it, AlertType.ERROR) },
+                                        { showCreatePocketDialog = false; alertManager.showAlert("Logged transaction with '$contactName'", AlertType.SUCCESS) },
+                                        { 
+                                            // Aggressively delete ghost pocket if transaction fails
+                                            if (existingPocket == null) scope.launch { db.ledgerDao().deletePocket(db.ledgerDao().getPocketById(peerPocketId)!!) }
+                                            alertManager.showAlert(it, AlertType.ERROR) 
+                                        },
                                         { alertManager.showAlert(it, AlertType.WARNING) }
                                     )
-                                } else if (amtPaise > 0L) {
-                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, peerPocketId, null, amtPaise, "Initial Position", "Opening peer ledger for $contactName", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
-                                    showCreatePocketDialog = false
-                                    alertManager.showAlert("Added Peer ledger for '$contactName'", AlertType.SUCCESS)
                                 } else {
                                     showCreatePocketDialog = false
                                     alertManager.showAlert("Added Peer ledger for '$contactName'", AlertType.SUCCESS)
@@ -636,10 +646,7 @@ fun DashboardScreen(db: AppDatabase) {
     }
 }
 
-// Helper to spawn FY selector from Search Sheet
 private fun showFySelectorForPdf(context: Context, scope: kotlinx.coroutines.CoroutineScope) {
-    // For simplicity from the deep sheet, we'll default to the current FY export.
-    // The main settings screen has the full explicit selector dialog.
     val currentYear = Calendar.getInstance().get(Calendar.YEAR)
     val month = Calendar.getInstance().get(Calendar.MONTH)
     val defaultFy = if (month >= Calendar.APRIL) currentYear else currentYear - 1
