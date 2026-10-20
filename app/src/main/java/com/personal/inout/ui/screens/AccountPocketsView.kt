@@ -35,13 +35,13 @@ import kotlin.math.abs
 @Composable
 fun AccountPocketsView(
     rawPockets: List<LedgerPocket>,
-    pocketBalances: Map<Long, Double>,
+    pocketBalances: Map<Long, Long>, // MIGRATED TO PAISE
     recurringTransactions: List<LedgerTransaction>,
     isPrivacyMode: Boolean,
     onTransactPocket: (LedgerPocket) -> Unit,
     onViewTransactions: (Long) -> Unit,
     onEditPocket: (LedgerPocket) -> Unit,
-    onDeletePocketSafe: (LedgerPocket, Double) -> Unit,
+    onDeletePocketSafe: (LedgerPocket, Long) -> Unit,
     onTogglePauseRecurring: (LedgerTransaction) -> Unit,
     onEditRecurring: (LedgerTransaction) -> Unit,
     onDeleteRecurringSafe: (LedgerTransaction) -> Unit,
@@ -56,9 +56,9 @@ fun AccountPocketsView(
 
     var activeModeIndex by remember { mutableIntStateOf(0) }
 
-    var selectedContextPocket by remember { mutableStateOf<Pair<LedgerPocket, Double>?>(null) }
+    var selectedContextPocket by remember { mutableStateOf<Pair<LedgerPocket, Long>?>(null) }
     var selectedContextRecurring by remember { mutableStateOf<LedgerTransaction?>(null) }
-    var pendingSafeDeactivatePocket by remember { mutableStateOf<Pair<LedgerPocket, Double>?>(null) }
+    var pendingSafeDeactivatePocket by remember { mutableStateOf<Pair<LedgerPocket, Long>?>(null) }
 
     LazyColumn(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(top = 10.dp, bottom = 96.dp)) {
         item {
@@ -73,22 +73,22 @@ fun AccountPocketsView(
         }
 
         if (activeModeIndex == 0 || activeModeIndex == 1) {
-            val totalLiquid = liquidPockets.sumOf { pocketBalances[it.id] ?: 0.0 }
-            item { SectionSummaryHeader("SPENDABLE LIQUID", totalLiquid, isPrivacyMode, theme) }
+            val totalLiquid = liquidPockets.sumOf { pocketBalances[it.id] ?: 0L }
+            item { SectionSummaryHeader("SPENDABLE LIQUID", totalLiquid / 100.0, isPrivacyMode, theme) }
             if (liquidPockets.isEmpty()) {
                 item { CompactAddActionRow("No Liquid Bank Accounts", theme) { onRequestCreateAccount(PocketType.LIQUID) } }
             } else {
                 item {
                     UnifiedStatementGroup(theme) {
                         liquidPockets.forEachIndexed { index, pocket ->
-                            val bal = pocketBalances[pocket.id] ?: 0.0
+                            val bal = pocketBalances[pocket.id] ?: 0L
                             val isCash = pocket.name.equals("Cash in Hand", ignoreCase = true)
                             val icon = if (isCash) Icons.Default.Payments else if (pocket.type == PocketType.PREPAID_WALLET) Icons.Default.AccountBalanceWallet else Icons.Default.AccountBalance
                             
                             UnifiedAccountRow(
                                 title = pocket.name,
                                 sub = if (isCash) "Physical Cash Reserve" else if (pocket.type == PocketType.PREPAID_WALLET) "Prepaid Stored-Value" else "Liquid Bank Asset",
-                                balanceDisplay = if (isPrivacyMode) "₹ •••" else if (bal == 0.0) "₹ 0" else bal.toIndianRupee(),
+                                balanceDisplay = if (isPrivacyMode) "₹ •••" else if (bal == 0L) "₹ 0" else (bal / 100.0).toIndianRupee(),
                                 balanceColor = theme.textBright,
                                 icon = icon, iconColor = theme.mildGreen, theme = theme,
                                 onLongPress = { selectedContextPocket = pocket to bal }
@@ -101,24 +101,24 @@ fun AccountPocketsView(
         }
 
         if (activeModeIndex == 0 || activeModeIndex == 2) {
-            val totalDebt = debtPockets.sumOf { abs(pocketBalances[it.id] ?: 0.0) }
-            item { SectionSummaryHeader("LIABILITIES & BORROWINGS", totalDebt, isPrivacyMode, theme) }
+            val totalDebt = debtPockets.sumOf { abs(pocketBalances[it.id] ?: 0L) }
+            item { SectionSummaryHeader("LIABILITIES & BORROWINGS", totalDebt / 100.0, isPrivacyMode, theme) }
             if (debtPockets.isEmpty()) {
                 item { CompactAddActionRow("No Active Debt or Credit Lines", theme) { onRequestCreateAccount(PocketType.CREDIT_CARD) } }
             } else {
                 item {
                     UnifiedStatementGroup(theme) {
                         debtPockets.forEachIndexed { index, pocket ->
-                            val bal = pocketBalances[pocket.id] ?: 0.0
+                            val bal = pocketBalances[pocket.id] ?: 0L
                             val outstanding = abs(bal)
                             val dueStr = if (pocket.billDueDay > 0) "Due ${pocket.billDueDay}th" else "Statement Balance"
-                            val isCardOverpaid = pocket.type == PocketType.CREDIT_CARD && bal > 0.0
-                            val balColor = if (outstanding == 0.0) theme.textBright else if (isCardOverpaid) theme.mildGreen else theme.mildRed
+                            val isCardOverpaid = pocket.type == PocketType.CREDIT_CARD && bal > 0L
+                            val balColor = if (outstanding == 0L) theme.textBright else if (isCardOverpaid) theme.mildGreen else theme.mildRed
 
                             UnifiedAccountRow(
                                 title = pocket.name,
-                                sub = if (pocket.type == PocketType.CREDIT_CARD) "Limit: ${pocket.creditLimit.toIndianRupee()} • $dueStr" else if (pocket.type == PocketType.PEER_PAYABLE) "Sundry Creditor (Payable)" else "Liability Loan",
-                                balanceDisplay = if (isPrivacyMode) "₹ •••" else if (outstanding == 0.0) "₹ 0" else outstanding.toIndianRupee(),
+                                sub = if (pocket.type == PocketType.CREDIT_CARD) "Limit: ${(pocket.creditLimit / 100.0).toIndianRupee()} • $dueStr" else if (pocket.type == PocketType.PEER_PAYABLE) "Sundry Creditor (Payable)" else "Liability Loan",
+                                balanceDisplay = if (isPrivacyMode) "₹ •••" else if (outstanding == 0L) "₹ 0" else (outstanding / 100.0).toIndianRupee(),
                                 balanceColor = balColor,
                                 icon = if (pocket.type == PocketType.PEER_PAYABLE) Icons.Default.People else Icons.Default.CreditCard, 
                                 iconColor = theme.mildRed, theme = theme,
@@ -132,26 +132,25 @@ fun AccountPocketsView(
         }
 
         if (activeModeIndex == 0 || activeModeIndex == 3) {
-            val totalCapital = capitalPockets.sumOf { pocketBalances[it.id] ?: 0.0 }
-            item { SectionSummaryHeader("CAPITAL RESERVES & WEALTH", totalCapital, isPrivacyMode, theme) }
+            val totalCapital = capitalPockets.sumOf { pocketBalances[it.id] ?: 0L }
+            item { SectionSummaryHeader("CAPITAL RESERVES & WEALTH", totalCapital / 100.0, isPrivacyMode, theme) }
             if (capitalPockets.isEmpty()) {
                 item { CompactAddActionRow("No Capital Holdings or Goal Reserves", theme) { onRequestCreateAccount(PocketType.INVESTMENT) } }
             } else {
                 item {
                     UnifiedStatementGroup(theme) {
                         capitalPockets.forEachIndexed { index, pocket ->
-                            val bal = pocketBalances[pocket.id] ?: 0.0
+                            val bal = pocketBalances[pocket.id] ?: 0L
                             val absoluteBal = abs(bal)
                             val icon = when (pocket.type) { PocketType.INVESTMENT -> Icons.Default.TrendingUp; PocketType.GOAL_POT -> Icons.Default.Adjust; PocketType.FIXED_ASSET -> Icons.Default.Domain; else -> Icons.Default.People }
                             
-                            val isNegativeAsset = bal < 0.0
-                            // FIX: Capital Assets and Receivables now render purely green unless they're strictly negative
-                            val balColor = if (absoluteBal == 0.0) theme.textBright else if (isNegativeAsset) theme.mildRed else theme.mildGreen
+                            val isNegativeAsset = bal < 0L
+                            val balColor = if (absoluteBal == 0L) theme.textBright else if (isNegativeAsset) theme.mildRed else theme.mildGreen
 
                             UnifiedAccountRow(
                                 title = pocket.name,
-                                sub = when (pocket.type) { PocketType.INVESTMENT -> "Mark-to-Market Portfolio Asset"; PocketType.GOAL_POT -> "Quarantined Target: ${pocket.targetGoalAmount.toIndianRupee()}"; PocketType.FIXED_ASSET -> "WDV Capital Asset"; else -> "Sundry Debtor (Receivable)" },
-                                balanceDisplay = if (isPrivacyMode) "₹ •••" else if (absoluteBal == 0.0) "₹ 0" else absoluteBal.toIndianRupee(),
+                                sub = when (pocket.type) { PocketType.INVESTMENT -> "Portfolio Asset"; PocketType.GOAL_POT -> "Target: ${(pocket.targetGoalAmount / 100.0).toIndianRupee()}"; PocketType.FIXED_ASSET -> "Fixed Asset"; else -> "Sundry Debtor (Receivable)" },
+                                balanceDisplay = if (isPrivacyMode) "₹ •••" else if (absoluteBal == 0L) "₹ 0" else (absoluteBal / 100.0).toIndianRupee(),
                                 balanceColor = balColor,
                                 icon = icon, iconColor = theme.mildGreen, theme = theme,
                                 onLongPress = { selectedContextPocket = pocket to bal }
@@ -165,7 +164,7 @@ fun AccountPocketsView(
 
         if (activeModeIndex == 0 || activeModeIndex == 4) {
             val totalRecurring = recurringTransactions.sumOf { it.amount }
-            item { SectionSummaryHeader("ACTIVE AUTOMATION MANDATES", totalRecurring, isPrivacyMode, theme) }
+            item { SectionSummaryHeader("ACTIVE AUTOMATION MANDATES", totalRecurring / 100.0, isPrivacyMode, theme) }
             if (recurringTransactions.isEmpty()) {
                 item {
                     Card(shape = RoundedCornerShape(12.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(12.dp))) {
@@ -183,7 +182,7 @@ fun AccountPocketsView(
                             UnifiedAccountRow(
                                 title = schedule.description.ifBlank { schedule.category },
                                 sub = "Repeats ${schedule.recurringFrequency} • Next: $dateStr",
-                                balanceDisplay = if (isPrivacyMode) "₹ •••" else schedule.amount.toIndianRupee(),
+                                balanceDisplay = if (isPrivacyMode) "₹ •••" else (schedule.amount / 100.0).toIndianRupee(),
                                 balanceColor = theme.accent,
                                 icon = Icons.Default.Schedule, iconColor = theme.accent, theme = theme,
                                 onLongPress = { selectedContextRecurring = schedule }
@@ -196,7 +195,6 @@ fun AccountPocketsView(
         }
     }
 
-    // MODAL TRIGGERS
     selectedContextPocket?.let { (pocket, bal) ->
         CenteredAccountVoucherModal(
             pocket = pocket, balance = bal, theme = theme,
@@ -209,7 +207,7 @@ fun AccountPocketsView(
     }
 
     pendingSafeDeactivatePocket?.let { (pocket, bal) ->
-        CenteredSafePurgeGuardModal(pocket, bal, theme, { pendingSafeDeactivatePocket = null }) { pendingSafeDeactivatePocket = null; onDeletePocketSafe(pocket, bal) }
+        CenteredSafePurgeGuardModal(pocket, bal / 100.0, theme, { pendingSafeDeactivatePocket = null }) { pendingSafeDeactivatePocket = null; onDeletePocketSafe(pocket, bal) }
     }
 
     selectedContextRecurring?.let { schedule ->
