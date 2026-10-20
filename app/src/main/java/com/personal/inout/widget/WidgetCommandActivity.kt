@@ -20,11 +20,12 @@ class WidgetCommandActivity : Activity() {
         super.onCreate(savedInstanceState)
 
         val action = intent.getStringExtra("WIDGET_ACTION")
-        val amount = intent.getDoubleExtra("WIDGET_AMOUNT", 0.0)
+        val amountDouble = intent.getDoubleExtra("WIDGET_AMOUNT", 0.0)
+        val amountPaise = (amountDouble * 100).toLong()
         val category = intent.getStringExtra("WIDGET_CATEGORY") ?: "General"
         val note = intent.getStringExtra("WIDGET_NOTE") ?: "Quick Widget Flow"
 
-        if (amount <= 0.0 && action != "OPEN_APP") {
+        if (amountPaise <= 0L && action != "OPEN_APP") {
             finish()
             return
         }
@@ -57,7 +58,7 @@ class WidgetCommandActivity : Activity() {
                 movementNature = nature,
                 sourcePocketId = primaryLiquid.id,
                 targetPocketId = null,
-                amount = amount,
+                amount = amountPaise,
                 category = category,
                 description = note,
                 timestamp = System.currentTimeMillis(),
@@ -69,7 +70,7 @@ class WidgetCommandActivity : Activity() {
             withContext(Dispatchers.Main) {
                 when (result) {
                     is VaultExecutionResult.Success -> {
-                        Toast.makeText(applicationContext, "Logged ₹${amount.toInt()} ($category)", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(applicationContext, "Logged ₹${amountDouble.toInt()} ($category)", Toast.LENGTH_SHORT).show()
                     }
                     is VaultExecutionResult.OverdraftError -> {
                         Toast.makeText(applicationContext, result.message, Toast.LENGTH_LONG).show()
