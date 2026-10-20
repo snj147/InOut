@@ -396,7 +396,7 @@ fun CenteredNoticesModal(
 @Composable
 fun ReconcileBalanceCockpitModal(
     pocket: LedgerPocket,
-    bookBalance: Long, // MIGRATED TO LONG PAISE
+    bookBalance: Long,
     theme: ThemeColors,
     onDismiss: () -> Unit,
     onApplyDiscrepancy: (actualBal: Long, drift: Long, note: String) -> Unit
