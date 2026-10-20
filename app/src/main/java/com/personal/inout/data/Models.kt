@@ -1,25 +1,21 @@
 package com.personal.inout.data
 
-/**
- * UI Domain models and calculations adhering to BRD 37-rule specifications.
- */
-
 data class PocketBalanceSummary(
     val pocket: LedgerPocket,
-    val currentBalance: Double,
-    val encumberedCreditDues: Double = 0.0,
-    val availableCreditLimit: Double = 0.0
+    val currentBalance: Long,
+    val encumberedCreditDues: Long = 0L,
+    val availableCreditLimit: Long = 0L
 )
 
 data class SolvencyMetricDeck(
-    val trueSafeLiquid: Double,              // Rule 3: Spendable cash without debt
-    val totalNetWorth: Double,               // Rule 28: Total Assets - Total Liabilities
-    val dailyBurnRate: Double,               // Rule 13: Burn velocity today
-    val dailyBurnCeiling: Double,            // Rule 13: Benchmark ceiling (e.g., ₹500)
-    val burnStatus: BurnPacingStatus,        // ON_TRACK vs SPIKED
-    val runwayDays: Long,                    // Rule 13: True Safe Liquid / Burn Ceiling
-    val projectedClosingLiquid: Double,      // Rule 26: Deterministic Month-End Cash Horizon
-    val hasEarlyDeficitAlert: Boolean        // Rule 26: True if Month-End < 0
+    val trueSafeLiquid: Long,              
+    val totalNetWorth: Long,               
+    val dailyBurnRate: Long,               
+    val dailyBurnCeiling: Long,            
+    val burnStatus: BurnPacingStatus,      
+    val runwayDays: Long,                  
+    val projectedClosingLiquid: Long,      
+    val hasEarlyDeficitAlert: Boolean      
 )
 
 enum class BurnPacingStatus {
@@ -33,9 +29,6 @@ data class TransactionDetailItem(
     val targetPocketName: String? = null
 )
 
-/**
- * BRD Rule 30: Quick entry habit pill preset.
- */
 data class HabitPillPreset(
     val label: String,
     val category: String,
@@ -43,45 +36,37 @@ data class HabitPillPreset(
     val defaultMovementNature: MovementNature = MovementNature.OPERATING_EXPENSE
 )
 
-/**
- * BRD Rule 28, 34: Indian Statutory Statements (ICAI / ITR Schedule AL & P&L).
- */
-data class IndianBalanceSheetReport(
+data class FinancialBalanceSheetReport(
     val asOfDateEpoch: Long,
-    // Liabilities & Capital
-    val proprietorCapitalAccount: Double,
-    val securedLoans: Double,
-    val unsecuredLoans: Double,
-    val sundryCreditorsAndCardDues: Double,
-    val totalLiabilitiesAndCapital: Double,
-    // Assets
-    val fixedCapitalAssetsWDV: Double,
-    val investmentsPortfolio: Double,
-    val sundryDebtorsReceivable: Double,
-    val bankAndPrepaidBalances: Double,
-    val cashInHand: Double,
-    val totalAssets: Double,
+    val proprietorCapitalAccount: Long,
+    val securedLoans: Long,
+    val unsecuredLoans: Long,
+    val sundryCreditorsAndCardDues: Long,
+    val totalLiabilitiesAndCapital: Long,
+    val fixedCapitalAssetsWDV: Long,
+    val investmentsPortfolio: Long,
+    val sundryDebtorsReceivable: Long,
+    val bankAndPrepaidBalances: Long,
+    val cashInHand: Long,
+    val totalAssets: Long,
     val isBalanced: Boolean
 )
 
-data class IndianPnLStatement(
+data class FinancialPnLStatement(
     val fromEpoch: Long,
     val toEpoch: Long,
-    val grossInflows: Double,
-    val operationalLivingExpenses: Double,
-    val financeAndLoanCharges: Double,
-    val depreciationWrittenOff: Double,
-    val netSurplusSavings: Double,
-    val taxDeductibleSummary: Map<String, Double>
+    val grossInflows: Long,
+    val operationalLivingExpenses: Long,
+    val financeAndLoanCharges: Long,
+    val depreciationWrittenOff: Long,
+    val netSurplusSavings: Long,
+    val taxDeductibleSummary: Map<String, Long>
 )
 
-/**
- * BRD Rule 29: Staged line item for Balance Sheet PDF OCR import.
- */
 data class StagedStatementLineItem(
     val rawExtractedName: String,
     val inferredType: PocketType,
-    val extractedAmount: Double,
+    val extractedAmount: Long,
     val isSelectedForCommit: Boolean = true,
     val matchedExistingPocketId: Long? = null
 )
