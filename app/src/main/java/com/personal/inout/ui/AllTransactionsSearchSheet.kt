@@ -56,7 +56,7 @@ fun AllTransactionsSearchSheet(
 
     val filteredRecords = remember(flowRecords, searchQuery, selectedCategoryFilter, filterTaxDeductibleOnly) {
         flowRecords.filter { tx ->
-            val amtStr = tx.amount.toString()
+            val amtStr = (tx.amount / 100.0).toString()
             val matchQuery = searchQuery.isBlank() ||
                     tx.description.contains(searchQuery, ignoreCase = true) ||
                     tx.category.contains(searchQuery, ignoreCase = true) ||
@@ -246,8 +246,9 @@ fun AllTransactionsSearchSheet(
                                             Text(text = "${tx.category} • $accountName • $dateStr", color = theme.textMuted, fontSize = 10.sp)
                                         }
                                         
-                                        val displayAmt = if (tx.amount == 0.0) "₹ 0" else "${if (isOut) "-" else "+"}₹ ${String.format("%,.0f", tx.amount)}"
-                                        val colorAmt = if (tx.amount == 0.0) theme.textBright else if (isOut) theme.mildRed else theme.mildGreen
+                                        val amtDouble = tx.amount / 100.0
+                                        val displayAmt = if (tx.amount == 0L) "₹ 0" else "${if (isOut) "-" else "+"}₹ ${String.format("%,.0f", amtDouble)}"
+                                        val colorAmt = if (tx.amount == 0L) theme.textBright else if (isOut) theme.mildRed else theme.mildGreen
                                         
                                         Text(
                                             text = if (isPrivacyMode) "₹ •••" else displayAmt,
@@ -329,7 +330,7 @@ private fun CenteredAuditVoucherTicket(
                     }
 
                     Text(
-                        text = "₹ ${String.format("%,.2f", tx.amount)}",
+                        text = "₹ ${String.format("%,.2f", tx.amount / 100.0)}",
                         color = theme.textBright,
                         fontSize = 24.sp,
                         fontWeight = FontWeight.Black
