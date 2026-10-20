@@ -14,10 +14,10 @@ data class DashboardUiState(
     val completedTransactions: List<LedgerTransaction> = emptyList(),
     val unreadNotices: List<SystemNotice> = emptyList(),
     val recurringTemplates: List<LedgerTransaction> = emptyList(),
-    val pocketBalances: Map<Long, Double> = emptyMap(),
-    val solvencyDeck: SolvencyMetricDeck = SolvencyMetricDeck(0.0, 0.0, 0.0, 500.0, BurnPacingStatus.ON_TRACK, 0L, 0.0, false),
-    val totalInflowLifetime: Double = 0.0,
-    val totalOutflowLifetime: Double = 0.0
+    val pocketBalances: Map<Long, Long> = emptyMap(),
+    val solvencyDeck: SolvencyMetricDeck = SolvencyMetricDeck(0L, 0L, 0L, 50000L, BurnPacingStatus.ON_TRACK, 0L, 0L, false),
+    val totalInflowLifetime: Long = 0L,
+    val totalOutflowLifetime: Long = 0L
 )
 
 class DashboardViewModel(
@@ -37,9 +37,9 @@ class DashboardViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             combine(
                 dao.getAllActivePockets(),
-                dao.observeAllTransactions() // <-- FIX: Observes all to bypass static time evaluation
+                dao.observeAllTransactions()
             ) { pockets, allTxs ->
-                val now = System.currentTimeMillis() // Dynamically calculates time on every DB insert
+                val now = System.currentTimeMillis()
                 val txs = allTxs.filter { it.timestamp <= now }
                 
                 val balances = pockets.associate { it.id to dao.computePocketBalance(it.id) }
@@ -76,14 +76,14 @@ class DashboardViewModel(
     }
 
     fun executeMasterEntryTrigger(
-        nature: MovementNature, srcId: Long, tgtId: Long?, amt: Double, cat: String, note: String,
+        nature: MovementNature, srcId: Long, tgtId: Long?, amt: Long, cat: String, note: String,
         date: Long, isRec: Boolean, freq: String, tax: Boolean, reimb: Boolean,
         onSuccess: (String) -> Unit, onError: (String) -> Unit, onWarning: (String) -> Unit
     ) {
         viewModelScope.launch {
             when (val res = ledgerEngine.recordMovement(nature, srcId, tgtId, amt, cat, note, date, SettlementStatus.CLEARED, autoSplitEnabled.value, tax, reimb, false, isRec, freq)) {
                 is VaultExecutionResult.Success -> {
-                    if (isRec) ledgerEngine.catchUpRecurringRules() // Forces immediate execution if applicable
+                    if (isRec) ledgerEngine.catchUpRecurringRules()
                     onSuccess(res.summary)
                 }
                 is VaultExecutionResult.OverdraftError -> onError(res.message)
