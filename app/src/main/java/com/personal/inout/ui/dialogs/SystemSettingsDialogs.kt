@@ -23,11 +23,93 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.personal.inout.data.LedgerPocket
 import com.personal.inout.data.SystemNotice
 import com.personal.inout.ui.LocalThemeColors
 import com.personal.inout.ui.ThemeColors
 import com.personal.inout.ui.components.CompactInputField
+import java.util.Calendar
+
+
+
+@Composable
+fun FinancialYearSelectorDialog(
+    theme: ThemeColors,
+    onDismiss: () -> Unit,
+    onGenerate: (fyStartYear: Int) -> Unit
+) {
+    val currentYear = Calendar.getInstance().get(Calendar.YEAR)
+    val month = Calendar.getInstance().get(Calendar.MONTH)
+    val defaultFy = if (month >= Calendar.APRIL) currentYear else currentYear - 1
+    
+    var selectedFy by remember { mutableIntStateOf(defaultFy) }
+
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(
+            modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = theme.surface),
+                modifier = Modifier.fillMaxWidth(0.85f).widthIn(max = 350.dp).border(1.dp, theme.borderLight, RoundedCornerShape(14.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+            ) {
+                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Select Financial Year", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Export a full ITR aid report for the selected period.", color = theme.textMuted, fontSize = 11.sp)
+                    
+                    HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
+
+                    val fyOptions = listOf(currentYear - 2, currentYear - 1, currentYear)
+                    
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        fyOptions.forEach { year ->
+                            val isSel = selectedFy == year
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSel) theme.accent.copy(alpha = 0.2f) else theme.surfaceAlt)
+                                    .border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(8.dp))
+                                    .clickable { selectedFy = year }
+                                    .padding(vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    "FY $year-${(year+1)%100}  (AY ${year+1}-${(year+2)%100})",
+                                    color = if (isSel) theme.accent else theme.textBright,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+
+                    Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { onGenerate(selectedFy) },
+                            modifier = Modifier.weight(1.3f).height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
+                        ) {
+                            Text("Generate PDF", color = theme.bg, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        }
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f).height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
+                        ) {
+                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ... Keep your existing CenteredMasterPinPurgeModal, ThemeSetPinDialog, CenteredNoticesModal below this ...
+// (I am omitting them here for brevity, but leave them exactly as they are in your file!)
 
 @Composable
 fun CenteredMasterPinPurgeModal(
