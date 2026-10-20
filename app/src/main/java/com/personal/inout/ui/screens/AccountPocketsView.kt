@@ -50,9 +50,31 @@ fun AccountPocketsView(
     val theme = LocalThemeColors.current
 
     val liquidPockets = remember(rawPockets) { rawPockets.filter { it.type == PocketType.LIQUID || it.type == PocketType.PREPAID_WALLET } }
-    val cardPockets = remember(rawPockets) { rawPockets.filter { it.type == PocketType.CREDIT_CARD } }
-    val capitalPockets = remember(rawPockets) { rawPockets.filter { it.type in listOf(PocketType.INVESTMENT, PocketType.FIXED_ASSET, PocketType.GOAL_POT, PocketType.PEER_RECEIVABLE) } }
-    val debtPockets = remember(rawPockets) { rawPockets.filter { it.type in listOf(PocketType.CREDIT_CARD, PocketType.LIABILITY_LOAN, PocketType.PEER_PAYABLE) } }
+    
+    // DYNAMIC BALANCE-BASED FILTERING
+    val capitalPockets = remember(rawPockets, pocketBalances) { 
+        rawPockets.filter { 
+            val bal = pocketBalances[it.id] ?: 0L
+            when (it.type) {
+                PocketType.INVESTMENT, PocketType.FIXED_ASSET, PocketType.GOAL_POT -> true
+                PocketType.PEER_RECEIVABLE -> bal >= 0L // Normal asset
+                PocketType.PEER_PAYABLE, PocketType.CREDIT_CARD -> bal > 0L // Overpaid liability becomes Asset!
+                else -> false
+            }
+        } 
+    }
+    
+    val debtPockets = remember(rawPockets, pocketBalances) { 
+        rawPockets.filter { 
+            val bal = pocketBalances[it.id] ?: 0L
+            when (it.type) {
+                PocketType.LIABILITY_LOAN -> true
+                PocketType.PEER_PAYABLE, PocketType.CREDIT_CARD -> bal <= 0L // Normal liability
+                PocketType.PEER_RECEIVABLE -> bal < 0L // Overdrawn asset becomes Liability!
+                else -> false
+            }
+        } 
+    }
 
     var activeModeIndex by remember { mutableIntStateOf(0) }
 
@@ -112,15 +134,16 @@ fun AccountPocketsView(
                             val bal = pocketBalances[pocket.id] ?: 0L
                             val outstanding = abs(bal)
                             val dueStr = if (pocket.billDueDay > 0) "Due ${pocket.billDueDay}th" else "Statement Balance"
-                            val isCardOverpaid = pocket.type == PocketType.CREDIT_CARD && bal > 0L
-                            val balColor = if (outstanding == 0L) theme.textBright else if (isCardOverpaid) theme.mildGreen else theme.mildRed
+                            
+                            // It's a debt pocket, so if it's here, its balance is <= 0. Color is strictly red.
+                            val balColor = if (outstanding == 0L) theme.textBright else theme.mildRed
 
                             UnifiedAccountRow(
                                 title = pocket.name,
-                                sub = if (pocket.type == PocketType.CREDIT_CARD) "Limit: ${(pocket.creditLimit / 100.0).toIndianRupee()} • $dueStr" else if (pocket.type == PocketType.PEER_PAYABLE) "Sundry Creditor (Payable)" else "Liability Loan",
+                                sub = if (pocket.type == PocketType.CREDIT_CARD) "Limit: ${(pocket.creditLimit / 100.0).toIndianRupee()} • $dueStr" else if (pocket.type == PocketType.PEER_PAYABLE || pocket.type == PocketType.PEER_RECEIVABLE) "Sundry Creditor (Payable)" else "Liability Loan",
                                 balanceDisplay = if (isPrivacyMode) "₹ •••" else if (outstanding == 0L) "₹ 0" else (outstanding / 100.0).toIndianRupee(),
                                 balanceColor = balColor,
-                                icon = if (pocket.type == PocketType.PEER_PAYABLE) Icons.Default.People else Icons.Default.CreditCard, 
+                                icon = if (pocket.type == PocketType.PEER_PAYABLE || pocket.type == PocketType.PEER_RECEIVABLE) Icons.Default.People else Icons.Default.CreditCard, 
                                 iconColor = theme.mildRed, theme = theme,
                                 onLongPress = { selectedContextPocket = pocket to bal }
                             )
@@ -144,8 +167,8 @@ fun AccountPocketsView(
                             val absoluteBal = abs(bal)
                             val icon = when (pocket.type) { PocketType.INVESTMENT -> Icons.Default.TrendingUp; PocketType.GOAL_POT -> Icons.Default.Adjust; PocketType.FIXED_ASSET -> Icons.Default.Domain; else -> Icons.Default.People }
                             
-                            val isNegativeAsset = bal < 0L
-                            val balColor = if (absoluteBal == 0L) theme.textBright else if (isNegativeAsset) theme.mildRed else theme.mildGreen
+                            // It's a capital pocket, so if it's here, its balance is >= 0. Color is strictly green.
+                            val balColor = if (absoluteBal == 0L) theme.textBright else theme.mildGreen
 
                             UnifiedAccountRow(
                                 title = pocket.name,
