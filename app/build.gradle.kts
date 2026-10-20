@@ -21,11 +21,23 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GIT_SHA", "\"$passedGitSha\"")
+
+        // Read secrets passed from GitHub Actions environment
+        val tgToken = System.getenv("TELEGRAM_BOT_TOKEN") ?: ""
+        val tgChatId = System.getenv("TELEGRAM_CHAT_ID") ?: ""
+        buildConfigField("String", "TELEGRAM_BOT_TOKEN", "\"$tgToken\"")
+        buildConfigField("String", "TELEGRAM_CHAT_ID", "\"$tgChatId\"")
     }
 
     signingConfigs {
         create("release") {
-            // Secrets removed. Use system environment variables or local.properties for production CI/CD.
+            val keystoreFile = file("debug.keystore")
+            if (keystoreFile.exists()) {
+                storeFile = keystoreFile
+                storePassword = "androiddebug"
+                keyAlias = "androiddebugkey"
+                keyPassword = "androiddebug"
+            }
         }
     }
 
@@ -41,7 +53,7 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             isDebuggable = true
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
