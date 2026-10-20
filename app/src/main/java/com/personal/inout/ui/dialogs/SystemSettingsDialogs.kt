@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.personal.inout.data.LedgerPocket
+import com.personal.inout.data.LedgerTransaction
 import com.personal.inout.data.SystemNotice
 import com.personal.inout.ui.LocalThemeColors
 import com.personal.inout.ui.ThemeColors
@@ -32,14 +33,23 @@ import java.util.Calendar
 
 @Composable
 fun FinancialYearSelectorDialog(
+    transactions: List<LedgerTransaction>,
     theme: ThemeColors,
     onDismiss: () -> Unit,
     onGenerate: (fyStartYear: Int) -> Unit
 ) {
     val currentYear = Calendar.getInstance().get(Calendar.YEAR)
-    val month = Calendar.getInstance().get(Calendar.MONTH)
-    val defaultFy = if (month >= Calendar.APRIL) currentYear else currentYear - 1
+    val currentMonth = Calendar.getInstance().get(Calendar.MONTH)
+    val defaultFy = if (currentMonth >= Calendar.APRIL) currentYear else currentYear - 1
     
+    val earliestTx = transactions.minByOrNull { it.timestamp }?.timestamp ?: System.currentTimeMillis()
+    val earliestCal = Calendar.getInstance().apply { timeInMillis = earliestTx }
+    var earliestFy = earliestCal.get(Calendar.YEAR)
+    if (earliestCal.get(Calendar.MONTH) < Calendar.APRIL) earliestFy -= 1
+
+    val fyOptions = (earliestFy..defaultFy).toList().reversed()
+    val finalOptions = if (fyOptions.isEmpty()) listOf(defaultFy) else fyOptions
+
     var selectedFy by remember { mutableIntStateOf(defaultFy) }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -58,10 +68,8 @@ fun FinancialYearSelectorDialog(
                     
                     HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
 
-                    val fyOptions = listOf(currentYear - 2, currentYear - 1, currentYear)
-                    
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        fyOptions.forEach { year ->
+                    LazyColumn(modifier = Modifier.heightIn(max = 240.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(finalOptions) { year ->
                             val isSel = selectedFy == year
                             Box(
                                 modifier = Modifier
@@ -117,43 +125,15 @@ fun CenteredMasterPinPurgeModal(
     var enteredPin by remember { mutableStateOf("") }
     var isError by remember { mutableStateOf(false) }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.65f))
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
-            contentAlignment = Alignment.Center
-        ) {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = theme.surface),
-                modifier = Modifier
-                    .fillMaxWidth(0.88f)
-                    .widthIn(max = 350.dp)
-                    .border(1.dp, if (isError) theme.mildRed else theme.borderLight, RoundedCornerShape(16.dp))
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
+            Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 350.dp).border(1.dp, if (isError) theme.mildRed else theme.borderLight, RoundedCornerShape(16.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
+                Column(modifier = Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("MASTER PIN AUTHORIZATION", color = theme.textBright, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     Text("Enter Master Security PIN to authorize ledger wipe", color = theme.textMuted, fontSize = 11.sp, textAlign = TextAlign.Center)
 
                     if (isError) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(theme.mildRed.copy(alpha = 0.15f))
-                                .padding(vertical = 5.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
+                        Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).background(theme.mildRed.copy(alpha = 0.15f)).padding(vertical = 5.dp), contentAlignment = Alignment.Center) {
                             Text("⚠ Incorrect Security PIN • Try again", color = theme.mildRed, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     }
@@ -161,77 +141,38 @@ fun CenteredMasterPinPurgeModal(
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         repeat(6) { idx ->
                             val filled = idx < enteredPin.length
-                            Box(
-                                modifier = Modifier
-                                    .size(12.dp)
-                                    .clip(CircleShape)
-                                    .background(if (filled) (if (isError) theme.mildRed else theme.accent) else theme.surfaceAlt)
-                                    .border(1.dp, if (filled) (if (isError) theme.mildRed else theme.accent) else theme.borderLight, CircleShape)
-                            )
+                            Box(modifier = Modifier.size(12.dp).clip(CircleShape).background(if (filled) (if (isError) theme.mildRed else theme.accent) else theme.surfaceAlt).border(1.dp, if (filled) (if (isError) theme.mildRed else theme.accent) else theme.borderLight, CircleShape))
                         }
                     }
 
-                    val keys = listOf(
-                        listOf("1", "2", "3"),
-                        listOf("4", "5", "6"),
-                        listOf("7", "8", "9"),
-                        listOf("C", "0", "⌫")
-                    )
+                    val keys = listOf(listOf("1", "2", "3"), listOf("4", "5", "6"), listOf("7", "8", "9"), listOf("C", "0", "⌫"))
 
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
+                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         keys.forEach { row ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 row.forEach { k ->
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(46.dp)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .background(theme.surfaceAlt)
-                                            .clickable {
-                                                when (k) {
-                                                    "C" -> {
-                                                        enteredPin = ""
-                                                        isError = false
-                                                    }
-                                                    "⌫" -> {
-                                                        if (enteredPin.isNotEmpty()) enteredPin = enteredPin.dropLast(1)
-                                                        isError = false
-                                                    }
-                                                    else -> {
-                                                        if (enteredPin.length < 6) {
-                                                            enteredPin += k
-                                                            isError = false
-                                                            if (enteredPin.length == 6) {
-                                                                if (enteredPin == expectedPin || enteredPin == "000000") {
-                                                                    onPurgeConfirmed()
-                                                                } else {
-                                                                    isError = true
-                                                                    enteredPin = ""
-                                                                }
-                                                            }
-                                                        }
+                                    Box(modifier = Modifier.weight(1f).height(46.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).clickable {
+                                        when (k) {
+                                            "C" -> { enteredPin = ""; isError = false }
+                                            "⌫" -> { if (enteredPin.isNotEmpty()) enteredPin = enteredPin.dropLast(1); isError = false }
+                                            else -> {
+                                                if (enteredPin.length < 6) {
+                                                    enteredPin += k
+                                                    isError = false
+                                                    if (enteredPin.length == 6) {
+                                                        if (enteredPin == expectedPin || enteredPin == "000000") onPurgeConfirmed() else { isError = true; enteredPin = "" }
                                                     }
                                                 }
-                                            },
-                                        contentAlignment = Alignment.Center
-                                    ) {
+                                            }
+                                        }
+                                    }, contentAlignment = Alignment.Center) {
                                         Text(k, color = theme.textBright, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
                         }
                     }
-
-                    TextButton(onClick = onDismiss) {
-                        Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
-                    }
+                    TextButton(onClick = onDismiss) { Text("Cancel", color = theme.textMuted, fontSize = 12.sp) }
                 }
             }
         }
@@ -239,74 +180,25 @@ fun CenteredMasterPinPurgeModal(
 }
 
 @Composable
-fun ThemeSetPinDialog(
-    onDismiss: () -> Unit,
-    onSavePin: (String) -> Unit
-) {
+fun ThemeSetPinDialog(onDismiss: () -> Unit, onSavePin: (String) -> Unit) {
     val theme = LocalThemeColors.current
     var pin by remember { mutableStateOf("") }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.65f))
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
-            contentAlignment = Alignment.Center
-        ) {
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = theme.surface),
-                modifier = Modifier
-                    .fillMaxWidth(0.9f)
-                    .widthIn(max = 400.dp)
-                    .border(1.dp, theme.borderLight, RoundedCornerShape(16.dp))
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
-            ) {
-                Column(
-                    modifier = Modifier.padding(18.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
+            Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.9f).widthIn(max = 400.dp).border(1.dp, theme.borderLight, RoundedCornerShape(16.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
+                Column(modifier = Modifier.padding(18.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Set Master Security PIN", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
                     Text("Enter a 6-digit code to authorize critical ledger actions.", color = theme.textMuted, fontSize = 11.sp, textAlign = TextAlign.Center)
 
-                    CompactInputField(
-                        value = pin,
-                        onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) pin = it },
-                        placeholder = "6-digit PIN",
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    CompactInputField(value = pin, onValueChange = { if (it.length <= 6 && it.all { c -> c.isDigit() }) pin = it }, placeholder = "6-digit PIN", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth())
 
                     val isValid = pin.length == 6
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Button(
-                            onClick = { if (isValid) onSavePin(pin) },
-                            modifier = Modifier.weight(1.3f).height(44.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isValid) theme.accent else Color.Transparent,
-                                disabledContainerColor = Color.Transparent
-                            ),
-                            enabled = isValid
-                        ) {
+                    Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { if (isValid) onSavePin(pin) }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
                             Text("Save PIN", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
-
-                        OutlinedButton(
-                            onClick = onDismiss,
-                            modifier = Modifier.weight(1f).height(44.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)
-                        ) {
+                        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight)) {
                             Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
                         }
                     }
@@ -317,64 +209,22 @@ fun ThemeSetPinDialog(
 }
 
 @Composable
-fun CenteredNoticesModal(
-    notices: List<SystemNotice>,
-    theme: ThemeColors,
-    onDismiss: () -> Unit,
-    onMarkAllRead: () -> Unit
-) {
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.65f))
-                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
-            contentAlignment = Alignment.Center
-        ) {
-            Card(
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(containerColor = theme.surface),
-                modifier = Modifier
-                    .fillMaxWidth(0.9f)
-                    .widthIn(max = 400.dp)
-                    .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+fun CenteredNoticesModal(notices: List<SystemNotice>, theme: ThemeColors, onDismiss: () -> Unit, onMarkAllRead: () -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
+            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.9f).widthIn(max = 400.dp).border(1.dp, theme.borderLight, RoundedCornerShape(14.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text(text = "System Notices", color = theme.textBright, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        if (notices.isNotEmpty()) {
-                            TextButton(onClick = onMarkAllRead) {
-                                Text("Mark All Read", color = theme.accent, fontSize = 11.5.sp)
-                            }
-                        }
+                        if (notices.isNotEmpty()) TextButton(onClick = onMarkAllRead) { Text("Mark All Read", color = theme.accent, fontSize = 11.5.sp) }
                     }
 
                     if (notices.isEmpty()) {
                         Text("No pending notifications.", color = theme.textMuted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 16.dp))
                     } else {
-                        LazyColumn(
-                            modifier = Modifier.heightIn(max = 260.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
+                        LazyColumn(modifier = Modifier.heightIn(max = 260.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(notices, key = { it.id }) { n ->
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(theme.surfaceAlt)
-                                        .padding(10.dp)
-                                ) {
+                                Box(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).padding(10.dp)) {
                                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                         Text(n.title, color = theme.accent, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                         Text(n.message, color = theme.textBright, fontSize = 11.sp)
@@ -383,10 +233,7 @@ fun CenteredNoticesModal(
                             }
                         }
                     }
-
-                    TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) {
-                        Text("Close", color = theme.textMuted)
-                    }
+                    TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("Close", color = theme.textMuted) }
                 }
             }
         }
@@ -401,14 +248,14 @@ fun ReconcileBalanceCockpitModal(
     onDismiss: () -> Unit,
     onApplyDiscrepancy: (actualBal: Long, drift: Long, note: String) -> Unit
 ) {
-    val bookBalDouble = bookBalance / 100.0
+    val bookBalDouble = bookBalance.toDouble() / 100.0
     var statementInput by remember { mutableStateOf(String.format("%.0f", bookBalDouble)) }
     var reasonNote by remember { mutableStateOf("Passbook statement reconciliation checkpoint") }
 
     val actualAmtDouble = statementInput.toDoubleOrNull() ?: bookBalDouble
     val actualAmtPaise = (actualAmtDouble * 100).toLong()
     val driftPaise = actualAmtPaise - bookBalance
-    val driftDouble = driftPaise / 100.0
+    val driftDouble = driftPaise.toDouble() / 100.0
 
     Dialog(
         onDismissRequest = onDismiss,
