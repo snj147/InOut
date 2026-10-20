@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.personal.inout.data.LedgerTransaction
 import com.personal.inout.ui.AppThemeMode
 import com.personal.inout.ui.ThemeColors
 import com.personal.inout.ui.dialogs.FinancialYearSelectorDialog
@@ -33,6 +34,7 @@ fun SettingsCardsList(
     availableUpdate: UpdateInfo?,
     isCheckingUpdate: Boolean,
     downloadState: UpdateDownloadState,
+    completedTransactions: List<LedgerTransaction>, // ADDED THIS TO PASS TO DIALOG
     onOpenSetPinDialog: () -> Unit,
     onCheckUpdate: () -> Unit,
     onStartStreamDownload: (UpdateInfo) -> Unit,
@@ -50,6 +52,7 @@ fun SettingsCardsList(
 
     if (showFySelector) {
         FinancialYearSelectorDialog(
+            transactions = completedTransactions,
             theme = theme,
             onDismiss = { showFySelector = false },
             onGenerate = { fy -> 
@@ -159,7 +162,7 @@ fun SettingsCardsList(
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(text = "Export Secure Backup (.vault)", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(text = "Export Cryptographic Archive (.vault)", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
 
                     OutlinedButton(
@@ -169,7 +172,7 @@ fun SettingsCardsList(
                         border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Text(text = "Restore Secure Backup", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(text = "Restore Cryptographic Archive", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
 
                     HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
