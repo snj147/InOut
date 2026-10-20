@@ -23,13 +23,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.personal.inout.data.LedgerPocket
 import com.personal.inout.data.SystemNotice
 import com.personal.inout.ui.LocalThemeColors
 import com.personal.inout.ui.ThemeColors
 import com.personal.inout.ui.components.CompactInputField
 import java.util.Calendar
-
-
 
 @Composable
 fun FinancialYearSelectorDialog(
@@ -107,9 +106,6 @@ fun FinancialYearSelectorDialog(
         }
     }
 }
-
-// ... Keep your existing CenteredMasterPinPurgeModal, ThemeSetPinDialog, CenteredNoticesModal below this ...
-// (I am omitting them here for brevity, but leave them exactly as they are in your file!)
 
 @Composable
 fun CenteredMasterPinPurgeModal(
@@ -400,16 +396,19 @@ fun CenteredNoticesModal(
 @Composable
 fun ReconcileBalanceCockpitModal(
     pocket: LedgerPocket,
-    bookBalance: Double,
+    bookBalance: Long, // MIGRATED TO LONG PAISE
     theme: ThemeColors,
     onDismiss: () -> Unit,
-    onApplyDiscrepancy: (actualBal: Double, drift: Double, note: String) -> Unit
+    onApplyDiscrepancy: (actualBal: Long, drift: Long, note: String) -> Unit
 ) {
-    var statementInput by remember { mutableStateOf(String.format("%.0f", bookBalance)) }
+    val bookBalDouble = bookBalance / 100.0
+    var statementInput by remember { mutableStateOf(String.format("%.0f", bookBalDouble)) }
     var reasonNote by remember { mutableStateOf("Passbook statement reconciliation checkpoint") }
 
-    val actualAmt = statementInput.toDoubleOrNull() ?: bookBalance
-    val drift = actualAmt - bookBalance
+    val actualAmtDouble = statementInput.toDoubleOrNull() ?: bookBalDouble
+    val actualAmtPaise = (actualAmtDouble * 100).toLong()
+    val driftPaise = actualAmtPaise - bookBalance
+    val driftDouble = driftPaise / 100.0
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -438,7 +437,7 @@ fun ReconcileBalanceCockpitModal(
                     Text("RECONCILE PASSBOOK BALANCE", color = theme.textBright, fontSize = 13.5.sp, fontWeight = FontWeight.Bold)
                     Text("Account: ${pocket.name}", color = theme.accent, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
 
-                    Text("Ledger Book Balance: ₹ ${String.format("%,.2f", bookBalance)}", color = theme.textMuted, fontSize = 11.sp)
+                    Text("Ledger Book Balance: ₹ ${String.format("%,.2f", bookBalDouble)}", color = theme.textMuted, fontSize = 11.sp)
 
                     Column {
                         Text("Actual Bank Statement Balance", color = theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold)
@@ -461,10 +460,9 @@ fun ReconcileBalanceCockpitModal(
                         Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                             Text("Unexplained Discrepancy (Drift):", color = theme.textMuted, fontSize = 10.sp)
                             
-                            // Drift 0 logic applied
-                            val driftColor = if (drift == 0.0) theme.textBright else if (drift > 0) theme.mildGreen else theme.mildRed
+                            val driftColor = if (driftPaise == 0L) theme.textBright else if (driftPaise > 0L) theme.mildGreen else theme.mildRed
                             Text(
-                                text = "${if (drift > 0) "+" else ""}₹ ${String.format("%,.2f", drift)}",
+                                text = "${if (driftPaise > 0L) "+" else ""}₹ ${String.format("%,.2f", driftDouble)}",
                                 color = driftColor,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Bold
@@ -484,7 +482,7 @@ fun ReconcileBalanceCockpitModal(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Button(
-                            onClick = { onApplyDiscrepancy(actualAmt, drift, reasonNote) },
+                            onClick = { onApplyDiscrepancy(actualAmtPaise, driftPaise, reasonNote) },
                             modifier = Modifier.weight(1.3f).height(44.dp),
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = theme.accent)
