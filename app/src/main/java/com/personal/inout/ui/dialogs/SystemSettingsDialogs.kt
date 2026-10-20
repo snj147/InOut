@@ -23,7 +23,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.personal.inout.data.LedgerPocket
 import com.personal.inout.data.LedgerTransaction
 import com.personal.inout.data.SystemNotice
 import com.personal.inout.ui.LocalThemeColors
@@ -42,6 +41,7 @@ fun FinancialYearSelectorDialog(
     val currentMonth = Calendar.getInstance().get(Calendar.MONTH)
     val defaultFy = if (currentMonth >= Calendar.APRIL) currentYear else currentYear - 1
     
+    // Dynamically calculate the earliest FY where a transaction exists
     val earliestTx = transactions.minByOrNull { it.timestamp }?.timestamp ?: System.currentTimeMillis()
     val earliestCal = Calendar.getInstance().apply { timeInMillis = earliestTx }
     var earliestFy = earliestCal.get(Calendar.YEAR)
