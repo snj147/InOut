@@ -57,14 +57,18 @@ fun CreateAccountDialog(
         targetDateEpoch: Long,
         initialValuation: Double,
         interestRate: Double,
-        linkedAssetType: PocketType?
+        linkedAssetType: PocketType?,
+        isAlreadySpent: Boolean,
+        loanFundingPocketId: Long?
     ) -> Unit,
     onSavePeerWithFunding: (
         contactName: String,
         isLend: Boolean,
         amount: Double,
-        fundingPocketId: Long?
-    ) -> Unit = { _, _, _, _ -> },
+        fundingPocketId: Long?,
+        targetDateEpoch: Long,
+        isAlreadySpent: Boolean
+    ) -> Unit = { _, _, _, _, _, _ -> },
     onBatchCommit: (List<StagedStatementLineItem>) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -78,17 +82,23 @@ fun CreateAccountDialog(
     var targetAmt by remember { mutableStateOf("") }
     var initialValuation by remember { mutableStateOf("") }
     var interestRate by remember { mutableStateOf("") }
-    var targetDateEpoch by remember { mutableStateOf(System.currentTimeMillis() + (30L * 24 * 3600 * 1000L)) }
+    var targetDateEpoch by remember { mutableStateOf(System.currentTimeMillis()) }
     var showDatePicker by remember { mutableStateOf(false) }
 
+    var isAlreadySpent by remember { mutableStateOf(false) }
+
     var peerIsLendMode by remember { mutableStateOf(true) }
-    var peerFundingPocketId by remember(allLiquidPockets) { mutableStateOf(allLiquidPockets.firstOrNull()?.id) }
+    var fundingPocketId by remember(allLiquidPockets) { mutableStateOf(allLiquidPockets.firstOrNull()?.id) }
     var showFundingDropdown by remember { mutableStateOf(false) }
 
     var loanPurposeIndex by remember { mutableStateOf(0) }
     var showPurposeDropdown by remember { mutableStateOf(false) }
     val loanPurposes = listOf(
         "Personal Use (No Asset)" to null,
+        "Medical Emergency" to null,
+        "Wedding & Festivities" to null,
+        "Travel & Vacation" to null,
+        "Debt Consolidation" to null,
         "Vehicle Asset" to PocketType.FIXED_ASSET,
         "Property / Real Estate" to PocketType.FIXED_ASSET,
         "Education / Skill" to null
@@ -154,7 +164,7 @@ fun CreateAccountDialog(
                         )
 
                         when (type) {
-                            PocketType.LIQUID, PocketType.PREPAID_WALLET -> {
+                            PocketType.LIQUID, PocketType.PREPAID_WALLET, PocketType.INVESTMENT, PocketType.FIXED_ASSET -> {
                                 CompactInputField(value = initialValuation, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input }, placeholder = "Opening Balance ₹ (Optional)", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
                             }
                             PocketType.CREDIT_CARD -> {
@@ -168,15 +178,6 @@ fun CreateAccountDialog(
                             }
                             PocketType.GOAL_POT -> {
                                 CompactInputField(value = targetAmt, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input }, placeholder = "Target Goal Amount ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
-                                Box(modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showDatePicker = true }.padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                        Text(text = "Target Date: $dateFormatted", color = theme.textBright, fontSize = 12.sp)
-                                        Icon(imageVector = Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
-                                    }
-                                }
-                            }
-                            PocketType.INVESTMENT, PocketType.FIXED_ASSET -> {
-                                CompactInputField(value = initialValuation, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input }, placeholder = "Current Valuation ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
                             }
                             PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE -> {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -190,15 +191,22 @@ fun CreateAccountDialog(
                                     }
                                     CompactInputField(value = initialValuation, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input }, placeholder = "Amount ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
                                     
-                                    val activeFundingPocket = allLiquidPockets.firstOrNull { it.id == peerFundingPocketId }
+                                    val activeFundingPocket = allLiquidPockets.firstOrNull { it.id == fundingPocketId }
                                     Box(modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showFundingDropdown = true }.padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                             val directionTxt = if (peerIsLendMode) "Lent From:" else "Borrowed Into:"
-                                            Text(text = "$directionTxt ${activeFundingPocket?.name ?: "Must select bank account"}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                                            Text(text = "$directionTxt${activeFundingPocket?.name ?: "Must select bank account"}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
                                             Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = theme.accent)
                                         }
                                         DropdownMenu(expanded = showFundingDropdown, onDismissRequest = { showFundingDropdown = false }, modifier = Modifier.background(theme.surface)) {
-                                            allLiquidPockets.forEach { pocket -> DropdownMenuItem(text = { Text(pocket.name, color = theme.textBright) }, onClick = { peerFundingPocketId = pocket.id; showFundingDropdown = false }) }
+                                            allLiquidPockets.forEach { pocket -> DropdownMenuItem(text = { Text(pocket.name, color = theme.textBright) }, onClick = { fundingPocketId = pocket.id; showFundingDropdown = false }) }
+                                        }
+                                    }
+                                    
+                                    if (!peerIsLendMode) {
+                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { isAlreadySpent = !isAlreadySpent }.padding(vertical = 2.dp)) {
+                                            Checkbox(checked = isAlreadySpent, onCheckedChange = { isAlreadySpent = it }, colors = CheckboxDefaults.colors(checkedColor = theme.accent, checkmarkColor = theme.bg, uncheckedColor = theme.textMuted))
+                                            Text("Money already spent? (Auto-log historical expense)", color = theme.textMuted, fontSize = 10.5.sp)
                                         }
                                     }
                                 }
@@ -222,6 +230,34 @@ fun CreateAccountDialog(
                                             loanPurposes.forEachIndexed { idx, pair -> DropdownMenuItem(text = { Text(pair.first, color = theme.textBright) }, onClick = { loanPurposeIndex = idx; showPurposeDropdown = false }) }
                                         }
                                     }
+                                    
+                                    if (loanPurposes[loanPurposeIndex].second == null) {
+                                        val activeFundingPocket = allLiquidPockets.firstOrNull { it.id == fundingPocketId }
+                                        Box(modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showFundingDropdown = true }.padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
+                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                                Text(text = "Disbursed Into: ${activeFundingPocket?.name ?: "Must select bank account"}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                                                Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = theme.accent)
+                                            }
+                                            DropdownMenu(expanded = showFundingDropdown, onDismissRequest = { showFundingDropdown = false }, modifier = Modifier.background(theme.surface)) {
+                                                allLiquidPockets.forEach { pocket -> DropdownMenuItem(text = { Text(pocket.name, color = theme.textBright) }, onClick = { fundingPocketId = pocket.id; showFundingDropdown = false }) }
+                                            }
+                                        }
+                                        
+                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { isAlreadySpent = !isAlreadySpent }.padding(vertical = 2.dp)) {
+                                            Checkbox(checked = isAlreadySpent, onCheckedChange = { isAlreadySpent = it }, colors = CheckboxDefaults.colors(checkedColor = theme.accent, checkmarkColor = theme.bg, uncheckedColor = theme.textMuted))
+                                            Text("Money already spent? (Auto-log historical expense)", color = theme.textMuted, fontSize = 10.5.sp)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Universal Anchor Date Picker for past/future entries
+                        if (type in listOf(PocketType.LIABILITY_LOAN, PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE, PocketType.GOAL_POT)) {
+                            Box(modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showDatePicker = true }.padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                    Text(text = if (type == PocketType.GOAL_POT) "Target Date: $dateFormatted" else "Transaction Date: $dateFormatted", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                                    Icon(imageVector = Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
                                 }
                             }
                         }
@@ -230,7 +266,7 @@ fun CreateAccountDialog(
                             PocketType.LIABILITY_LOAN -> name.isNotBlank() && (initialValuation.toDoubleOrNull() ?: 0.0) > 0.0 && (targetAmt.toDoubleOrNull() ?: 0.0) > 0.0 && (dueDay.toIntOrNull() ?: 0) in 1..31
                             PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE -> {
                                 val amt = initialValuation.toDoubleOrNull() ?: 0.0
-                                name.isNotBlank() && (amt == 0.0 || (amt > 0.0 && peerFundingPocketId != null))
+                                name.isNotBlank() && (amt == 0.0 || (amt > 0.0 && fundingPocketId != null))
                             }
                             PocketType.CREDIT_CARD -> name.isNotBlank() && (limit.toDoubleOrNull() ?: 0.0) > 0.0
                             else -> name.isNotBlank()
@@ -239,10 +275,10 @@ fun CreateAccountDialog(
                         Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             Button(onClick = {
                                 if (type == PocketType.PEER_RECEIVABLE || type == PocketType.PEER_PAYABLE) {
-                                    onSavePeerWithFunding(name, peerIsLendMode, initialValuation.toDoubleOrNull() ?: 0.0, peerFundingPocketId)
+                                    onSavePeerWithFunding(name, peerIsLendMode, initialValuation.toDoubleOrNull() ?: 0.0, fundingPocketId, targetDateEpoch, isAlreadySpent)
                                 } else {
                                     val linkedAsset = if (type == PocketType.LIABILITY_LOAN) loanPurposes[loanPurposeIndex].second else null
-                                    onSave(name, type, limit.toDoubleOrNull() ?: 0.0, dueDay.toIntOrNull() ?: 0, targetAmt.toDoubleOrNull() ?: 0.0, targetDateEpoch, initialValuation.toDoubleOrNull() ?: 0.0, interestRate.toDoubleOrNull() ?: 0.0, linkedAsset)
+                                    onSave(name, type, limit.toDoubleOrNull() ?: 0.0, dueDay.toIntOrNull() ?: 0, targetAmt.toDoubleOrNull() ?: 0.0, targetDateEpoch, initialValuation.toDoubleOrNull() ?: 0.0, interestRate.toDoubleOrNull() ?: 0.0, linkedAsset, isAlreadySpent, fundingPocketId)
                                 }
                             }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isFormValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isFormValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isFormValid) {
                                 Text("Save Account", color = if (isFormValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
@@ -258,6 +294,7 @@ fun CreateAccountDialog(
     }
 }
 
+// ... Rest of the file (BatchBalanceSheetStagingView & EditAccountDialog) remains perfectly unchanged below ...
 @Composable
 fun BatchBalanceSheetStagingView(
     stagedItems: List<StagedStatementLineItem>,
