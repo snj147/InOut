@@ -522,22 +522,38 @@ fun DashboardScreen(db: AppDatabase) {
                 if (showCreatePocketDialog) {
                     CreateAccountDialog(
                         initialType = prefilledCreatePocketType, allLiquidPockets = uiState.liquidPockets, theme = theme, onDismiss = { showCreatePocketDialog = false },
-                        onSave = { name, type, limit, dueDay, targetAmt, targetDateEpoch, initialVal, interestRate, linkedAssetType ->
+                        onSave = { name, type, limit, dueDay, targetAmt, targetDateEpoch, initialVal, interestRate, linkedAssetType, isAlreadySpent, loanFundingPocketId ->
                             scope.launch {
-                                val pocketId = db.ledgerDao().insertPocket(LedgerPocket(name = name, type = type, creditLimit = (limit * 100).toLong(), billDueDay = dueDay, targetGoalAmount = (targetAmt * 100).toLong(), goalTargetDate = targetDateEpoch))
-                                
                                 val initPaise = (initialVal * 100).toLong()
-                                if (type == PocketType.LIABILITY_LOAN && linkedAssetType != null && initPaise > 0L) {
-                                    val assetId = db.ledgerDao().insertPocket(LedgerPocket(name = "$name - Asset", type = linkedAssetType))
-                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initPaise, "Initial Position", "$name Disbursement", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
-                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, assetId, null, initPaise, "Initial Position", "Asset Acquisition: $name", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
+                                
+                                val existingPocket = db.ledgerDao().getAllActivePocketsSnapshot().firstOrNull { 
+                                    it.name.equals(name, ignoreCase = true)
+                                }
+                                val pocketId = existingPocket?.id ?: db.ledgerDao().insertPocket(LedgerPocket(name = name, type = type, creditLimit = (limit * 100).toLong(), billDueDay = dueDay, targetGoalAmount = (targetAmt * 100).toLong(), goalTargetDate = targetDateEpoch))
+                                
+                                if (type == PocketType.LIABILITY_LOAN) {
+                                    if (linkedAssetType != null && initPaise > 0L) {
+                                        val assetId = db.ledgerDao().insertPocket(LedgerPocket(name = "$name - Asset", type = linkedAssetType))
+                                        viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initPaise, "Initial Position", "$name Disbursement", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
+                                        viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, assetId, null, initPaise, "Initial Position", "Asset Acquisition: $name", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
+                                    } else if (initPaise > 0L) {
+                                        if (loanFundingPocketId != null) {
+                                            viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, pocketId, loanFundingPocketId, initPaise, "Loan Disbursement", "$name received", targetDateEpoch, false, "NONE", false, false, {
+                                                if (isAlreadySpent) {
+                                                    viewModel.executeMasterEntryTrigger(MovementNature.OPERATING_EXPENSE, loanFundingPocketId, null, initPaise, "Sunk-Cost Debt", "Instant burn for $name", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
+                                                }
+                                            }, {}, {})
+                                        } else {
+                                            viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initPaise, "Initial Position", "Opening balance for $name", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
+                                        }
+                                    }
                                 } else if (initPaise > 0L) {
-                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initPaise, "Initial Position", "Opening balance for $name", System.currentTimeMillis(), false, "NONE", false, false, {}, {}, {})
+                                    viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initPaise, "Initial Position", "Opening balance for $name", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
                                 }
                                 showCreatePocketDialog = false; alertManager.showAlert("Created '$name'", AlertType.SUCCESS)
                             }
                         },
-                        onSavePeerWithFunding = { contactName, isLend, amount, fundingPocketId ->
+                        onSavePeerWithFunding = { contactName, isLend, amount, fundingPocketId, targetDateEpoch, isAlreadySpent ->
                             scope.launch {
                                 val amtPaise = (amount * 100).toLong()
                                 if (amtPaise > 0L && fundingPocketId == null) {
@@ -558,8 +574,13 @@ fun DashboardScreen(db: AppDatabase) {
                                 if (amtPaise > 0L && fundingPocketId != null) {
                                     val srcId = if (isLend) fundingPocketId else peerPocketId
                                     val tgtId = if (isLend) peerPocketId else fundingPocketId
-                                    viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, srcId, tgtId, amtPaise, if (isLend) "Peer Debt" else "Peer Advance", if (isLend) "Lent to $contactName" else "Borrowed from $contactName", System.currentTimeMillis(), false, "NONE", false, false, 
-                                        { showCreatePocketDialog = false; alertManager.showAlert("Logged transaction with '$contactName'", AlertType.SUCCESS) },
+                                    viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, srcId, tgtId, amtPaise, if (isLend) "Peer Debt" else "Peer Advance", if (isLend) "Lent to $contactName" else "Borrowed from $contactName", targetDateEpoch, false, "NONE", false, false, 
+                                        { 
+                                            if (!isLend && isAlreadySpent) {
+                                                viewModel.executeMasterEntryTrigger(MovementNature.OPERATING_EXPENSE, fundingPocketId, null, amtPaise, "Sunk-Cost Debt", "Instant burn for $contactName debt", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
+                                            }
+                                            showCreatePocketDialog = false; alertManager.showAlert("Logged transaction with '$contactName'", AlertType.SUCCESS) 
+                                        },
                                         { 
                                             if (existingPocket == null) scope.launch { db.ledgerDao().deletePocket(db.ledgerDao().getPocketById(peerPocketId)!!) }
                                             alertManager.showAlert(it, AlertType.ERROR) 
