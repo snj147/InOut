@@ -37,9 +37,7 @@ data class ParsedReceipt(
 
 object ReceiptScanner {
 
-    suspend fun processReceipt(context: Context, imageUri: Uri): ParsedReceipt {
-        return processDocumentUri(context, imageUri)
-    }
+    suspend fun processReceipt(context: Context, imageUri: Uri): ParsedReceipt = processDocumentUri(context, imageUri)
 
     suspend fun processDocumentUri(context: Context, uri: Uri): ParsedReceipt = withContext(Dispatchers.IO) {
         val mimeType = context.contentResolver.getType(uri) ?: ""
@@ -79,7 +77,6 @@ object ReceiptScanner {
                 .addOnSuccessListener { cont.resume(it) }
                 .addOnFailureListener { cont.resumeWithException(it) }
         }
-
         parseDocumentText(visionText.text)
     }
 
@@ -110,7 +107,6 @@ object ReceiptScanner {
             }
             pdfRenderer.close()
         }
-
         parseDocumentText(fullTextBuilder.toString())
     }
 
@@ -128,35 +124,26 @@ object ReceiptScanner {
     }
 
     private fun parseDocumentText(rawText: String): ParsedReceipt {
-        val lines = rawText.split("\n").map { it.trim() }.filter { it.isNotBlank() }
-        val lowerCaseDocument = rawText.lowercase()
+        // AGGRESSIVE PRE-FILTER: Annihilate 10-digit phone numbers, GSTINs, and dates before the scanner even looks at them.
+        var sanitizedText = rawText
+            .replace(Regex("\\b\\d{10}\\b"), "") // Kills exactly 10-digit numbers (Phones)
+            .replace(Regex("\\b\\d{2}[A-Z]{5}\\d{4}[A-Z][A-Z\\d]Z[A-Z\\d]\\b"), "") // Kills GSTINs
+            .replace(Regex("\\b\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}\\b"), "") // Kills Dates
+            .replace(Regex("(?i)phone[\\s:]*\\d+"), "")
+            .replace(Regex("(?i)mob[\\s:]*\\d+"), "")
 
-        val statementKeywords = listOf(
-            "balance sheet", "assets", "liabilities", "statement of affairs",
-            "schedule iii", "itr-3", "sundry debtors", "sundry creditors",
-            "capital", "fixed assets", "trial balance", "portfolio",
-            "account statement", "net worth", "equity"
-        )
+        val lines = sanitizedText.split("\n").map { it.trim() }.filter { it.isNotBlank() }
+        val lowerCaseDocument = sanitizedText.lowercase()
 
+        val statementKeywords = listOf("balance sheet", "assets", "liabilities", "statement of affairs", "sundry debtors", "sundry creditors", "net worth", "equity")
         val balanceSheetHits = statementKeywords.count { lowerCaseDocument.contains(it) }
         val stagedItems = extractStagedBalanceSheetItems(lines)
 
         if (balanceSheetHits >= 2 || stagedItems.size >= 3) {
-            return ParsedReceipt(
-                merchant = "Financial Statement Extract",
-                total = (stagedItems.sumOf { it.extractedAmount } / 100.0),
-                dateEpoch = System.currentTimeMillis(),
-                rawText = rawText,
-                documentIntent = DocumentIntent.FINANCIAL_BALANCE_SHEET_STATEMENT,
-                stagedLineItems = stagedItems
-            )
+            return ParsedReceipt("Financial Statement Extract", (stagedItems.sumOf { it.extractedAmount } / 100.0), System.currentTimeMillis(), rawText, DocumentIntent.FINANCIAL_BALANCE_SHEET_STATEMENT, stagedItems)
         }
 
-        val blacklistedHeaderTokens = listOf(
-            "original for recipient", "duplicate for recipient", "tax invoice",
-            "retail invoice", "invoice no", "cash memo", "gstin", "phone:", "email:"
-        )
-
+        val blacklistedHeaderTokens = listOf("original for recipient", "duplicate for recipient", "tax invoice", "retail invoice", "invoice no", "cash memo", "gstin", "phone:", "email:")
         var merchant = "Store / Merchant"
         for (line in lines.take(10)) {
             val lower = line.lowercase()
@@ -166,28 +153,12 @@ object ReceiptScanner {
             }
         }
 
-        // Clean lines of common numbers that spoof the total (Dates, GSTINs, Phone Numbers)
-        val datePattern = Pattern.compile("""\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b""")
-        val gstinPattern = Pattern.compile("""\b\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}\b""")
-        val phonePattern = Pattern.compile("""\b\d{10}\b""")
-        
-        val cleanLines = lines.map {
-            var cl = it
-            cl = datePattern.matcher(cl).replaceAll("")
-            cl = gstinPattern.matcher(cl).replaceAll("")
-            cl = phonePattern.matcher(cl).replaceAll("")
-            cl.trim()
-        }.filter { it.isNotBlank() }
-
-        val settlementLabelPattern = Pattern.compile(
-            """(?i)(?:total\s*amount|grand\s*total|net\s*amount|amount\s*payable|sub\s*total|total|net|amount)[\s:₹rs\.]*([\d,]+\.\d{2})"""
-        )
-
+        // STRICT HEURISTIC: Find words meaning "Total" and grab the number next to them.
+        val strictTotalPattern = Pattern.compile("(?i)(?:total amount|grand total|net amount|amount payable|final amount|net payable|sub total|total|net|amount)\\s*[:\\-]?\\s*(?:rs\\.?|inr|₹)?\\s*([\\d,]+\\.\\d{2})")
         var detectedTotal: Double? = null
         
-        // Bottom-Up Pass 1: Look for exact settlement keywords matching a currency format
-        for (line in cleanLines.reversed()) {
-            val matcher = settlementLabelPattern.matcher(line)
+        for (line in lines.reversed()) {
+            val matcher = strictTotalPattern.matcher(line)
             if (matcher.find()) {
                 val numStr = matcher.group(1)?.replace(",", "")
                 val parsed = numStr?.toDoubleOrNull()
@@ -198,10 +169,10 @@ object ReceiptScanner {
             }
         }
 
-        // Bottom-Up Pass 2: If no keyword, grab the absolute lowest clean currency format on the receipt
+        // FALLBACK: If no keyword found, grab the lowest exact currency format (must have decimal .00)
         if (detectedTotal == null) {
-            val currencyPattern = Pattern.compile("""(?i)(?:₹|rs\.?)\s*([\d,]+\.\d{2})""")
-            for (line in cleanLines.reversed()) {
+            val currencyPattern = Pattern.compile("(?i)(?:₹|rs\\.?)\\s*([\\d,]+\\.\\d{2})")
+            for (line in lines.reversed()) {
                 val matcher = currencyPattern.matcher(line)
                 if (matcher.find()) {
                     val numStr = matcher.group(1)?.replace(",", "")
@@ -214,14 +185,7 @@ object ReceiptScanner {
             }
         }
 
-        return ParsedReceipt(
-            merchant = merchant,
-            total = detectedTotal,
-            dateEpoch = System.currentTimeMillis(),
-            rawText = rawText,
-            documentIntent = DocumentIntent.SINGLE_EXPENSE_RECEIPT,
-            stagedLineItems = emptyList()
-        )
+        return ParsedReceipt(merchant, detectedTotal, System.currentTimeMillis(), rawText, DocumentIntent.SINGLE_EXPENSE_RECEIPT, emptyList())
     }
 
     private fun extractStagedBalanceSheetItems(lines: List<String>): List<StagedStatementLineItem> {
@@ -263,15 +227,7 @@ object ReceiptScanner {
                     lowerLabel.contains("wallet") || lowerLabel.contains("prepaid") -> PocketType.PREPAID_WALLET
                     else -> PocketType.LIQUID
                 }
-
-                staged.add(
-                    StagedStatementLineItem(
-                        rawExtractedName = label,
-                        inferredType = inferredType,
-                        extractedAmount = (amt * 100).toLong(),
-                        isSelectedForCommit = true
-                    )
-                )
+                staged.add(StagedStatementLineItem(label, inferredType, (amt * 100).toLong(), true))
             }
         }
         return staged
