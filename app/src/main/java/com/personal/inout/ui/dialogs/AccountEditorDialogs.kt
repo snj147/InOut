@@ -1,5 +1,8 @@
 package com.personal.inout.ui.dialogs
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -31,6 +34,7 @@ import com.personal.inout.data.StagedStatementLineItem
 import com.personal.inout.ui.ThemeColors
 import com.personal.inout.ui.components.CompactInputField
 import com.personal.inout.ui.components.CustomCalendarDialog
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -207,7 +211,7 @@ fun CreateAccountDialog(
                                     Box(modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showFundingDropdown = true }.padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                             val directionTxt = if (peerIsLendMode) "Lent From:" else "Borrowed Into:"
-                                            Text(text = "$directionTxt ${activeFundingPocket?.name ?: "Must select bank account"}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                                            Text(text = "$directionTxt${activeFundingPocket?.name ?: "Must select bank account"}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
                                             Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = theme.accent)
                                         }
                                         DropdownMenu(expanded = showFundingDropdown, onDismissRequest = { showFundingDropdown = false }, modifier = Modifier.background(theme.surface)) {
@@ -265,7 +269,6 @@ fun CreateAccountDialog(
                         }
                     }
                     
-                    // Universal Anchor Date Picker for past/future entries
                     if (type in listOf(PocketType.LIABILITY_LOAN, PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE, PocketType.GOAL_POT, PocketType.INVESTMENT, PocketType.FIXED_ASSET)) {
                         Box(modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showDatePicker = true }.padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
