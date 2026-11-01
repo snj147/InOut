@@ -1,5 +1,6 @@
 package com.personal.inout.ui.screens
 
+import android.os.Environment
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -22,6 +23,9 @@ import com.personal.inout.ui.dialogs.FinancialYearSelectorDialog
 import com.personal.inout.util.UpdateDownloadState
 import com.personal.inout.util.UpdateInfo
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun SettingsCardsList(
@@ -49,6 +53,20 @@ fun SettingsCardsList(
     onClearLedger: () -> Unit
 ) {
     var showFySelector by remember { mutableStateOf(false) }
+
+    // Dynamic Last Backup Detector
+    var lastBackupText by remember { mutableStateOf("No local backups found") }
+    LaunchedEffect(Unit) {
+        val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
+        val inOutDir = File(docsDir, "InOut")
+        if (inOutDir.exists()) {
+            val latest = inOutDir.listFiles { f -> f.extension == "inout" }?.maxByOrNull { it.lastModified() }
+            if (latest != null) {
+                val sdf = SimpleDateFormat("dd MMM yyyy, hh:mm a", Locale.getDefault())
+                lastBackupText = sdf.format(Date(latest.lastModified()))
+            }
+        }
+    }
 
     if (showFySelector) {
         FinancialYearSelectorDialog(
@@ -154,26 +172,36 @@ fun SettingsCardsList(
                 modifier = Modifier.fillMaxWidth().border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
             ) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(text = "DATA PORTABILITY & BACKUP", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Text(text = "DATA PORTABILITY & VAULT BACKUP", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
 
-                    Button(
-                        onClick = onExportEncryptedBackup,
-                        colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(text = "Export Cryptographic Archive (.vault)", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = onExportEncryptedBackup,
+                            colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.weight(1f).height(44.dp)
+                        ) {
+                            Text(text = "Backup Vault", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        OutlinedButton(
+                            onClick = onRestoreEncryptedBackup,
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
+                            modifier = Modifier.weight(1f).height(44.dp)
+                        ) {
+                            Text(text = "Restore Vault", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
 
-                    OutlinedButton(
-                        onClick = onRestoreEncryptedBackup,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent),
-                        shape = RoundedCornerShape(8.dp),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(text = "Restore Cryptographic Archive", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    }
+                    Text(
+                        text = "Last Backup: $lastBackupText\nVault auto-archives to Documents/InOut daily at midnight.", 
+                        color = theme.textMuted, 
+                        fontSize = 10.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(top = 2.dp)
+                    )
 
                     HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
 
