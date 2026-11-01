@@ -37,7 +37,7 @@ fun EditLedgerEntryModal(
     onSave: (amount: Double, desc: String, category: String, date: Long, isTax: Boolean, isReimb: Boolean) -> Unit,
     onDelete: () -> Unit
 ) {
-    var rawAmount by remember { mutableStateOf(String.format("%.0f", tx.amount / 100.0)) }
+    var rawAmount by remember { mutableStateOf(String.format(Locale.US, "%.0f", tx.amount.toDouble() / 100.0)) }
     var description by remember { mutableStateOf(tx.description) }
     var selectedCategory by remember { mutableStateOf(tx.category) }
     var selectedDateEpoch by remember { mutableStateOf(tx.timestamp) }
