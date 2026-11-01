@@ -9,6 +9,7 @@ interface LedgerDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertPocket(pocket: LedgerPocket): Long
 
+    @Transaction
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPocketsBatch(pockets: List<LedgerPocket>): List<Long>
 
@@ -36,6 +37,7 @@ interface LedgerDao {
     @Insert(onConflict = OnConflictStrategy.ABORT)
     suspend fun insertTransaction(tx: LedgerTransaction): Long
 
+    @Transaction
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertTransactionsBatch(txs: List<LedgerTransaction>): List<Long>
 
@@ -78,6 +80,7 @@ interface LedgerDao {
     """)
     suspend fun findPotentialDuplicate(pocketId: Long, amount: Long, timestamp: Long): LedgerTransaction?
 
+    @Transaction
     @Query("""
         SELECT COALESCE(
             SUM(
