@@ -166,26 +166,6 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    val backupExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
-        if (uri != null) {
-            scope.launch {
-                val res = VaultBackupManager.exportEncryptedBackup(context, db, uri, "INOUT_LEDGER_MASTER_KEY")
-                if (res.isSuccess) alertManager.showAlert("Verified .vault snapshot exported", AlertType.SUCCESS)
-                else alertManager.showAlert("Export failed: ${res.exceptionOrNull()?.message}", AlertType.ERROR)
-            }
-        }
-    }
-
-    val backupRestoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        if (uri != null) {
-            scope.launch {
-                val res = VaultBackupManager.restoreEncryptedBackup(context, db, uri, "INOUT_LEDGER_MASTER_KEY")
-                if (res.isSuccess) alertManager.showAlert("Vault restored cleanly", AlertType.SUCCESS)
-                else alertManager.showAlert("Restore failed: ${res.exceptionOrNull()?.message}", AlertType.ERROR)
-            }
-        }
-    }
-
     fun processReceiptResult(bitmap: Bitmap) {
         scope.launch {
             try {
@@ -232,7 +212,7 @@ fun DashboardScreen(db: AppDatabase) {
             Scaffold(
                 containerColor = theme.bg,
                 topBar = { 
-                    DashboardHeader((uiState.totalInflowLifetime / 100.0), (uiState.totalOutflowLifetime / 100.0), isProUnlocked, isPrivacyMode) { isPrivacyMode = !isPrivacyMode } 
+                    DashboardHeader((uiState.totalInflowLifetime.toDouble() / 100.0), (uiState.totalOutflowLifetime.toDouble() / 100.0), isProUnlocked, isPrivacyMode) { isPrivacyMode = !isPrivacyMode } 
                 },
                 bottomBar = {
                     NavigationBar(
@@ -431,8 +411,8 @@ fun DashboardScreen(db: AppDatabase) {
                             onThemeSelected = { mode -> activeThemeMode = mode; prefs.edit().putString("selected_theme", mode.name).apply() },
                             onExportPdf = { fyYear -> scope.launch { PdfDossierExporter.generateAndShareDossier(context, fyYear) } },
                             onExportCsv = { CsvExporter.exportAndShareTransactions(context, uiState.completedTransactions) },
-                            onExportEncryptedBackup = { backupExportLauncher.launch("inout_vault_backup_${System.currentTimeMillis()}.vault") },
-                            onRestoreEncryptedBackup = { backupRestoreLauncher.launch(arrayOf("application/json", "*/*")) },
+                            onExportEncryptedBackup = {}, // UI removed until next step for WorkManager
+                            onRestoreEncryptedBackup = {},
                             onClearLedger = { showClearLedgerConfirmation = true }
                         )
                     }
@@ -522,7 +502,7 @@ fun DashboardScreen(db: AppDatabase) {
                 if (showCreatePocketDialog) {
                     CreateAccountDialog(
                         initialType = prefilledCreatePocketType, allLiquidPockets = uiState.liquidPockets, theme = theme, onDismiss = { showCreatePocketDialog = false },
-                        onSave = { name, type, limit, dueDay, targetAmt, targetDateEpoch, initialVal, interestRate, linkedAssetType, isAlreadySpent, loanFundingPocketId ->
+                        onSave = { name, type, limit, dueDay, targetAmt, targetDateEpoch, initialVal, interestRate, linkedAssetType, isAlreadySpent, loanFundingPocketId, assetFundingMode ->
                             scope.launch {
                                 val initPaise = (initialVal * 100).toLong()
                                 
@@ -547,16 +527,35 @@ fun DashboardScreen(db: AppDatabase) {
                                             viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initPaise, "Initial Position", "Opening balance for $name", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
                                         }
                                     }
+                                } else if (type == PocketType.INVESTMENT || type == PocketType.FIXED_ASSET) {
+                                    if (initPaise > 0L) {
+                                        when (assetFundingMode) {
+                                            0 -> { // Current Bank
+                                                if (loanFundingPocketId != null) {
+                                                    viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, loanFundingPocketId, pocketId, initPaise, "Asset Acquisition", "Purchased $name", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
+                                                }
+                                            }
+                                            1 -> { // Ancestral / Gift
+                                                viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initPaise, "Initial Position", "Gift/Ancestral mapping for $name", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
+                                            }
+                                            2 -> { // Borrowed System Lender
+                                                val lenderId = db.ledgerDao().insertPocket(LedgerPocket(name = "Lender - $name", type = PocketType.LIABILITY_LOAN))
+                                                viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, lenderId, null, initPaise, "Initial Position", "Loan opened for $name", targetDateEpoch, false, "NONE", false, false, {
+                                                    viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, lenderId, pocketId, initPaise, "Asset Acquisition", "Funded by system lender", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
+                                                }, {}, {})
+                                            }
+                                        }
+                                    }
                                 } else if (initPaise > 0L) {
                                     viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initPaise, "Initial Position", "Opening balance for $name", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
                                 }
                                 showCreatePocketDialog = false; alertManager.showAlert("Created '$name'", AlertType.SUCCESS)
                             }
                         },
-                        onSavePeerWithFunding = { contactName, isLend, amount, fundingPocketId, targetDateEpoch, isAlreadySpent ->
+                        onSavePeerWithFunding = { contactName, isLend, amount, fundingPocketId, targetDateEpoch, isAlreadySpent, linkedAssetType ->
                             scope.launch {
                                 val amtPaise = (amount * 100).toLong()
-                                if (amtPaise > 0L && fundingPocketId == null) {
+                                if (amtPaise > 0L && fundingPocketId == null && linkedAssetType == null) {
                                     alertManager.showAlert("Must select a bank account to fund this transaction.", AlertType.ERROR)
                                     return@launch
                                 }
@@ -571,26 +570,27 @@ fun DashboardScreen(db: AppDatabase) {
                                     type = if (isLend) PocketType.PEER_RECEIVABLE else PocketType.PEER_PAYABLE
                                 ))
 
-                                if (amtPaise > 0L && fundingPocketId != null) {
-                                    val srcId = if (isLend) fundingPocketId else peerPocketId
-                                    val tgtId = if (isLend) peerPocketId else fundingPocketId
-                                    viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, srcId, tgtId, amtPaise, if (isLend) "Peer Debt" else "Peer Advance", if (isLend) "Lent to $contactName" else "Borrowed from $contactName", targetDateEpoch, false, "NONE", false, false, 
-                                        { 
-                                            if (!isLend && isAlreadySpent) {
-                                                viewModel.executeMasterEntryTrigger(MovementNature.OPERATING_EXPENSE, fundingPocketId, null, amtPaise, "Sunk-Cost Debt", "Instant burn for $contactName debt", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
-                                            }
-                                            showCreatePocketDialog = false; alertManager.showAlert("Logged transaction with '$contactName'", AlertType.SUCCESS) 
-                                        },
-                                        { 
-                                            if (existingPocket == null) scope.launch { db.ledgerDao().deletePocket(db.ledgerDao().getPocketById(peerPocketId)!!) }
-                                            alertManager.showAlert(it, AlertType.ERROR) 
-                                        },
-                                        { alertManager.showAlert(it, AlertType.WARNING) }
-                                    )
-                                } else {
-                                    showCreatePocketDialog = false
-                                    alertManager.showAlert("Added Peer ledger for '$contactName'", AlertType.SUCCESS)
+                                if (amtPaise > 0L) {
+                                    if (!isLend && linkedAssetType != null) {
+                                        val assetId = db.ledgerDao().insertPocket(LedgerPocket(name = "$contactName - Asset", type = linkedAssetType))
+                                        viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, peerPocketId, null, amtPaise, "Initial Position", "$contactName Advance", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
+                                        viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, assetId, null, amtPaise, "Initial Position", "Asset Acquisition: $contactName", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
+                                    } else if (fundingPocketId != null) {
+                                        val srcId = if (isLend) fundingPocketId else peerPocketId
+                                        val tgtId = if (isLend) peerPocketId else fundingPocketId
+                                        viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, srcId, tgtId, amtPaise, if (isLend) "Peer Debt" else "Peer Advance", if (isLend) "Lent to $contactName" else "Borrowed from $contactName", targetDateEpoch, false, "NONE", false, false, 
+                                            { 
+                                                if (!isLend && isAlreadySpent) {
+                                                    viewModel.executeMasterEntryTrigger(MovementNature.OPERATING_EXPENSE, fundingPocketId, null, amtPaise, "Sunk-Cost Debt", "Instant burn for $contactName debt", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
+                                                }
+                                            },
+                                            { if (existingPocket == null) scope.launch { db.ledgerDao().deletePocket(db.ledgerDao().getPocketById(peerPocketId)!!) }; alertManager.showAlert(it, AlertType.ERROR) },
+                                            { alertManager.showAlert(it, AlertType.WARNING) }
+                                        )
+                                    }
                                 }
+                                showCreatePocketDialog = false
+                                alertManager.showAlert("Logged transaction with '$contactName'", AlertType.SUCCESS) 
                             }
                         }
                     )
