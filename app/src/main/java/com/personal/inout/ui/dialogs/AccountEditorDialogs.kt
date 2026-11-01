@@ -119,39 +119,108 @@ fun CreateAccountDialog(
                 isProcessingDocument = true
                 val parsed = ReceiptScanner.processDocumentUri(context, uri)
                 isProcessingDocument = false
-                if (parsed.documentIntent == DocumentIntent.FINANCIAL_BALANCE_SHEET_STATEMENT && parsed.stagedLineItems.isNotEmpty()) stagedBatchItems = parsed.stagedLineItems
-                else if (parsed.total != null && parsed.total > 0.0) { name = parsed.merchant; initialValuation = String.format("%.0f", parsed.total) }
+                if (parsed.documentIntent == DocumentIntent.FINANCIAL_BALANCE_SHEET_STATEMENT && parsed.stagedLineItems.isNotEmpty()) {
+                    stagedBatchItems = parsed.stagedLineItems
+                } else if (parsed.total != null && parsed.total > 0.0) {
+                    name = parsed.merchant
+                    initialValuation = String.format(Locale.US, "%.0f", parsed.total)
+                }
             }
         }
     }
 
     val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(targetDateEpoch))
-    if (showDatePicker) CustomCalendarDialog(initialDateMillis = targetDateEpoch, onDismiss = { showDatePicker = false }) { targetDateEpoch = it; showDatePicker = false }
+    
+    if (showDatePicker) {
+        CustomCalendarDialog(
+            initialDateMillis = targetDateEpoch,
+            onDismiss = { showDatePicker = false }
+        ) { 
+            targetDateEpoch = it
+            showDatePicker = false 
+        }
+    }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
-            Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.92f).widthIn(max = 420.dp).border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.65f))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = theme.surface),
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .widthIn(max = 420.dp)
+                    .border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+            ) {
                 if (stagedBatchItems != null) {
-                    BatchBalanceSheetStagingView(stagedItems = stagedBatchItems!!, theme = theme, onDismissStaging = { stagedBatchItems = null }, onConfirmBatch = { selectedList -> onBatchCommit(selectedList); onDismiss() })
+                    BatchBalanceSheetStagingView(
+                        stagedItems = stagedBatchItems!!,
+                        theme = theme,
+                        onDismissStaging = { stagedBatchItems = null },
+                        onConfirmBatch = { selectedList ->
+                            onBatchCommit(selectedList)
+                            onDismiss()
+                        }
+                    )
                 } else {
-                    Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(11.dp)) {
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column(
+                        modifier = Modifier.padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(11.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text("NEW ACCOUNT SETUP", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
                         }
 
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                listOf(Triple(PocketType.LIQUID, "Bank", Color(0xFF48BB78)), Triple(PocketType.PREPAID_WALLET, "Wallet", Color(0xFF38A169)), Triple(PocketType.CREDIT_CARD, "Card", Color(0xFFF56565)), Triple(PocketType.GOAL_POT, "Goal", Color(0xFFECC94B))).forEach { (t, lbl, c) ->
+                                listOf(
+                                    Triple(PocketType.LIQUID, "Bank", Color(0xFF48BB78)),
+                                    Triple(PocketType.PREPAID_WALLET, "Wallet", Color(0xFF38A169)),
+                                    Triple(PocketType.CREDIT_CARD, "Card", Color(0xFFF56565)),
+                                    Triple(PocketType.GOAL_POT, "Goal", Color(0xFFECC94B))
+                                ).forEach { (t, lbl, c) ->
                                     val isSel = type == t
-                                    Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isSel) c.copy(alpha = 0.25f) else theme.surfaceAlt).border(1.dp, if (isSel) c else theme.borderLight, RoundedCornerShape(6.dp)).clickable { type = t }.padding(vertical = 7.dp), contentAlignment = Alignment.Center) {
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(if (isSel) c.copy(alpha = 0.25f) else theme.surfaceAlt)
+                                            .border(1.dp, if (isSel) c else theme.borderLight, RoundedCornerShape(6.dp))
+                                            .clickable { type = t }
+                                            .padding(vertical = 7.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
                                         Text(lbl, color = if (isSel) c else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                listOf(Triple(PocketType.INVESTMENT, "Invest", Color(0xFFED8936)), Triple(PocketType.PEER_RECEIVABLE, "Peer", Color(0xFF4FD1C5)), Triple(PocketType.LIABILITY_LOAN, "Loan", Color(0xFFE53E3E))).forEach { (t, lbl, c) ->
+                                listOf(
+                                    Triple(PocketType.INVESTMENT, "Invest", Color(0xFFED8936)),
+                                    Triple(PocketType.PEER_RECEIVABLE, "Peer", Color(0xFF4FD1C5)),
+                                    Triple(PocketType.LIABILITY_LOAN, "Loan", Color(0xFFE53E3E))
+                                ).forEach { (t, lbl, c) ->
                                     val isSel = type == t
-                                    Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isSel) c.copy(alpha = 0.25f) else theme.surfaceAlt).border(1.dp, if (isSel) c else theme.borderLight, RoundedCornerShape(6.dp)).clickable { type = t }.padding(vertical = 7.dp), contentAlignment = Alignment.Center) {
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(if (isSel) c.copy(alpha = 0.25f) else theme.surfaceAlt)
+                                            .border(1.dp, if (isSel) c else theme.borderLight, RoundedCornerShape(6.dp))
+                                            .clickable { type = t }
+                                            .padding(vertical = 7.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
                                         Text(lbl, color = if (isSel) c else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
@@ -159,50 +228,133 @@ fun CreateAccountDialog(
                         }
 
                         CompactInputField(
-                            value = name, onValueChange = { name = it },
+                            value = name,
+                            onValueChange = { name = it },
                             placeholder = if (type == PocketType.PEER_RECEIVABLE || type == PocketType.PEER_PAYABLE) "Contact Name (e.g. Rahul Sharma)" else "Account Name (e.g. HDFC Salary, SBI Home Loan)",
                             modifier = Modifier.fillMaxWidth()
                         )
 
                         when (type) {
                             PocketType.LIQUID, PocketType.PREPAID_WALLET -> {
-                                CompactInputField(value = initialValuation, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input }, placeholder = "Opening Balance ₹ (Optional)", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                                CompactInputField(
+                                    value = initialValuation,
+                                    onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input },
+                                    placeholder = "Opening Balance ₹ (Optional)",
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                             }
                             PocketType.CREDIT_CARD -> {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    CompactInputField(value = limit, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) limit = input }, placeholder = "Credit Limit ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                                    CompactInputField(
+                                        value = limit,
+                                        onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) limit = input },
+                                        placeholder = "Credit Limit ₹",
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                                        CompactInputField(value = statementCycleDay, onValueChange = { input -> if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) statementCycleDay = input }, placeholder = "Bill Date (1-31)", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
-                                        CompactInputField(value = dueDay, onValueChange = { input -> if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) dueDay = input }, placeholder = "Due Date (1-31)", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                                        CompactInputField(
+                                            value = statementCycleDay,
+                                            onValueChange = { input -> if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) statementCycleDay = input },
+                                            placeholder = "Bill Date (1-31)",
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        CompactInputField(
+                                            value = dueDay,
+                                            onValueChange = { input -> if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) dueDay = input },
+                                            placeholder = "Due Date (1-31)",
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            modifier = Modifier.weight(1f)
+                                        )
                                     }
                                 }
                             }
                             PocketType.GOAL_POT -> {
-                                CompactInputField(value = targetAmt, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input }, placeholder = "Target Goal Amount ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                                CompactInputField(
+                                    value = targetAmt,
+                                    onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input },
+                                    placeholder = "Target Goal Amount ₹",
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
                             }
                             PocketType.INVESTMENT, PocketType.FIXED_ASSET -> {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    CompactInputField(value = initialValuation, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input }, placeholder = "Current Valuation ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                                    CompactInputField(
+                                        value = initialValuation,
+                                        onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input },
+                                        placeholder = "Current Valuation ₹",
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                     
-                                    Box(modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showAssetFundingDropdown = true }.padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
-                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(44.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(theme.surfaceAlt)
+                                            .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
+                                            .clickable { showAssetFundingDropdown = true }
+                                            .padding(horizontal = 12.dp),
+                                        contentAlignment = Alignment.CenterStart
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
                                             Text(text = "Funding: ${assetFundingOptions[assetFundingMode]}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
                                             Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = theme.accent)
                                         }
-                                        DropdownMenu(expanded = showAssetFundingDropdown, onDismissRequest = { showAssetFundingDropdown = false }, modifier = Modifier.background(theme.surface)) {
-                                            assetFundingOptions.forEachIndexed { idx, opt -> DropdownMenuItem(text = { Text(opt, color = theme.textBright) }, onClick = { assetFundingMode = idx; showAssetFundingDropdown = false }) }
+                                        DropdownMenu(
+                                            expanded = showAssetFundingDropdown,
+                                            onDismissRequest = { showAssetFundingDropdown = false },
+                                            modifier = Modifier.background(theme.surface)
+                                        ) {
+                                            assetFundingOptions.forEachIndexed { idx, opt ->
+                                                DropdownMenuItem(
+                                                    text = { Text(opt, color = theme.textBright) },
+                                                    onClick = { assetFundingMode = idx; showAssetFundingDropdown = false }
+                                                )
+                                            }
                                         }
                                     }
 
                                     if (assetFundingMode == 0) {
                                         val activeFundingPocket = allLiquidPockets.firstOrNull { it.id == fundingPocketId }
-                                        Box(modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showFundingDropdown = true }.padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
-                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(44.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(theme.surfaceAlt)
+                                                .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
+                                                .clickable { showFundingDropdown = true }
+                                                .padding(horizontal = 12.dp),
+                                            contentAlignment = Alignment.CenterStart
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
                                                 Text(text = "Paid From: ${activeFundingPocket?.name ?: "Must select bank account"}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
                                                 Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = theme.accent)
                                             }
-                                            DropdownMenu(expanded = showFundingDropdown, onDismissRequest = { showFundingDropdown = false }, modifier = Modifier.background(theme.surface)) {
-                                                allLiquidPockets.forEach { pocket -> DropdownMenuItem(text = { Text(pocket.name, color = theme.textBright) }, onClick = { fundingPocketId = pocket.id; showFundingDropdown = false }) }
+                                            DropdownMenu(
+                                                expanded = showFundingDropdown,
+                                                onDismissRequest = { showFundingDropdown = false },
+                                                modifier = Modifier.background(theme.surface)
+                                            ) {
+                                                allLiquidPockets.forEach { pocket ->
+                                                    DropdownMenuItem(
+                                                        text = { Text(pocket.name, color = theme.textBright) },
+                                                        onClick = { fundingPocketId = pocket.id; showFundingDropdown = false }
+                                                    )
+                                                }
                                             }
                                         }
                                     }
@@ -211,85 +363,245 @@ fun CreateAccountDialog(
                             PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE -> {
                                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (peerIsLendMode) theme.mildGreen.copy(alpha = 0.25f) else theme.surfaceAlt).border(1.dp, if (peerIsLendMode) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp)).clickable { peerIsLendMode = true }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(if (peerIsLendMode) theme.mildGreen.copy(alpha = 0.25f) else theme.surfaceAlt)
+                                                .border(1.dp, if (peerIsLendMode) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp))
+                                                .clickable { peerIsLendMode = true }
+                                                .padding(vertical = 8.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
                                             Text("Lend", color = if (peerIsLendMode) theme.mildGreen else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
-                                        Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (!peerIsLendMode) theme.mildRed.copy(alpha = 0.25f) else theme.surfaceAlt).border(1.dp, if (!peerIsLendMode) theme.mildRed else theme.borderLight, RoundedCornerShape(6.dp)).clickable { peerIsLendMode = false }.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(if (!peerIsLendMode) theme.mildRed.copy(alpha = 0.25f) else theme.surfaceAlt)
+                                                .border(1.dp, if (!peerIsLendMode) theme.mildRed else theme.borderLight, RoundedCornerShape(6.dp))
+                                                .clickable { peerIsLendMode = false }
+                                                .padding(vertical = 8.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
                                             Text("Borrow", color = if (!peerIsLendMode) theme.mildRed else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                         }
                                     }
-                                    CompactInputField(value = initialValuation, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input }, placeholder = "Amount ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                                    CompactInputField(
+                                        value = initialValuation,
+                                        onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input },
+                                        placeholder = "Amount ₹",
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
                                     
                                     if (!peerIsLendMode) {
-                                        Box(modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showPurposeDropdown = true }.padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
-                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(44.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(theme.surfaceAlt)
+                                                .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
+                                                .clickable { showPurposeDropdown = true }
+                                                .padding(horizontal = 12.dp),
+                                            contentAlignment = Alignment.CenterStart
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
                                                 Text(text = "Purpose: ${loanPurposes[loanPurposeIndex].first}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
                                                 Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = theme.accent)
                                             }
-                                            DropdownMenu(expanded = showPurposeDropdown, onDismissRequest = { showPurposeDropdown = false }, modifier = Modifier.background(theme.surface)) {
-                                                loanPurposes.forEachIndexed { idx, pair -> DropdownMenuItem(text = { Text(pair.first, color = theme.textBright) }, onClick = { loanPurposeIndex = idx; showPurposeDropdown = false }) }
+                                            DropdownMenu(
+                                                expanded = showPurposeDropdown,
+                                                onDismissRequest = { showPurposeDropdown = false },
+                                                modifier = Modifier.background(theme.surface)
+                                            ) {
+                                                loanPurposes.forEachIndexed { idx, pair ->
+                                                    DropdownMenuItem(
+                                                        text = { Text(pair.first, color = theme.textBright) },
+                                                        onClick = { loanPurposeIndex = idx; showPurposeDropdown = false }
+                                                    )
+                                                }
                                             }
                                         }
                                     }
 
                                     if (peerIsLendMode || loanPurposes[loanPurposeIndex].second == null) {
                                         val activeFundingPocket = allLiquidPockets.firstOrNull { it.id == fundingPocketId }
-                                        Box(modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showFundingDropdown = true }.padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
-                                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(44.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(theme.surfaceAlt)
+                                                .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
+                                                .clickable { showFundingDropdown = true }
+                                                .padding(horizontal = 12.dp),
+                                            contentAlignment = Alignment.CenterStart
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
                                                 val directionTxt = if (peerIsLendMode) "Lent From:" else "Borrowed Into:"
                                                 Text(text = "$directionTxt ${activeFundingPocket?.name ?: "Must select bank account"}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
                                                 Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = theme.accent)
                                             }
-                                            DropdownMenu(expanded = showFundingDropdown, onDismissRequest = { showFundingDropdown = false }, modifier = Modifier.background(theme.surface)) {
-                                                allLiquidPockets.forEach { pocket -> DropdownMenuItem(text = { Text(pocket.name, color = theme.textBright) }, onClick = { fundingPocketId = pocket.id; showFundingDropdown = false }) }
+                                            DropdownMenu(
+                                                expanded = showFundingDropdown,
+                                                onDismissRequest = { showFundingDropdown = false },
+                                                modifier = Modifier.background(theme.surface)
+                                            ) {
+                                                allLiquidPockets.forEach { pocket ->
+                                                    DropdownMenuItem(
+                                                        text = { Text(pocket.name, color = theme.textBright) },
+                                                        onClick = { fundingPocketId = pocket.id; showFundingDropdown = false }
+                                                    )
+                                                }
                                             }
                                         }
                                     }
                                     
                                     if (!peerIsLendMode && loanPurposes[loanPurposeIndex].second == null) {
-                                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { isAlreadySpent = !isAlreadySpent }.padding(vertical = 2.dp)) {
-                                            Checkbox(checked = isAlreadySpent, onCheckedChange = { isAlreadySpent = it }, colors = CheckboxDefaults.colors(checkedColor = theme.accent, checkmarkColor = theme.bg, uncheckedColor = theme.textMuted))
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { isAlreadySpent = !isAlreadySpent }
+                                                .padding(vertical = 2.dp)
+                                        ) {
+                                            Checkbox(
+                                                checked = isAlreadySpent,
+                                                onCheckedChange = { isAlreadySpent = it },
+                                                colors = CheckboxDefaults.colors(checkedColor = theme.accent, checkmarkColor = theme.bg, uncheckedColor = theme.textMuted)
+                                            )
                                             Text("Money already spent? (Auto-log historical expense)", color = theme.textMuted, fontSize = 10.5.sp)
                                         }
                                     }
                                 }
                             }
-                        }
-                        PocketType.LIABILITY_LOAN -> {
-                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                                    CompactInputField(value = initialValuation, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input }, placeholder = "Principal Debt ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f))
-                                    CompactInputField(value = targetAmt, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input }, placeholder = "Monthly EMI ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f))
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                                    CompactInputField(value = dueDay, onValueChange = { input -> if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) dueDay = input }, placeholder = "Due Day (1-31)", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
-                                    CompactInputField(value = interestRate, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) interestRate = input }, placeholder = "Interest Rate %", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f))
-                                }
-                                Box(modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showPurposeDropdown = true }.padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                        Text(text = "Purpose: ${loanPurposes[loanPurposeIndex].first}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
-                                        Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = theme.accent)
+                            PocketType.LIABILITY_LOAN -> {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                        CompactInputField(
+                                            value = initialValuation,
+                                            onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) initialValuation = input },
+                                            placeholder = "Principal Debt ₹",
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        CompactInputField(
+                                            value = targetAmt,
+                                            onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input },
+                                            placeholder = "Monthly EMI ₹",
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                            modifier = Modifier.weight(1f)
+                                        )
                                     }
-                                    DropdownMenu(expanded = showPurposeDropdown, onDismissRequest = { showPurposeDropdown = false }, modifier = Modifier.background(theme.surface)) {
-                                        loanPurposes.forEachIndexed { idx, pair -> DropdownMenuItem(text = { Text(pair.first, color = theme.textBright) }, onClick = { loanPurposeIndex = idx; showPurposeDropdown = false }) }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                                        CompactInputField(
+                                            value = dueDay,
+                                            onValueChange = { input -> if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) dueDay = input },
+                                            placeholder = "Due Day (1-31)",
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        CompactInputField(
+                                            value = interestRate,
+                                            onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) interestRate = input },
+                                            placeholder = "Interest Rate %",
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                            modifier = Modifier.weight(1f)
+                                        )
                                     }
-                                }
-                                
-                                if (loanPurposes[loanPurposeIndex].second == null) {
-                                    val activeFundingPocket = allLiquidPockets.firstOrNull { it.id == fundingPocketId }
-                                    Box(modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showFundingDropdown = true }.padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
-                                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                            Text(text = "Disbursed Into: ${activeFundingPocket?.name ?: "Must select bank account"}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(44.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(theme.surfaceAlt)
+                                            .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
+                                            .clickable { showPurposeDropdown = true }
+                                            .padding(horizontal = 12.dp),
+                                        contentAlignment = Alignment.CenterStart
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(text = "Purpose: ${loanPurposes[loanPurposeIndex].first}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
                                             Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = theme.accent)
                                         }
-                                        DropdownMenu(expanded = showFundingDropdown, onDismissRequest = { showFundingDropdown = false }, modifier = Modifier.background(theme.surface)) {
-                                            allLiquidPockets.forEach { pocket -> DropdownMenuItem(text = { Text(pocket.name, color = theme.textBright) }, onClick = { fundingPocketId = pocket.id; showFundingDropdown = false }) }
+                                        DropdownMenu(
+                                            expanded = showPurposeDropdown,
+                                            onDismissRequest = { showPurposeDropdown = false },
+                                            modifier = Modifier.background(theme.surface)
+                                        ) {
+                                            loanPurposes.forEachIndexed { idx, pair ->
+                                                DropdownMenuItem(
+                                                    text = { Text(pair.first, color = theme.textBright) },
+                                                    onClick = { loanPurposeIndex = idx; showPurposeDropdown = false }
+                                                )
+                                            }
                                         }
                                     }
                                     
-                                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { isAlreadySpent = !isAlreadySpent }.padding(vertical = 2.dp)) {
-                                        Checkbox(checked = isAlreadySpent, onCheckedChange = { isAlreadySpent = it }, colors = CheckboxDefaults.colors(checkedColor = theme.accent, checkmarkColor = theme.bg, uncheckedColor = theme.textMuted))
-                                        Text("Money already spent? (Auto-log historical expense)", color = theme.textMuted, fontSize = 10.5.sp)
+                                    if (loanPurposes[loanPurposeIndex].second == null) {
+                                        val activeFundingPocket = allLiquidPockets.firstOrNull { it.id == fundingPocketId }
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(44.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(theme.surfaceAlt)
+                                                .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
+                                                .clickable { showFundingDropdown = true }
+                                                .padding(horizontal = 12.dp),
+                                            contentAlignment = Alignment.CenterStart
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(text = "Disbursed Into: ${activeFundingPocket?.name ?: "Must select bank account"}", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                                                Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = theme.accent)
+                                            }
+                                            DropdownMenu(
+                                                expanded = showFundingDropdown,
+                                                onDismissRequest = { showFundingDropdown = false },
+                                                modifier = Modifier.background(theme.surface)
+                                            ) {
+                                                allLiquidPockets.forEach { pocket ->
+                                                    DropdownMenuItem(
+                                                        text = { Text(pocket.name, color = theme.textBright) },
+                                                        onClick = { fundingPocketId = pocket.id; showFundingDropdown = false }
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable { isAlreadySpent = !isAlreadySpent }
+                                                .padding(vertical = 2.dp)
+                                        ) {
+                                            Checkbox(
+                                                checked = isAlreadySpent,
+                                                onCheckedChange = { isAlreadySpent = it },
+                                                colors = CheckboxDefaults.colors(checkedColor = theme.accent, checkmarkColor = theme.bg, uncheckedColor = theme.textMuted)
+                                            )
+                                            Text("Money already spent? (Auto-log historical expense)", color = theme.textMuted, fontSize = 10.5.sp)
+                                        }
                                     }
                                 }
                             }
@@ -297,40 +609,116 @@ fun CreateAccountDialog(
                     }
                     
                     if (type in listOf(PocketType.LIABILITY_LOAN, PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE, PocketType.GOAL_POT, PocketType.INVESTMENT, PocketType.FIXED_ASSET)) {
-                        Box(modifier = Modifier.fillMaxWidth().height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showDatePicker = true }.padding(horizontal = 12.dp), contentAlignment = Alignment.CenterStart) {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text(text = if (type == PocketType.GOAL_POT) "Target Date: $dateFormatted" else "Transaction Date: $dateFormatted", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(theme.surfaceAlt)
+                                .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
+                                .clickable { showDatePicker = true }
+                                .padding(horizontal = 12.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (type == PocketType.GOAL_POT) "Target Date: $dateFormatted" else "Transaction Date: $dateFormatted",
+                                    color = theme.textBright,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
                                 Icon(imageVector = Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(15.dp))
                             }
                         }
                     }
 
                     val isFormValid = when (type) {
-                        PocketType.LIABILITY_LOAN -> name.isNotBlank() && (initialValuation.toDoubleOrNull() ?: 0.0) > 0.0 && (targetAmt.toDoubleOrNull() ?: 0.0) > 0.0 && (dueDay.toIntOrNull() ?: 0) in 1..31
-                        PocketType.PEER_RECEIVABLE -> name.isNotBlank() && ((initialValuation.toDoubleOrNull() ?: 0.0) >= 0.0 && fundingPocketId != null)
-                        PocketType.PEER_PAYABLE -> {
-                            val amt = initialValuation.toDoubleOrNull() ?: 0.0
-                            val hasAsset = loanPurposes[loanPurposeIndex].second != null
-                            name.isNotBlank() && (amt == 0.0 || hasAsset || (amt > 0.0 && fundingPocketId != null))
+                        PocketType.LIABILITY_LOAN -> {
+                            val initVal = initialValuation.toDoubleOrNull() ?: 0.0
+                            val tgtAmt = targetAmt.toDoubleOrNull() ?: 0.0
+                            val day = dueDay.toIntOrNull() ?: 0
+                            name.isNotBlank() && initVal > 0.0 && tgtAmt > 0.0 && day in 1..31
                         }
-                        PocketType.CREDIT_CARD -> name.isNotBlank() && (limit.toDoubleOrNull() ?: 0.0) > 0.0
-                        PocketType.INVESTMENT, PocketType.FIXED_ASSET -> name.isNotBlank() && (assetFundingMode != 0 || fundingPocketId != null)
+                        PocketType.PEER_RECEIVABLE -> {
+                            val initVal = initialValuation.toDoubleOrNull() ?: 0.0
+                            name.isNotBlank() && initVal >= 0.0 && fundingPocketId != null
+                        }
+                        PocketType.PEER_PAYABLE -> {
+                            val initVal = initialValuation.toDoubleOrNull() ?: 0.0
+                            val hasAsset = loanPurposes[loanPurposeIndex].second != null
+                            name.isNotBlank() && (initVal == 0.0 || hasAsset || (initVal > 0.0 && fundingPocketId != null))
+                        }
+                        PocketType.CREDIT_CARD -> {
+                            val lim = limit.toDoubleOrNull() ?: 0.0
+                            name.isNotBlank() && lim > 0.0
+                        }
+                        PocketType.INVESTMENT, PocketType.FIXED_ASSET -> {
+                            name.isNotBlank() && (assetFundingMode != 0 || fundingPocketId != null)
+                        }
                         else -> name.isNotBlank()
                     }
 
-                    Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = {
-                            if (type == PocketType.PEER_RECEIVABLE || type == PocketType.PEER_PAYABLE) {
-                                val linkedAsset = if (!peerIsLendMode) loanPurposes[loanPurposeIndex].second else null
-                                onSavePeerWithFunding(name, peerIsLendMode, initialValuation.toDoubleOrNull() ?: 0.0, fundingPocketId, targetDateEpoch, isAlreadySpent, linkedAsset)
-                            } else {
-                                val linkedAsset = if (type == PocketType.LIABILITY_LOAN) loanPurposes[loanPurposeIndex].second else null
-                                onSave(name, type, limit.toDoubleOrNull() ?: 0.0, dueDay.toIntOrNull() ?: 0, targetAmt.toDoubleOrNull() ?: 0.0, targetDateEpoch, initialValuation.toDoubleOrNull() ?: 0.0, interestRate.toDoubleOrNull() ?: 0.0, linkedAsset, isAlreadySpent, fundingPocketId, assetFundingMode)
-                            }
-                        }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isFormValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isFormValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isFormValid) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                if (type == PocketType.PEER_RECEIVABLE || type == PocketType.PEER_PAYABLE) {
+                                    val linkedAsset = if (!peerIsLendMode) loanPurposes[loanPurposeIndex].second else null
+                                    onSavePeerWithFunding(
+                                        name,
+                                        peerIsLendMode,
+                                        initialValuation.toDoubleOrNull() ?: 0.0,
+                                        fundingPocketId,
+                                        targetDateEpoch,
+                                        isAlreadySpent,
+                                        linkedAsset
+                                    )
+                                } else {
+                                    val linkedAsset = if (type == PocketType.LIABILITY_LOAN) loanPurposes[loanPurposeIndex].second else null
+                                    onSave(
+                                        name,
+                                        type,
+                                        limit.toDoubleOrNull() ?: 0.0,
+                                        dueDay.toIntOrNull() ?: 0,
+                                        targetAmt.toDoubleOrNull() ?: 0.0,
+                                        targetDateEpoch,
+                                        initialValuation.toDoubleOrNull() ?: 0.0,
+                                        interestRate.toDoubleOrNull() ?: 0.0,
+                                        linkedAsset,
+                                        isAlreadySpent,
+                                        fundingPocketId,
+                                        assetFundingMode
+                                    )
+                                }
+                            },
+                            modifier = Modifier
+                                .weight(1.3f)
+                                .height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, if (isFormValid) theme.accent else theme.borderLight),
+                            colors = ButtonDefaults.buttonColors(containerColor = if (isFormValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent),
+                            enabled = isFormValid
+                        ) {
                             Text("Save Account", color = if (isFormValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
-                        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight), colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)) {
+                        
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)
+                        ) {
                             Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
                         }
                     }
@@ -348,15 +736,44 @@ fun BatchBalanceSheetStagingView(
     onConfirmBatch: (List<StagedStatementLineItem>) -> Unit
 ) {
     var itemsList by remember { mutableStateOf(stagedItems) }
-    Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+    
+    Column(
+        modifier = Modifier.padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Text("STAGED BALANCE SHEET", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp)
             Text("${itemsList.count { it.isSelectedForCommit }} Selected", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold)
         }
+        
         Text("Review extracted assets and liabilities before importing to vault:", color = theme.textMuted, fontSize = 11.sp)
-        LazyColumn(modifier = Modifier.fillMaxWidth().heightIn(max = 280.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 280.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
             itemsIndexed(itemsList) { index, item ->
-                Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (item.isSelectedForCommit) theme.surfaceAlt else theme.surface).border(1.dp, if (item.isSelectedForCommit) theme.accent.copy(alpha = 0.5f) else theme.borderLight, RoundedCornerShape(8.dp)).clickable { val updated = itemsList.toMutableList(); updated[index] = item.copy(isSelectedForCommit = !item.isSelectedForCommit); itemsList = updated }.padding(horizontal = 10.dp, vertical = 8.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (item.isSelectedForCommit) theme.surfaceAlt else theme.surface)
+                        .border(1.dp, if (item.isSelectedForCommit) theme.accent.copy(alpha = 0.5f) else theme.borderLight, RoundedCornerShape(8.dp))
+                        .clickable { 
+                            val updated = itemsList.toMutableList()
+                            updated[index] = item.copy(isSelectedForCommit = !item.isSelectedForCommit)
+                            itemsList = updated 
+                        }
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(item.rawExtractedName, color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                         Text(item.inferredType.name, color = theme.accent, fontSize = 9.5.sp)
@@ -367,12 +784,35 @@ fun BatchBalanceSheetStagingView(
                 }
             }
         }
+        
         val isValid = itemsList.any { it.isSelectedForCommit }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { onConfirmBatch(itemsList.filter { it.isSelectedForCommit }) }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
+        
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Button(
+                onClick = { onConfirmBatch(itemsList.filter { it.isSelectedForCommit }) },
+                modifier = Modifier
+                    .weight(1.3f)
+                    .height(44.dp),
+                shape = RoundedCornerShape(8.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight),
+                colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent),
+                enabled = isValid
+            ) {
                 Text("Import Selected", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
             }
-            OutlinedButton(onClick = onDismissStaging, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight), colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)) {
+            
+            OutlinedButton(
+                onClick = onDismissStaging,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(44.dp),
+                shape = RoundedCornerShape(8.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)
+            ) {
                 Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
             }
         }
@@ -390,36 +830,120 @@ fun EditAccountDialog(
     var limit by remember { mutableStateOf(if (pocket.creditLimit > 0L) String.format(Locale.US, "%.0f", pocket.creditLimit / 100.0) else "") }
     var dueDay by remember { mutableStateOf(if (pocket.billDueDay > 0) pocket.billDueDay.toString() else "") }
     var targetAmt by remember { mutableStateOf(if (pocket.targetGoalAmount > 0L) String.format(Locale.US, "%.0f", pocket.targetGoalAmount / 100.0) else "") }
-    var targetDateEpoch by remember { mutableStateOf(if (pocket.goalTargetDate > 0) pocket.goalTargetDate else System.currentTimeMillis() + (30L * 24 * 3600 * 1000L)) }
+    var targetDateEpoch by remember { mutableStateOf(if (pocket.goalTargetDate > 0L) pocket.goalTargetDate else System.currentTimeMillis() + (30L * 24 * 3600 * 1000L)) }
     var showDatePicker by remember { mutableStateOf(false) }
 
     val dateFormatted = SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(targetDateEpoch))
-    if (showDatePicker) CustomCalendarDialog(initialDateMillis = targetDateEpoch, onDismiss = { showDatePicker = false }) { targetDateEpoch = it; showDatePicker = false }
+    
+    if (showDatePicker) {
+        CustomCalendarDialog(
+            initialDateMillis = targetDateEpoch,
+            onDismiss = { showDatePicker = false }
+        ) { 
+            targetDateEpoch = it
+            showDatePicker = false 
+        }
+    }
 
     Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
-            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.9f).widthIn(max = 400.dp).border(1.dp, theme.borderLight, RoundedCornerShape(14.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
-                Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(text = "EDIT ${pocket.name.uppercase(Locale.getDefault())}", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
-                    CompactInputField(value = name, onValueChange = { name = it }, placeholder = "Account Name", modifier = Modifier.fillMaxWidth())
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.65f))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
+            contentAlignment = Alignment.Center
+        ) {
+            Card(
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = theme.surface),
+                modifier = Modifier
+                    .fillMaxWidth(0.9f)
+                    .widthIn(max = 400.dp)
+                    .border(1.dp, theme.borderLight, RoundedCornerShape(14.dp))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+            ) {
+                Column(
+                    modifier = Modifier.padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "EDIT ${pocket.name.uppercase(Locale.getDefault())}",
+                        color = theme.textBright,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.5.sp
+                    )
+                    
+                    CompactInputField(
+                        value = name,
+                        onValueChange = { name = it },
+                        placeholder = "Account Name",
+                        modifier = Modifier.fillMaxWidth()
+                    )
 
                     if (pocket.type == PocketType.CREDIT_CARD) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            CompactInputField(value = limit, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) limit = input }, placeholder = "Limit ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f))
-                            CompactInputField(value = dueDay, onValueChange = { input -> if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) dueDay = input }, placeholder = "Due Day (1-31)", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(0.9f))
+                            CompactInputField(
+                                value = limit,
+                                onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) limit = input },
+                                placeholder = "Limit ₹",
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                modifier = Modifier.weight(1f)
+                            )
+                            CompactInputField(
+                                value = dueDay,
+                                onValueChange = { input -> if (input.all { c -> c.isDigit() } && (input.toIntOrNull() ?: 0) <= 31) dueDay = input },
+                                placeholder = "Due Day (1-31)",
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                modifier = Modifier.weight(0.9f)
+                            )
                         }
                     }
 
                     if (pocket.type == PocketType.GOAL_POT) {
-                        CompactInputField(value = targetAmt, onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input }, placeholder = "Target Goal Amount ₹", keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                        CompactInputField(
+                            value = targetAmt,
+                            onValueChange = { input -> if (input.all { c -> c.isDigit() || c == '.' }) targetAmt = input },
+                            placeholder = "Target Goal Amount ₹",
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
 
                     val isValid = name.isNotBlank()
-                    Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { if (isValid) onSave(name, limit.toDoubleOrNull() ?: (pocket.creditLimit / 100.0), dueDay.toIntOrNull() ?: pocket.billDueDay, targetAmt.toDoubleOrNull() ?: (pocket.targetGoalAmount / 100.0), targetDateEpoch) }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = { 
+                                if (isValid) {
+                                    val limitVal = limit.toDoubleOrNull() ?: (pocket.creditLimit / 100.0)
+                                    val dueDayVal = dueDay.toIntOrNull() ?: pocket.billDueDay
+                                    val targetAmtVal = targetAmt.toDoubleOrNull() ?: (pocket.targetGoalAmount / 100.0)
+                                    onSave(name, limitVal, dueDayVal, targetAmtVal, targetDateEpoch) 
+                                }
+                            },
+                            modifier = Modifier
+                                .weight(1.3f)
+                                .height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight),
+                            colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent),
+                            enabled = isValid
+                        ) {
                             Text("Save Changes", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
                         }
-                        OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight), colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)) {
+                        
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)
+                        ) {
                             Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
                         }
                     }
