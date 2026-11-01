@@ -124,17 +124,20 @@ object ReceiptScanner {
     }
 
     private fun parseDocumentText(rawText: String): ParsedReceipt {
-        // AGGRESSIVE PRE-FILTER: Annihilate 10-digit phone numbers, GSTINs, and dates before the scanner even looks at them.
+        // 1. AGGRESSIVE SANITIZATION
+        // Destroys mobile numbers, GSTINs, bank accounts, dates, and times to prevent false positive amounts.
         var sanitizedText = rawText
-            .replace(Regex("\\b\\d{10}\\b"), "") // Kills exactly 10-digit numbers (Phones)
-            .replace(Regex("\\b\\d{2}[A-Z]{5}\\d{4}[A-Z][A-Z\\d]Z[A-Z\\d]\\b"), "") // Kills GSTINs
-            .replace(Regex("\\b\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}\\b"), "") // Kills Dates
-            .replace(Regex("(?i)phone[\\s:]*\\d+"), "")
-            .replace(Regex("(?i)mob[\\s:]*\\d+"), "")
+            .replace(Regex("\\b[6-9]\\d{9}\\b"), "") // 10-digit Mobile Numbers
+            .replace(Regex("\\b\\d{11,18}\\b"), "") // Bank Accounts / Aadhar / PNR
+            .replace(Regex("\\b\\d{2}[A-Z]{5}\\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]\\b"), "") // GSTIN
+            .replace(Regex("\\b\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4}\\b"), "") // Dates
+            .replace(Regex("\\b\\d{1,2}:\\d{2}(?::\\d{2})?\\b"), "") // Times
+            .replace(Regex("(?i)(phone|ph|mob|mobile|tel|pin|zip|pincode|hsn|sac|order|invoice|bill no|table|token)[\\s:-]*\\d+"), "")
 
         val lines = sanitizedText.split("\n").map { it.trim() }.filter { it.isNotBlank() }
         val lowerCaseDocument = sanitizedText.lowercase()
 
+        // Balance Sheet Detection
         val statementKeywords = listOf("balance sheet", "assets", "liabilities", "statement of affairs", "sundry debtors", "sundry creditors", "net worth", "equity")
         val balanceSheetHits = statementKeywords.count { lowerCaseDocument.contains(it) }
         val stagedItems = extractStagedBalanceSheetItems(lines)
@@ -143,9 +146,10 @@ object ReceiptScanner {
             return ParsedReceipt("Financial Statement Extract", (stagedItems.sumOf { it.extractedAmount } / 100.0), System.currentTimeMillis(), rawText, DocumentIntent.FINANCIAL_BALANCE_SHEET_STATEMENT, stagedItems)
         }
 
-        val blacklistedHeaderTokens = listOf("original for recipient", "duplicate for recipient", "tax invoice", "retail invoice", "invoice no", "cash memo", "gstin", "phone:", "email:")
+        // 2. MERCHANT EXTRACTION
+        val blacklistedHeaderTokens = listOf("original", "duplicate", "invoice", "cash memo", "gstin", "phone", "email", "bill to", "ship to", "tax", "retail", "journey", "railway")
         var merchant = "Store / Merchant"
-        for (line in lines.take(10)) {
+        for (line in lines.take(15)) {
             val lower = line.lowercase()
             if (!blacklistedHeaderTokens.any { lower.contains(it) } && line.length in 3..40 && !line.any { it.isDigit() }) {
                 merchant = line
@@ -153,35 +157,65 @@ object ReceiptScanner {
             }
         }
 
-        // STRICT HEURISTIC: Find words meaning "Total" and grab the number next to them.
-        val strictTotalPattern = Pattern.compile("(?i)(?:total amount|grand total|net amount|amount payable|final amount|net payable|sub total|total|net|amount)\\s*[:\\-]?\\s*(?:rs\\.?|inr|₹)?\\s*([\\d,]+\\.\\d{2})")
+        // Helper to extract all valid currency-like numbers from a string
+        fun extractNumbers(text: String): List<Double> {
+            val numRegex = Regex("(?:₹|rs\\.?\\s*)?([\\d,]+\\.?\\d*)[/-]?")
+            return numRegex.findAll(text.lowercase())
+                .map { it.groupValues[1].replace(",", "") }
+                .mapNotNull { it.toDoubleOrNull() }
+                .toList()
+        }
+
         var detectedTotal: Double? = null
-        
+
+        // 3. TIER 1: Strict Total Keywords (Bottom-Up Scan)
+        val strictKeywords = listOf("grand total", "total amount", "final amount", "net payable", "net amount", "balance")
         for (line in lines.reversed()) {
-            val matcher = strictTotalPattern.matcher(line)
-            if (matcher.find()) {
-                val numStr = matcher.group(1)?.replace(",", "")
-                val parsed = numStr?.toDoubleOrNull()
-                if (parsed != null && parsed > 0.0) {
-                    detectedTotal = parsed
+            val lowerLine = line.lowercase()
+            if (strictKeywords.any { lowerLine.contains(it) }) {
+                val nums = extractNumbers(lowerLine)
+                if (nums.isNotEmpty()) {
+                    detectedTotal = nums.maxOrNull()
                     break
                 }
             }
         }
 
-        // FALLBACK: If no keyword found, grab the lowest exact currency format (must have decimal .00)
+        // 4. TIER 2: Loose Keywords (Ignores Tax lines)
         if (detectedTotal == null) {
-            val currencyPattern = Pattern.compile("(?i)(?:₹|rs\\.?)\\s*([\\d,]+\\.\\d{2})")
+            val looseKeywords = listOf("total", "amount", "sub total", "subtotal", "pay")
             for (line in lines.reversed()) {
-                val matcher = currencyPattern.matcher(line)
-                if (matcher.find()) {
-                    val numStr = matcher.group(1)?.replace(",", "")
-                    val parsed = numStr?.toDoubleOrNull()
-                    if (parsed != null && parsed > 0.0) {
-                        detectedTotal = parsed
+                val lowerLine = line.lowercase()
+                if (looseKeywords.any { lowerLine.contains(it) } && !lowerLine.contains("tax") && !lowerLine.contains("cgst") && !lowerLine.contains("sgst")) {
+                    val nums = extractNumbers(lowerLine)
+                    if (nums.isNotEmpty()) {
+                        detectedTotal = nums.maxOrNull()
                         break
                     }
                 }
+            }
+        }
+
+        // 5. TIER 3: Indian Railway UTS Format (Rs. 150.00 or Rs. 16/-)
+        if (detectedTotal == null) {
+            val railwayRegex = Regex("(?i)rs\\.?\\s*([\\d,]+\\.?\\d*)[/-]?")
+            for (line in lines) {
+                val match = railwayRegex.find(line)
+                if (match != null) {
+                    val num = match.groupValues[1].replace(",", "").toDoubleOrNull()
+                    if (num != null && num > 0.0) {
+                        detectedTotal = num
+                    }
+                }
+            }
+        }
+
+        // 6. FALLBACK: Largest valid number in the bottom half of the receipt
+        if (detectedTotal == null) {
+            val bottomHalf = lines.takeLast(lines.size / 2)
+            val allBottomNums = bottomHalf.flatMap { extractNumbers(it) }.filter { it > 0.0 }
+            if (allBottomNums.isNotEmpty()) {
+                detectedTotal = allBottomNums.maxOrNull()
             }
         }
 
