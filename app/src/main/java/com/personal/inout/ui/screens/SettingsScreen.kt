@@ -54,7 +54,6 @@ fun SettingsCardsList(
 ) {
     var showFySelector by remember { mutableStateOf(false) }
 
-    // Dynamic Last Backup Detector
     var lastBackupText by remember { mutableStateOf("No local backups found") }
     LaunchedEffect(Unit) {
         val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
@@ -174,14 +173,16 @@ fun SettingsCardsList(
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(text = "DATA PORTABILITY & VAULT BACKUP", color = theme.textMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
 
+                    // FIX: Replaced solid Button with OutlinedButton so it no longer looks "selected"
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
+                        OutlinedButton(
                             onClick = onExportEncryptedBackup,
-                            colors = ButtonDefaults.buttonColors(containerColor = theme.accent),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.accent),
                             shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
                             modifier = Modifier.weight(1f).height(44.dp)
                         ) {
-                            Text(text = "Backup Vault", color = theme.bg, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(text = "Backup Vault", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
 
                         OutlinedButton(
