@@ -22,7 +22,6 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GIT_SHA", "\"$passedGitSha\"")
 
-        // Read secrets passed from GitHub Actions environment
         val tgToken = System.getenv("TELEGRAM_BOT_TOKEN") ?: ""
         val tgChatId = System.getenv("TELEGRAM_CHAT_ID") ?: ""
         buildConfigField("String", "TELEGRAM_BOT_TOKEN", "\"$tgToken\"")
@@ -86,8 +85,7 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
-implementation("androidx.work:work-runtime-ktx:2.9.0")
-
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
 
     val roomVersion = "2.6.1"
     implementation("androidx.room:room-runtime:$roomVersion")
@@ -103,4 +101,11 @@ implementation("androidx.work:work-runtime-ktx:2.9.0")
 
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
+}
+
+// Configures Room to export the schema JSON files to a local directory
+kapt {
+    arguments {
+        arg("room.schemaLocation", "$projectDir/schemas")
+    }
 }
