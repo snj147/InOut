@@ -166,6 +166,26 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
+    val backupExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val res = VaultBackupManager.exportEncryptedBackup(context, db, uri, "INOUT_LEDGER_MASTER_KEY")
+                if (res.isSuccess) alertManager.showAlert("Verified .vault snapshot exported", AlertType.SUCCESS)
+                else alertManager.showAlert("Export failed: ${res.exceptionOrNull()?.message}", AlertType.ERROR)
+            }
+        }
+    }
+
+    val backupRestoreLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri != null) {
+            scope.launch {
+                val res = VaultBackupManager.restoreEncryptedBackup(context, db, uri, "INOUT_LEDGER_MASTER_KEY")
+                if (res.isSuccess) alertManager.showAlert("Vault restored cleanly", AlertType.SUCCESS)
+                else alertManager.showAlert("Restore failed: ${res.exceptionOrNull()?.message}", AlertType.ERROR)
+            }
+        }
+    }
+
     fun processReceiptResult(bitmap: Bitmap) {
         scope.launch {
             try {
@@ -411,8 +431,8 @@ fun DashboardScreen(db: AppDatabase) {
                             onThemeSelected = { mode -> activeThemeMode = mode; prefs.edit().putString("selected_theme", mode.name).apply() },
                             onExportPdf = { fyYear -> scope.launch { PdfDossierExporter.generateAndShareDossier(context, fyYear) } },
                             onExportCsv = { CsvExporter.exportAndShareTransactions(context, uiState.completedTransactions) },
-                            onExportEncryptedBackup = {}, // UI removed until next step for WorkManager
-                            onRestoreEncryptedBackup = {},
+                            onExportEncryptedBackup = { backupExportLauncher.launch("inout_vault_backup_${System.currentTimeMillis()}.vault") },
+                            onRestoreEncryptedBackup = { backupRestoreLauncher.launch(arrayOf("application/json", "*/*")) },
                             onClearLedger = { showClearLedgerConfirmation = true }
                         )
                     }
@@ -530,15 +550,15 @@ fun DashboardScreen(db: AppDatabase) {
                                 } else if (type == PocketType.INVESTMENT || type == PocketType.FIXED_ASSET) {
                                     if (initPaise > 0L) {
                                         when (assetFundingMode) {
-                                            0 -> { // Current Bank
+                                            0 -> {
                                                 if (loanFundingPocketId != null) {
                                                     viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, loanFundingPocketId, pocketId, initPaise, "Asset Acquisition", "Purchased $name", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
                                                 }
                                             }
-                                            1 -> { // Ancestral / Gift
+                                            1 -> {
                                                 viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, pocketId, null, initPaise, "Initial Position", "Gift/Ancestral mapping for $name", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
                                             }
-                                            2 -> { // Borrowed System Lender
+                                            2 -> {
                                                 val lenderId = db.ledgerDao().insertPocket(LedgerPocket(name = "Lender - $name", type = PocketType.LIABILITY_LOAN))
                                                 viewModel.executeMasterEntryTrigger(MovementNature.OPENING_BASELINE, lenderId, null, initPaise, "Initial Position", "Loan opened for $name", targetDateEpoch, false, "NONE", false, false, {
                                                     viewModel.executeMasterEntryTrigger(MovementNature.TRANSFER, lenderId, pocketId, initPaise, "Asset Acquisition", "Funded by system lender", targetDateEpoch, false, "NONE", false, false, {}, {}, {})
