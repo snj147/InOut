@@ -86,6 +86,8 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.material.icons.extended)
+implementation("androidx.work:work-runtime-ktx:2.9.0")
+
 
     val roomVersion = "2.6.1"
     implementation("androidx.room:room-runtime:$roomVersion")
