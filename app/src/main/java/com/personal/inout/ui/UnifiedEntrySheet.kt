@@ -3,11 +3,11 @@ package com.personal.inout.ui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,64 +20,27 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.personal.inout.data.LedgerPocket
 import com.personal.inout.data.MovementNature
 import com.personal.inout.data.PocketType
 import com.personal.inout.ui.LocalThemeColors
+import com.personal.inout.ui.ThemeColors
+import com.personal.inout.ui.dialogs.CustomCalendarDialog
+import com.personal.inout.util.MathEvaluator
 import java.text.SimpleDateFormat
 import java.util.*
 
-enum class ActiveEntryRail(val title: String, val nature: MovementNature) {
+enum class ActiveEntryRail(val label: String, val nature: MovementNature) {
     EXPENSE("EXP", MovementNature.OPERATING_EXPENSE),
-    INCOME("IN", MovementNature.OPERATING_INCOME),
+    INFLOW("IN", MovementNature.OPERATING_INCOME),
     TRANSFER("XFER", MovementNature.TRANSFER),
-    CARD_BILL("CARD", MovementNature.TRANSFER),
-    PEER_SETTLEMENT("PEER", MovementNature.TRANSFER)
+    CARD_BILL("CARD", MovementNature.OPERATING_EXPENSE),
+    PEER("PEER", MovementNature.TRANSFER)
 }
 
-// INLINE CALCULATOR ENGINE
-fun evaluateBasicMath(expr: String): Double? {
-    try {
-        val sanitized = expr.replace(" ", "").replace(",", "")
-        if (!sanitized.matches(Regex("^[\\d\\.\\+\\-\\*\\/]+$"))) return null
-        var current = ""
-        val tokens = mutableListOf<String>()
-        for (char in sanitized) {
-            if (char in listOf('+', '-', '*', '/')) {
-                if (current.isNotEmpty()) tokens.add(current)
-                tokens.add(char.toString())
-                current = ""
-            } else { current += char }
-        }
-        if (current.isNotEmpty()) tokens.add(current)
-        
-        var i = 0
-        while (i < tokens.size) {
-            if (tokens[i] == "*" || tokens[i] == "/") {
-                val left = tokens[i-1].toDouble()
-                val right = tokens[i+1].toDouble()
-                val res = if (tokens[i] == "*") left * right else left / right
-                tokens[i-1] = res.toString()
-                tokens.removeAt(i)
-                tokens.removeAt(i)
-            } else { i++ }
-        }
-        i = 0
-        while (i < tokens.size) {
-            if (tokens[i] == "+" || tokens[i] == "-") {
-                val left = tokens[i-1].toDouble()
-                val right = tokens[i+1].toDouble()
-                val res = if (tokens[i] == "+") left + right else left - right
-                tokens[i-1] = res.toString()
-                tokens.removeAt(i)
-                tokens.removeAt(i)
-            } else { i++ }
-        }
-        return tokens.firstOrNull()?.toDoubleOrNull()
-    } catch (e: Exception) { return null }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun UnifiedEntrySheet(
     allPockets: List<LedgerPocket>,
@@ -88,187 +51,477 @@ fun UnifiedEntrySheet(
     prefilledAmount: Double? = null,
     onDismiss: () -> Unit,
     onSubmitTransaction: (
-        nature: MovementNature, sourcePocketId: Long, targetPocketId: Long?,
-        amountDouble: Double, category: String, narration: String,
-        timestamp: Long, isRecurring: Boolean, frequency: String,
-        isTaxDeductible: Boolean, isReimbursable: Boolean
+        nature: MovementNature,
+        sourcePocketId: Long,
+        targetPocketId: Long?,
+        amount: Double,
+        category: String,
+        note: String,
+        date: Long,
+        isRecurring: Boolean,
+        frequency: String,
+        isTaxDeductible: Boolean,
+        isReimbursable: Boolean
     ) -> Unit,
     onNavigateToCreatePocket: () -> Unit
 ) {
     val theme = LocalThemeColors.current
 
-    val liquidPockets = remember(allPockets) { allPockets.filter { it.type == PocketType.LIQUID || it.type == PocketType.PREPAID_WALLET } }
-    val creditCards = remember(allPockets) { allPockets.filter { it.type == PocketType.CREDIT_CARD } }
-    val peerAccounts = remember(allPockets) { allPockets.filter { it.type == PocketType.PEER_PAYABLE || it.type == PocketType.PEER_RECEIVABLE } }
-    val allDestinations = remember(allPockets) { allPockets.filter { it.type != PocketType.CREDIT_CARD && it.type != PocketType.PEER_PAYABLE && it.type != PocketType.PEER_RECEIVABLE } }
-
-    var activeRail by remember { mutableStateOf(forcedRail ?: ActiveEntryRail.EXPENSE) }
-    var rawAmountInput by remember { mutableStateOf(prefilledAmount?.let { String.format(Locale.US, "%.0f", it) } ?: "") }
-    var selectedSourceId by remember { mutableStateOf(prefilledPocketId ?: liquidPockets.firstOrNull()?.id) }
-    var selectedTargetId by remember { mutableStateOf(prefilledTargetPocketId) }
-    
-    var showSourceDropdown by remember { mutableStateOf(false) }
-    var showTargetDropdown by remember { mutableStateOf(false) }
-    
-    var narration by remember { mutableStateOf(prefilledNote) }
-    var selectedDateEpoch by remember { mutableStateOf(System.currentTimeMillis()) }
+    var selectedRail by remember { mutableStateOf(forcedRail ?: ActiveEntryRail.EXPENSE) }
+    var amountExpression by remember { mutableStateOf(prefilledAmount?.let { String.format(Locale.US, "%.0f", it) } ?: "") }
+    var note by remember { mutableStateOf(prefilledNote) }
+    var selectedDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
     var showDatePicker by remember { mutableStateOf(false) }
 
     var isTaxDeductible by remember { mutableStateOf(false) }
     var isReimbursable by remember { mutableStateOf(false) }
-    var repeatCadence by remember { mutableStateOf("NONE") }
+    var selectedCadence by remember { mutableStateOf("None") }
 
-    val dateFormatted = remember(selectedDateEpoch) { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateEpoch)) }
+    val categories = when (selectedRail) {
+        ActiveEntryRail.EXPENSE -> listOf("Food & Dining", "Groceries", "Transport", "Bills", "Shopping", "Health", "General")
+        ActiveEntryRail.INFLOW -> listOf("Salary", "Freelance", "Investment", "Cashback", "Reward Credit", "Merchant Refund", "Income")
+        ActiveEntryRail.TRANSFER -> listOf("Internal Transfer", "Loan Repayment", "Goal Pot", "ATM Withdrawal")
+        ActiveEntryRail.CARD_BILL -> listOf("Card Payment", "Bill Settlement")
+        ActiveEntryRail.PEER -> listOf("Peer Advance", "Debt Settlement")
+    }
+    var selectedCategory by remember(selectedRail) { mutableStateOf(categories.first()) }
 
-    val categoryMatrix = remember(activeRail) {
-        when (activeRail) {
-            ActiveEntryRail.EXPENSE -> listOf("Food & Dining", "Groceries", "Transport", "Bills", "Shopping", "Health", "General")
-            ActiveEntryRail.INCOME -> listOf("Salary", "Freelance", "Investment", "Cashback", "Reward Credit", "Merchant Refund", "Income")
-            ActiveEntryRail.TRANSFER -> listOf("Internal Transfer", "Loan Repayment", "Goal Pot", "ATM Withdrawal")
-            ActiveEntryRail.CARD_BILL -> listOf("Card Payment", "Bill Settlement")
-            ActiveEntryRail.PEER_SETTLEMENT -> listOf("Peer Advance", "Debt Settlement")
+    val isCreditCardRefundCategory = selectedCategory in listOf("Cashback", "Reward Credit", "Merchant Refund")
+
+    val selectableSourcePockets = remember(allPockets, selectedRail, isCreditCardRefundCategory) {
+        when (selectedRail) {
+            ActiveEntryRail.INFLOW -> {
+                allPockets.filter {
+                    if (isCreditCardRefundCategory) it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET, PocketType.CREDIT_CARD)
+                    else it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET)
+                }
+            }
+            ActiveEntryRail.CARD_BILL -> allPockets.filter { it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET) }
+            ActiveEntryRail.EXPENSE -> allPockets.filter { it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET, PocketType.CREDIT_CARD) }
+            ActiveEntryRail.TRANSFER, ActiveEntryRail.PEER -> allPockets.filter { it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET) }
         }
     }
-    
-    var activeCategory by remember(activeRail) { mutableStateOf(categoryMatrix.first()) }
-    
-    // Evaluate math inline
-    val evaluatedAmount = evaluateBasicMath(rawAmountInput)
-    val showEvaluatedResult = evaluatedAmount != null && rawAmountInput.any { it in listOf('+', '-', '*', '/') }
 
-    if (showDatePicker) CustomCalendarDialog(initialDateMillis = selectedDateEpoch, onDismiss = { showDatePicker = false }) { selectedDateEpoch = it; showDatePicker = false }
+    var selectedSourcePocket by remember(selectableSourcePockets, prefilledPocketId) {
+        mutableStateOf(
+            selectableSourcePockets.firstOrNull { it.id == prefilledPocketId }
+                ?: selectableSourcePockets.firstOrNull { it.type == PocketType.LIQUID }
+                ?: selectableSourcePockets.firstOrNull()
+        )
+    }
 
-    ModalBottomSheet(
+    LaunchedEffect(selectableSourcePockets) {
+        if (selectedSourcePocket !in selectableSourcePockets) {
+            selectedSourcePocket = selectableSourcePockets.firstOrNull()
+        }
+    }
+
+    val selectableTargetPockets = remember(allPockets, selectedRail, selectedSourcePocket) {
+        when (selectedRail) {
+            ActiveEntryRail.CARD_BILL -> allPockets.filter { it.type == PocketType.CREDIT_CARD }
+            ActiveEntryRail.PEER -> allPockets.filter { it.type in listOf(PocketType.PEER_RECEIVABLE, PocketType.PEER_PAYABLE) }
+            ActiveEntryRail.TRANSFER -> allPockets.filter { it.id != selectedSourcePocket?.id && it.type in listOf(PocketType.LIQUID, PocketType.PREPAID_WALLET, PocketType.LIABILITY_LOAN, PocketType.GOAL_POT) }
+            else -> emptyList()
+        }
+    }
+
+    var selectedTargetPocket by remember(selectableTargetPockets, prefilledTargetPocketId) {
+        mutableStateOf(
+            selectableTargetPockets.firstOrNull { it.id == prefilledTargetPocketId }
+                ?: selectableTargetPockets.firstOrNull()
+        )
+    }
+
+    LaunchedEffect(selectableTargetPockets) {
+        if (selectedTargetPocket !in selectableTargetPockets) {
+            selectedTargetPocket = selectableTargetPockets.firstOrNull()
+        }
+    }
+
+    val isCardInflow = selectedRail == ActiveEntryRail.INFLOW && selectedSourcePocket?.type == PocketType.CREDIT_CARD
+    LaunchedEffect(isCardInflow) {
+        if (isCardInflow) selectedCadence = "None"
+    }
+
+    var showSourcePicker by remember { mutableStateOf(false) }
+    var showTargetPicker by remember { mutableStateOf(false) }
+
+    val computedAmount = remember(amountExpression) {
+        MathEvaluator.evaluate(amountExpression)
+    }
+
+    val dateFormatted = remember(selectedDateMillis) {
+        SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(Date(selectedDateMillis))
+    }
+
+    if (showDatePicker) {
+        CustomCalendarDialog(
+            initialDateMillis = selectedDateMillis,
+            onDismiss = { showDatePicker = false },
+            onDateSelected = {
+                selectedDateMillis = it
+                showDatePicker = false
+            }
+        )
+    }
+
+    // REVERTED: Back to a strictly centered Dialog as requested
+    Dialog(
         onDismissRequest = onDismiss,
-        containerColor = theme.surface,
-        dragHandle = { BottomSheetDefaults.DragHandle(color = theme.borderLight) }
+        properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 30.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.65f))
+                .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() },
+            contentAlignment = Alignment.Center
         ) {
-            Text("NEW TRANSACTION", color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.sp, letterSpacing = 1.sp)
-
-            Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).padding(2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                ActiveEntryRail.values().forEach { rail ->
-                    val isSel = activeRail == rail
-                    val railColor = if (isSel) {
-                        when (rail) { ActiveEntryRail.EXPENSE -> theme.mildRed; ActiveEntryRail.INCOME -> theme.mildGreen; ActiveEntryRail.CARD_BILL -> Color(0xFFF6AD55); ActiveEntryRail.PEER_SETTLEMENT -> Color(0xFF4FD1C5); else -> theme.accent }
-                    } else Color.Transparent
-
-                    Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(railColor).clickable { activeRail = rail; selectedTargetId = null }.padding(vertical = 7.dp), contentAlignment = Alignment.Center) {
-                        Text(rail.title, color = if (isSel) theme.bg else theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Top) {
-                Column(modifier = Modifier.weight(1f)) {
-                    CompactInputField(
-                        value = rawAmountInput, 
-                        onValueChange = { input -> if (input.all { c -> c.isDigit() || c in listOf('.', '+', '-', '*', '/') }) rawAmountInput = input }, 
-                        placeholder = "Amount ₹", 
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
-                        modifier = Modifier.fillMaxWidth()
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = theme.surface),
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .widthIn(max = 420.dp)
+                    .border(1.dp, theme.accent.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Text(
+                        "NEW TRANSACTION",
+                        color = theme.textBright,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        letterSpacing = 1.sp
                     )
-                    if (showEvaluatedResult && evaluatedAmount != null) {
-                        Text("= ₹${String.format(Locale.US, "%.2f", evaluatedAmount)}", color = theme.accent, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 4.dp, top = 2.dp))
-                    }
-                }
-                Box(modifier = Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showDatePicker = true }.padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text(dateFormatted, color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
-                        Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(14.dp))
-                    }
-                }
-            }
 
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(modifier = Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showSourceDropdown = true }.padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
-                    val srcName = allPockets.firstOrNull { it.id == selectedSourceId }?.name ?: "Tap to Select"
-                    Text(if (activeRail == ActiveEntryRail.INCOME) "Deposit To: $srcName" else "Paid From: $srcName", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
-                    DropdownMenu(expanded = showSourceDropdown, onDismissRequest = { showSourceDropdown = false }, modifier = Modifier.background(theme.surface)) {
-                        val validSources = if (activeRail == ActiveEntryRail.CARD_BILL) liquidPockets else allPockets
-                        validSources.forEach { p -> DropdownMenuItem(text = { Text(p.name, color = theme.textBright) }, onClick = { selectedSourceId = p.id; showSourceDropdown = false }) }
-                    }
-                }
-                
-                if (activeRail in listOf(ActiveEntryRail.TRANSFER, ActiveEntryRail.CARD_BILL, ActiveEntryRail.PEER_SETTLEMENT)) {
-                    Box(modifier = Modifier.weight(1f).height(44.dp).clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { showTargetDropdown = true }.padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
-                        val tgtName = allPockets.firstOrNull { it.id == selectedTargetId }?.name ?: "Select"
-                        Text("To: $tgtName", color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.Medium)
-                        DropdownMenu(expanded = showTargetDropdown, onDismissRequest = { showTargetDropdown = false }, modifier = Modifier.background(theme.surface)) {
-                            val validTargets = when (activeRail) {
-                                ActiveEntryRail.CARD_BILL -> creditCards
-                                ActiveEntryRail.PEER_SETTLEMENT -> peerAccounts
-                                else -> allDestinations
-                            }
-                            validTargets.forEach { p -> DropdownMenuItem(text = { Text(p.name, color = theme.textBright) }, onClick = { selectedTargetId = p.id; showTargetDropdown = false }) }
-                        }
-                    }
-                }
-            }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(theme.surfaceAlt)
+                            .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
+                            .padding(2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        ActiveEntryRail.values().forEach { rail ->
+                            val isSel = selectedRail == rail
+                            val railColor = if (isSel) {
+                                when (rail) {
+                                    ActiveEntryRail.EXPENSE -> theme.mildRed
+                                    ActiveEntryRail.INFLOW -> theme.mildGreen
+                                    ActiveEntryRail.TRANSFER -> Color(0xFF6B8AFD)
+                                    ActiveEntryRail.CARD_BILL -> Color(0xFFE5A93C)
+                                    ActiveEntryRail.PEER -> Color(0xFF38B2AC)
+                                }
+                            } else Color.Transparent
 
-            Text("CATEGORY", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-            
-            // STRICT 3x3 CATEGORY GRID
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                categoryMatrix.chunked(3).forEach { rowCats ->
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        rowCats.forEach { cat ->
-                            val isSel = activeCategory == cat
                             Box(
-                                modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isSel) theme.accent.copy(alpha = 0.22f) else theme.surfaceAlt).border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(6.dp)).clickable { activeCategory = cat }.padding(vertical = 8.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(railColor)
+                                    .clickable { selectedRail = rail; selectedTargetPocket = null }
+                                    .padding(vertical = 7.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(cat, color = if (isSel) theme.accent else theme.textBright, fontSize = 10.5.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal, textAlign = TextAlign.Center, maxLines = 1)
+                                Text(
+                                    rail.label,
+                                    color = if (isSel) Color.Black else theme.textMuted,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
-                        repeat(3 - rowCats.size) { Spacer(modifier = Modifier.weight(1f)) }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            CompactInputField(
+                                value = amountExpression,
+                                onValueChange = { input -> if (input.all { c -> c.isDigit() || c in listOf('.', '+', '-', '*', '/') }) amountExpression = input },
+                                placeholder = "Amount ₹",
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            if (computedAmount != null && amountExpression.any { it in listOf('+', '-', '*', '/') }) {
+                                Text(
+                                    "= ₹${String.format(Locale.US, "%.2f", computedAmount)}",
+                                    color = theme.accent,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(start = 4.dp, top = 2.dp)
+                                )
+                            }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(theme.surfaceAlt)
+                                .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
+                                .clickable { showDatePicker = true }
+                                .padding(horizontal = 10.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(dateFormatted, color = theme.textBright, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
+                                Icon(Icons.Default.CalendarToday, contentDescription = null, tint = theme.accent, modifier = Modifier.size(14.dp))
+                            }
+                        }
+                    }
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(44.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(theme.surfaceAlt)
+                                .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
+                                .clickable { showSourcePicker = true }
+                                .padding(horizontal = 10.dp),
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            val srcName = selectedSourcePocket?.name ?: "Tap to Select"
+                            Text(
+                                if (selectedRail == ActiveEntryRail.INFLOW) "Deposit To: $srcName" else "Paid From: $srcName",
+                                color = theme.textBright,
+                                fontSize = 11.5.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1
+                            )
+                        }
+                        
+                        if (selectedRail in listOf(ActiveEntryRail.TRANSFER, ActiveEntryRail.CARD_BILL, ActiveEntryRail.PEER)) {
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(theme.surfaceAlt)
+                                    .border(1.dp, theme.borderLight, RoundedCornerShape(8.dp))
+                                    .clickable { showTargetPicker = true }
+                                    .padding(horizontal = 10.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                val tgtName = selectedTargetPocket?.name ?: "Select"
+                                Text(
+                                    "To: $tgtName",
+                                    color = theme.textBright,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1
+                                )
+                            }
+                        }
+                    }
+
+                    Text("CATEGORY", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    
+                    // Strict 3x3 Category Grid
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        categories.chunked(3).forEach { rowCats ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                rowCats.forEach { cat ->
+                                    val isSel = selectedCategory == cat
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(if (isSel) theme.accent.copy(alpha = 0.22f) else theme.surfaceAlt)
+                                            .border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(6.dp))
+                                            .clickable { selectedCategory = cat }
+                                            .padding(vertical = 8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            cat,
+                                            color = if (isSel) theme.accent else theme.textBright,
+                                            fontSize = 10.5.sp,
+                                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                            textAlign = TextAlign.Center,
+                                            maxLines = 1
+                                        )
+                                    }
+                                }
+                                repeat(3 - rowCats.size) { Spacer(modifier = Modifier.weight(1f)) }
+                            }
+                        }
+                    }
+
+                    CompactInputField(
+                        value = note,
+                        onValueChange = { note = it },
+                        placeholder = "Narration / Merchant (Optional)",
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("REPEAT CADENCE", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                            if (isCardInflow) Text("Card refund/reward must be one-time", color = theme.mildRed, fontSize = 9.5.sp)
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            listOf("None" to "None", "DAILY" to "D", "WEEKLY" to "W", "MONTHLY" to "M", "YEARLY" to "Y").forEach { (cadenceKey, cadenceLabel) ->
+                                val isSel = selectedCadence == cadenceKey
+                                val isOptionEnabled = !isCardInflow || cadenceKey == "None"
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(if (isSel) theme.accent else if (isOptionEnabled) theme.surfaceAlt else theme.surfaceAlt.copy(alpha = 0.4f))
+                                        .border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(6.dp))
+                                        .clickable(enabled = isOptionEnabled) { selectedCadence = cadenceKey }
+                                        .padding(vertical = 6.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        cadenceLabel,
+                                        color = if (isSel) theme.bg else if (isOptionEnabled) theme.textBright else theme.textMuted.copy(alpha = 0.4f),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isTaxDeductible) theme.accent.copy(alpha = 0.2f) else theme.surfaceAlt)
+                                .border(1.dp, if (isTaxDeductible) theme.accent else theme.borderLight, RoundedCornerShape(6.dp))
+                                .clickable { isTaxDeductible = !isTaxDeductible }
+                                .padding(vertical = 7.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("🏷 80C Tag", color = if (isTaxDeductible) theme.accent else theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isReimbursable) theme.mildGreen.copy(alpha = 0.2f) else theme.surfaceAlt)
+                                .border(1.dp, if (isReimbursable) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp))
+                                .clickable { isReimbursable = !isReimbursable }
+                                .padding(vertical = 7.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("💼 Reimbursable", color = if (isReimbursable) theme.mildGreen else theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    val finalAmount = computedAmount ?: amountExpression.toDoubleOrNull() ?: 0.0
+                    val hasAccounts = selectableSourcePockets.isNotEmpty()
+                    val isValid = finalAmount > 0.0 && selectedSourcePocket != null && (!listOf(ActiveEntryRail.TRANSFER, ActiveEntryRail.CARD_BILL, ActiveEntryRail.PEER).contains(selectedRail) || selectedTargetPocket != null)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        if (!hasAccounts) {
+                            Button(
+                                onClick = onNavigateToCreatePocket,
+                                modifier = Modifier.weight(1f).height(44.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt)
+                            ) {
+                                Text("Add Bank First", color = theme.textBright, fontSize = 12.sp)
+                            }
+                        } else {
+                            Button(
+                                onClick = {
+                                    if (isValid) {
+                                        val src = selectedSourcePocket ?: return@Button
+                                        val targetId = if (selectedRail in listOf(ActiveEntryRail.TRANSFER, ActiveEntryRail.CARD_BILL, ActiveEntryRail.PEER)) selectedTargetPocket?.id else null
+                                        onSubmitTransaction(selectedRail.nature, src.id, targetId, finalAmount, selectedCategory, note.ifBlank { selectedCategory }, selectedDateMillis, selectedCadence != "None", if (selectedCadence == "None") "NONE" else selectedCadence, isTaxDeductible, isReimbursable)
+                                        onDismiss()
+                                    }
+                                },
+                                modifier = Modifier.weight(1.3f).height(44.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isValid) theme.accent else Color.Transparent,
+                                    disabledContainerColor = Color.Transparent
+                                ),
+                                enabled = isValid
+                            ) {
+                                Text("Post Entry", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            modifier = Modifier.weight(1f).height(44.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)
+                        ) {
+                            Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
+                        }
                     }
                 }
             }
+        }
 
-            CompactInputField(value = narration, onValueChange = { narration = it }, placeholder = "Narration / Merchant (Optional)", modifier = Modifier.fillMaxWidth())
+        if (showSourcePicker) {
+            CenteredPocketPickerDialog("Select Account", selectableSourcePockets, theme, { showSourcePicker = false }) { selectedSourcePocket = it; showSourcePicker = false }
+        }
+        if (showTargetPicker) {
+            CenteredPocketPickerDialog("Select Destination", selectableTargetPockets, theme, { showTargetPicker = false }) { selectedTargetPocket = it; showTargetPicker = false }
+        }
+    }
+}
 
-            Text("REPEAT CADENCE", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("NONE" to "None", "DAILY" to "D", "WEEKLY" to "W", "MONTHLY" to "M", "YEARLY" to "Y").forEach { (key, label) ->
-                    val isSel = repeatCadence == key
-                    Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isSel) theme.mildGreen.copy(alpha = 0.25f) else theme.surfaceAlt).border(1.dp, if (isSel) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp)).clickable { repeatCadence = key }.padding(vertical = 7.dp), contentAlignment = Alignment.Center) {
-                        Text(label, color = if (isSel) theme.mildGreen else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+@Composable
+private fun CenteredPocketPickerDialog(title: String, pockets: List<LedgerPocket>, theme: ThemeColors, onDismiss: () -> Unit, onSelect: (LedgerPocket) -> Unit) {
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onDismiss() }, contentAlignment = Alignment.Center) {
+            Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = theme.surface), modifier = Modifier.fillMaxWidth(0.88f).widthIn(max = 380.dp).border(1.dp, theme.borderLight, RoundedCornerShape(14.dp)).clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(text = title, color = theme.textBright, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
+                    HorizontalDivider(color = theme.borderLight, thickness = 0.5.dp)
+                    Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        pockets.forEach { pocket ->
+                            Row(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(theme.surfaceAlt).border(1.dp, theme.borderLight, RoundedCornerShape(8.dp)).clickable { onSelect(pocket) }.padding(horizontal = 12.dp, vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Text(pocket.name, color = theme.textBright, fontWeight = FontWeight.SemiBold, fontSize = 12.5.sp)
+                                Text(pocket.type.name.replace("_", " "), color = theme.textMuted, fontSize = 10.sp)
+                            }
+                        }
                     }
-                }
-            }
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isTaxDeductible) theme.accent.copy(alpha = 0.2f) else theme.surfaceAlt).border(1.dp, if (isTaxDeductible) theme.accent else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isTaxDeductible = !isTaxDeductible }.padding(vertical = 7.dp), contentAlignment = Alignment.Center) { 
-                    Text("🏷 80C Tag", color = if (isTaxDeductible) theme.accent else theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold) 
-                }
-                Box(modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).background(if (isReimbursable) theme.mildGreen.copy(alpha = 0.2f) else theme.surfaceAlt).border(1.dp, if (isReimbursable) theme.mildGreen else theme.borderLight, RoundedCornerShape(6.dp)).clickable { isReimbursable = !isReimbursable }.padding(vertical = 7.dp), contentAlignment = Alignment.Center) { 
-                    Text("💼 Reimbursable", color = if (isReimbursable) theme.mildGreen else theme.textMuted, fontSize = 10.5.sp, fontWeight = FontWeight.Bold) 
-                }
-            }
-
-            val finalAmount = evaluatedAmount ?: rawAmountInput.toDoubleOrNull() ?: 0.0
-            val isValid = finalAmount > 0.0 && selectedSourceId != null && (activeRail == ActiveEntryRail.EXPENSE || activeRail == ActiveEntryRail.INCOME || selectedTargetId != null)
-
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (liquidPockets.isEmpty()) {
-                    Button(onClick = onNavigateToCreatePocket, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), colors = ButtonDefaults.buttonColors(containerColor = theme.surfaceAlt)) {
-                        Text("Add Bank First", color = theme.textBright, fontSize = 12.sp)
-                    }
-                } else {
-                    Button(onClick = { 
-                        if (isValid) {
-                            onSubmitTransaction(activeRail.nature, selectedSourceId!!, selectedTargetId, finalAmount, activeCategory, narration, selectedDateEpoch, repeatCadence != "NONE", repeatCadence, isTaxDeductible, isReimbursable)
-                        } 
-                    }, modifier = Modifier.weight(1.3f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, if (isValid) theme.accent else theme.borderLight), colors = ButtonDefaults.buttonColors(containerColor = if (isValid) theme.accent else Color.Transparent, disabledContainerColor = Color.Transparent), enabled = isValid) {
-                        Text("Post Entry", color = if (isValid) theme.bg else theme.textMuted.copy(alpha = 0.5f), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
-                }
-                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f).height(44.dp), shape = RoundedCornerShape(8.dp), border = androidx.compose.foundation.BorderStroke(1.dp, theme.borderLight), colors = ButtonDefaults.outlinedButtonColors(contentColor = theme.textMuted)) {
-                    Text("Cancel", color = theme.textMuted, fontSize = 12.sp)
+                    TextButton(onClick = onDismiss, modifier = Modifier.align(Alignment.End)) { Text("Cancel", color = theme.textMuted, fontSize = 12.sp) }
                 }
             }
         }
