@@ -17,6 +17,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -28,7 +29,6 @@ import com.personal.inout.ui.components.CustomCalendarDialog
 import java.text.SimpleDateFormat
 import java.util.*
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EditLedgerEntryModal(
     tx: LedgerTransaction,
@@ -37,7 +37,6 @@ fun EditLedgerEntryModal(
     onSave: (amount: Double, desc: String, category: String, date: Long, isTax: Boolean, isReimb: Boolean) -> Unit,
     onDelete: () -> Unit
 ) {
-    // FIX: Safely converted Long paise to Double for the UI formatter
     var rawAmount by remember { mutableStateOf(String.format("%.0f", tx.amount / 100.0)) }
     var description by remember { mutableStateOf(tx.description) }
     var selectedCategory by remember { mutableStateOf(tx.category) }
@@ -98,17 +97,27 @@ fun EditLedgerEntryModal(
                     CompactInputField(value = description, onValueChange = { description = it }, placeholder = "Merchant / Narration", modifier = Modifier.fillMaxWidth())
 
                     Text("CATEGORY", color = theme.textMuted, fontSize = 9.5.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    FlowRow(
-                        modifier = Modifier.fillMaxWidth(), 
-                        horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally), 
-                        verticalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        categories.forEach { cat ->
-                            val isSel = selectedCategory == cat
-                            Box(
-                                modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(if (isSel) theme.accent.copy(alpha = 0.22f) else theme.surfaceAlt).border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(6.dp)).clickable { selectedCategory = cat }.padding(horizontal = 8.dp, vertical = 5.dp)
-                            ) {
-                                Text(cat, color = if (isSel) theme.accent else theme.textBright, fontSize = 10.5.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
+                    
+                    // Strict 3x3 Grid Alignment
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        categories.chunked(3).forEach { rowCats ->
+                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                rowCats.forEach { cat ->
+                                    val isSel = selectedCategory == cat
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(if (isSel) theme.accent.copy(alpha = 0.22f) else theme.surfaceAlt)
+                                            .border(1.dp, if (isSel) theme.accent else theme.borderLight, RoundedCornerShape(6.dp))
+                                            .clickable { selectedCategory = cat }
+                                            .padding(vertical = 8.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(cat, color = if (isSel) theme.accent else theme.textBright, fontSize = 10.5.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal, textAlign = TextAlign.Center, maxLines = 1)
+                                    }
+                                }
+                                repeat(3 - rowCats.size) { Spacer(modifier = Modifier.weight(1f)) }
                             }
                         }
                     }
