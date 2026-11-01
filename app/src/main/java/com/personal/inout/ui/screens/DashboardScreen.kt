@@ -166,11 +166,11 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    val backupExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri: Uri? ->
+    val backupExportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
         if (uri != null) {
             scope.launch {
                 val res = VaultBackupManager.exportEncryptedBackup(context, db, uri, "INOUT_LEDGER_MASTER_KEY")
-                if (res.isSuccess) alertManager.showAlert("Verified .vault snapshot exported", AlertType.SUCCESS)
+                if (res.isSuccess) alertManager.showAlert("Verified .inout snapshot exported", AlertType.SUCCESS)
                 else alertManager.showAlert("Export failed: ${res.exceptionOrNull()?.message}", AlertType.ERROR)
             }
         }
@@ -431,8 +431,12 @@ fun DashboardScreen(db: AppDatabase) {
                             onThemeSelected = { mode -> activeThemeMode = mode; prefs.edit().putString("selected_theme", mode.name).apply() },
                             onExportPdf = { fyYear -> scope.launch { PdfDossierExporter.generateAndShareDossier(context, fyYear) } },
                             onExportCsv = { CsvExporter.exportAndShareTransactions(context, uiState.completedTransactions) },
-                            onExportEncryptedBackup = { backupExportLauncher.launch("inout_vault_backup_${System.currentTimeMillis()}.vault") },
-                            onRestoreEncryptedBackup = { backupRestoreLauncher.launch(arrayOf("application/json", "*/*")) },
+                            onExportEncryptedBackup = { 
+                                // FIX: Updated manual backup to use proper .inout extension
+                                val timeStamp = SimpleDateFormat("yyMMddHHmmss", Locale.getDefault()).format(Date())
+                                backupExportLauncher.launch("backup_$timeStamp.inout") 
+                            },
+                            onRestoreEncryptedBackup = { backupRestoreLauncher.launch(arrayOf("*/*")) },
                             onClearLedger = { showClearLedgerConfirmation = true }
                         )
                     }
@@ -787,7 +791,7 @@ private fun FlatStreamRow(
         }
 
         val amtDouble = tx.amount / 100.0
-        val amtStr = if (isPrivacyMode) "₹ •••" else "${if (isOut) "-" else "+"} ₹ ${String.format("%,.0f", amtDouble)}"
+        val amtStr = if (isPrivacyMode) "₹ •••" else "${if (isOut) "-" else "+"} ₹ ${String.format(Locale.US, "%.0f", amtDouble)}"
         Text(text = amtStr, color = flowColor, fontWeight = FontWeight.Bold, fontSize = 13.5.sp)
     }
 }
