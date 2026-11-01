@@ -23,7 +23,7 @@ class VaultLedgerEngine(
         movementNature: MovementNature,
         sourcePocketId: Long,
         targetPocketId: Long? = null,
-        amount: Long, // STRICTLY PAISE
+        amount: Long,
         category: String,
         description: String,
         timestamp: Long = System.currentTimeMillis(),
@@ -44,7 +44,6 @@ class VaultLedgerEngine(
         if (movementNature == MovementNature.OPERATING_EXPENSE || movementNature == MovementNature.TRANSFER || movementNature == MovementNature.EMI_PRINCIPAL) {
             val availableBal = dao.computePocketBalance(sourcePocketId)
             
-            // Exempt Peer Accounts & Cards from overdraft blocks so you can borrow money
             val isExemptFromOverdraft = srcPocket.type in listOf(PocketType.CREDIT_CARD, PocketType.LIABILITY_LOAN, PocketType.PEER_PAYABLE, PocketType.PEER_RECEIVABLE)
 
             if (availableBal < amount && !isExemptFromOverdraft) {
@@ -82,10 +81,7 @@ class VaultLedgerEngine(
             }
         }
 
-        val duplicateCheck = dao.findPotentialDuplicate(sourcePocketId, amount, timestamp)
-        if (duplicateCheck != null && !isRecurring) {
-            return@withContext VaultExecutionResult.DuplicateWarning("Identical transaction detected within 48 hours. Proceed manually if intentional.")
-        }
+        // DELETED duplicate blocker logic - users can now log identical amounts freely
 
         val tx = LedgerTransaction(
             amount = amount,
@@ -139,17 +135,16 @@ class VaultLedgerEngine(
             val isReceivable = pocket.type == PocketType.PEER_RECEIVABLE
             val isLoan = pocket.type == PocketType.LIABILITY_LOAN
 
-            // DYNAMIC ZERO-CROSSING EVALUATION
             if (isCard || isLoan || isPayable) {
                 if (bal >= 0L && (isCard || isPayable)) {
-                    grossAssets += bal // Overpaid card/creditor is an Asset
+                    grossAssets += bal
                 } else {
                     grossLiabilities += abs(bal)
                     if (isCard) totalCardDues += abs(bal)
                 }
             } else {
                 if (bal < 0L && isReceivable) {
-                    grossLiabilities += abs(bal) // Negative receivable is a Liability
+                    grossLiabilities += abs(bal)
                 } else {
                     grossAssets += bal
                 }
@@ -164,7 +159,6 @@ class VaultLedgerEngine(
         
         val runwayDays = if (dailyBurnCeilingPaise > 0L) (trueSafeLiquid / dailyBurnCeilingPaise) else 0L
 
-        // TIMEZONE FIX: ZonedDateTime ensures midnight aligns with local Indian time properly
         val todayStart = ZonedDateTime.now(ZoneId.systemDefault())
             .toLocalDate().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
         
@@ -293,10 +287,8 @@ class VaultLedgerEngine(
             if (template.timestamp <= now) {
                 var currentExecutionTime = template.timestamp
                 
-                // Convert current instance into a normal entry
                 dao.updateTransaction(template.copy(isRecurring = false, recurringFrequency = "NONE"))
                 
-                // TIMEZONE FIX: ZonedDateTime prevents drift across leap years and DST
                 while (true) {
                     var executionTimeZdt = Instant.ofEpochMilli(currentExecutionTime).atZone(ZoneId.systemDefault())
                     
@@ -310,12 +302,10 @@ class VaultLedgerEngine(
                     val nextExecutionTime = executionTimeZdt.toInstant().toEpochMilli()
                     
                     if (nextExecutionTime <= now) {
-                        // Spawning missed executions
                         dao.insertTransaction(template.copy(id = 0, timestamp = nextExecutionTime, isRecurring = false, recurringFrequency = "NONE"))
                         executedCount++
                         currentExecutionTime = nextExecutionTime
                     } else {
-                        // Spawning the next future template
                         dao.insertTransaction(template.copy(id = 0, timestamp = nextExecutionTime, isRecurring = true, recurringFrequency = template.recurringFrequency))
                         break
                     }
