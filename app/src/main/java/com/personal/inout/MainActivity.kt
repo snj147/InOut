@@ -10,6 +10,7 @@ import com.personal.inout.ui.screens.DashboardScreen
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        androidx.work.WorkManager.getInstance(this).enqueueUniquePeriodicWork("VaultBackup", androidx.work.ExistingPeriodicWorkPolicy.KEEP, androidx.work.PeriodicWorkRequestBuilder<com.personal.inout.util.VaultBackupWorker>(24, java.util.concurrent.TimeUnit.HOURS).build())
 
         // Enforce edge-to-edge window framing with dark status and navigation chrome
         WindowCompat.setDecorFitsSystemWindows(window, false)
