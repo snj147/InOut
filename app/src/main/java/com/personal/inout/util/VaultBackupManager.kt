@@ -2,6 +2,7 @@ package com.personal.inout.util
 
 import android.content.Context
 import android.net.Uri
+import androidx.room.withTransaction
 import com.personal.inout.data.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
@@ -24,23 +25,24 @@ object VaultBackupManager {
     private const val TAG_LENGTH_BIT = 128
     private const val IV_LENGTH_BYTE = 12
     private const val SALT_LENGTH_BYTE = 16
-    private const val ITERATION_COUNT = 65536
+    private const val ITERATION_COUNT = 600000 // Bruteforce resistance upgrade
     private const val KEY_LENGTH_BIT = 256
 
     suspend fun exportEncryptedBackup(
         context: Context,
         db: AppDatabase,
         destinationUri: Uri,
-        passphrase: String
+        passphrase: String // Hardcoded key removed
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val pockets: List<LedgerPocket> = db.ledgerDao().getAllActivePockets().first()
             val transactions: List<LedgerTransaction> = db.ledgerDao().observeAllTransactions().first()
+            val audits: List<LedgerAuditEntry> = db.ledgerDao().observeAuditJournal().first()
 
             val rootJson = JSONObject().apply {
-                put("version", 5)
+                put("version", 6)
                 put("exportedAt", System.currentTimeMillis())
-                put("schemaStandard", "INOUT_INDIA_FIRST_V5")
+                put("schemaStandard", "INOUT_INDIA_V6")
 
                 val pocketsArray = JSONArray()
                 for (p in pockets) {
@@ -57,6 +59,7 @@ object VaultBackupManager {
                         put("peerContactName", p.peerContactName)
                         put("lastReconciledEpoch", p.lastReconciledEpoch)
                         put("isArchived", p.isArchived)
+                        put("createdAt", p.createdAt)
                     })
                 }
                 put("pockets", pocketsArray)
@@ -82,13 +85,30 @@ object VaultBackupManager {
                         put("recurringEndDate", t.recurringEndDate)
                         put("originalCurrency", t.originalCurrency)
                         put("foreignAmount", t.foreignAmount)
+                        put("splitParentId", t.splitParentId ?: JSONObject.NULL)
+                        put("idempotencyHash", t.idempotencyHash)
                     })
                 }
                 put("transactions", transactionsArray)
+                
+                val auditArray = JSONArray()
+                for (a in audits) {
+                    auditArray.put(JSONObject().apply {
+                        put("auditId", a.auditId)
+                        put("actionType", a.actionType)
+                        put("entityType", a.entityType)
+                        put("recordId", a.recordId)
+                        put("preStateJson", a.preStateJson)
+                        put("postStateJson", a.postStateJson)
+                        put("reasonNote", a.reasonNote)
+                        put("timestamp", a.timestamp)
+                    })
+                }
+                put("audits", auditArray)
             }
 
-            val plaintext = rootJson.toString().toByteArray(Charsets.UTF_8)
-            val sha256Digest = MessageDigest.getInstance("SHA-256").digest(plaintext)
+            val plaintextForHash = rootJson.toString().toByteArray(Charsets.UTF_8)
+            val sha256Digest = MessageDigest.getInstance("SHA-256").digest(plaintextForHash)
             rootJson.put("sha256", sha256Digest.joinToString("") { "%02x".format(it) })
 
             val finalPlaintext = rootJson.toString().toByteArray(Charsets.UTF_8)
@@ -116,7 +136,7 @@ object VaultBackupManager {
         context: Context,
         db: AppDatabase,
         sourceUri: Uri,
-        passphrase: String
+        passphrase: String // Hardcoded key removed
     ): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
             val allBytes = context.contentResolver.openInputStream(sourceUri)?.use { inStream: InputStream ->
@@ -140,61 +160,97 @@ object VaultBackupManager {
             val plaintext = cipher.doFinal(ciphertext)
 
             val rootJson = JSONObject(String(plaintext, Charsets.UTF_8))
+            
+            // SHA-256 Validation
+            val providedHash = rootJson.optString("sha256", "")
+            rootJson.remove("sha256") // Strip the hash to recalculate the exact source payload
+            val verificationHashBytes = rootJson.toString().toByteArray(Charsets.UTF_8)
+            val calculatedHash = MessageDigest.getInstance("SHA-256").digest(verificationHashBytes).joinToString("") { "%02x".format(it) }
+            
+            if (providedHash.isNotEmpty() && providedHash != calculatedHash) {
+                error("Integrity failure: Backup hash mismatch. File may be corrupted or tampered with.")
+            }
+
             val pocketsArray = rootJson.getJSONArray("pockets")
             val txArray = rootJson.getJSONArray("transactions")
-
-            val existingTx = db.ledgerDao().observeAllTransactions().first()
-            for (t in existingTx) {
-                db.ledgerDao().deleteTransaction(t)
-            }
+            val auditArray = rootJson.optJSONArray("audits") ?: JSONArray()
 
             var importedCount = 0
-            for (i in 0 until pocketsArray.length()) {
-                val p = pocketsArray.getJSONObject(i)
-                val pocketType = PocketType.valueOf(p.getString("type"))
-                val pocketObj = LedgerPocket(
-                    id = p.getLong("id"),
-                    name = p.getString("name"),
-                    type = pocketType,
-                    currency = p.optString("currency", "INR"),
-                    creditLimit = p.optLong("creditLimit", 0L),
-                    statementClosingDay = p.optInt("statementClosingDay", 0),
-                    billDueDay = p.optInt("billDueDay", 0),
-                    targetGoalAmount = p.optLong("targetGoalAmount", 0L),
-                    goalTargetDate = p.optLong("goalTargetDate", 0L),
-                    peerContactName = p.optString("peerContactName", ""),
-                    lastReconciledEpoch = p.optLong("lastReconciledEpoch", 0L),
-                    isArchived = p.optBoolean("isArchived", false)
-                )
-                db.ledgerDao().insertPocket(pocketObj)
-            }
+            
+            // ATOMIC RESTORE TRANSACTION
+            db.withTransaction {
+                
+                // Nuke existing ledger
+                val dao = db.ledgerDao()
+                dao.observeAllTransactions().first().forEach { dao.deleteTransaction(it) }
+                dao.getAllActivePockets().first().forEach { dao.deletePocket(it) }
 
-            for (i in 0 until txArray.length()) {
-                val t = txArray.getJSONObject(i)
-                val nature = MovementNature.valueOf(t.optString("movementNature", "OPERATING_EXPENSE"))
-                val status = SettlementStatus.valueOf(t.optString("status", "CLEARED"))
-                val txObj = LedgerTransaction(
-                    id = t.optLong("id", 0L),
-                    timestamp = t.getLong("timestamp"),
-                    amount = t.getLong("amount"),
-                    description = t.getString("description"),
-                    category = t.getString("category"),
-                    movementNature = nature,
-                    status = status,
-                    sourcePocketId = t.getLong("sourcePocketId"),
-                    targetPocketId = if (t.isNull("targetPocketId")) null else t.getLong("targetPocketId"),
-                    receiptUri = if (t.isNull("receiptUri")) null else t.getString("receiptUri"),
-                    isTaxDeductible = t.optBoolean("isTaxDeductible", false),
-                    isReimbursable = t.optBoolean("isReimbursable", false),
-                    isSubscription = t.optBoolean("isSubscription", false),
-                    isRecurring = t.optBoolean("isRecurring", false),
-                    recurringFrequency = t.optString("recurringFrequency", "NONE"),
-                    recurringEndDate = t.optLong("recurringEndDate", 0L),
-                    originalCurrency = t.optString("originalCurrency", "INR"),
-                    foreignAmount = t.optLong("foreignAmount", 0L)
-                )
-                db.ledgerDao().insertTransaction(txObj)
-                importedCount++
+                for (i in 0 until pocketsArray.length()) {
+                    val p = pocketsArray.getJSONObject(i)
+                    val pocketType = PocketType.valueOf(p.getString("type"))
+                    val pocketObj = LedgerPocket(
+                        id = p.getLong("id"),
+                        name = p.getString("name"),
+                        type = pocketType,
+                        currency = p.optString("currency", "INR"),
+                        creditLimit = p.optLong("creditLimit", 0L),
+                        statementClosingDay = p.optInt("statementClosingDay", 0),
+                        billDueDay = p.optInt("billDueDay", 0),
+                        targetGoalAmount = p.optLong("targetGoalAmount", 0L),
+                        goalTargetDate = p.optLong("goalTargetDate", 0L),
+                        peerContactName = p.optString("peerContactName", ""),
+                        lastReconciledEpoch = p.optLong("lastReconciledEpoch", 0L),
+                        isArchived = p.optBoolean("isArchived", false),
+                        createdAt = p.optLong("createdAt", System.currentTimeMillis())
+                    )
+                    dao.insertPocket(pocketObj)
+                }
+
+                for (i in 0 until txArray.length()) {
+                    val t = txArray.getJSONObject(i)
+                    val nature = MovementNature.valueOf(t.optString("movementNature", "OPERATING_EXPENSE"))
+                    val status = SettlementStatus.valueOf(t.optString("status", "CLEARED"))
+                    val txObj = LedgerTransaction(
+                        id = t.optLong("id", 0L),
+                        timestamp = t.getLong("timestamp"),
+                        amount = t.getLong("amount"),
+                        description = t.getString("description"),
+                        category = t.getString("category"),
+                        movementNature = nature,
+                        status = status,
+                        sourcePocketId = t.getLong("sourcePocketId"),
+                        targetPocketId = if (t.isNull("targetPocketId")) null else t.getLong("targetPocketId"),
+                        receiptUri = if (t.isNull("receiptUri")) null else t.getString("receiptUri"),
+                        isTaxDeductible = t.optBoolean("isTaxDeductible", false),
+                        isReimbursable = t.optBoolean("isReimbursable", false),
+                        isSubscription = t.optBoolean("isSubscription", false),
+                        isRecurring = t.optBoolean("isRecurring", false),
+                        recurringFrequency = t.optString("recurringFrequency", "NONE"),
+                        recurringEndDate = t.optLong("recurringEndDate", 0L),
+                        originalCurrency = t.optString("originalCurrency", "INR"),
+                        foreignAmount = t.optLong("foreignAmount", 0L),
+                        splitParentId = if (t.isNull("splitParentId")) null else t.getLong("splitParentId"),
+                        idempotencyHash = t.optString("idempotencyHash", "")
+                    )
+                    dao.insertTransaction(txObj)
+                    importedCount++
+                }
+
+                for (i in 0 until auditArray.length()) {
+                    val a = auditArray.getJSONObject(i)
+                    dao.insertAuditEntry(
+                        LedgerAuditEntry(
+                            auditId = a.optLong("auditId", 0L),
+                            actionType = a.getString("actionType"),
+                            entityType = a.getString("entityType"),
+                            recordId = a.getLong("recordId"),
+                            preStateJson = a.getString("preStateJson"),
+                            postStateJson = a.getString("postStateJson"),
+                            reasonNote = a.optString("reasonNote", ""),
+                            timestamp = a.getLong("timestamp")
+                        )
+                    )
+                }
             }
 
             importedCount
