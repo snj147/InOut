@@ -13,7 +13,7 @@ android {
         minSdk = 26
         targetSdk = 35
 
-        val passedVersionCode = project.findProperty("VERSION_CODE")?.toString()?.toIntOrNull() ?: 1
+        val passedVersionCode = project.findProperty("VERSION_CODE")?.toString()?.trim()?.toIntOrNull() ?: 1
         val passedGitSha = project.findProperty("GIT_SHA")?.toString()?.trim() ?: "localdev"
 
         versionCode = passedVersionCode
@@ -22,9 +22,9 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GIT_SHA", "\"$passedGitSha\"")
 
-        // Direct Telegram integration restored
-        val tgToken = System.getenv("TELEGRAM_BOT_TOKEN") ?: ""
-        val tgChatId = System.getenv("TELEGRAM_CHAT_ID") ?: ""
+        // Trimming invisible mobile spaces from Telegram tokens
+        val tgToken = (System.getenv("TELEGRAM_BOT_TOKEN") ?: "").trim()
+        val tgChatId = (System.getenv("TELEGRAM_CHAT_ID") ?: "").trim()
         buildConfigField("String", "TELEGRAM_BOT_TOKEN", "\"$tgToken\"")
         buildConfigField("String", "TELEGRAM_CHAT_ID", "\"$tgChatId\"")
     }
@@ -34,9 +34,10 @@ android {
             val keystoreFile = file("debug.keystore")
             if (keystoreFile.exists()) {
                 storeFile = keystoreFile
-                storePassword = "androiddebug"
-                keyAlias = "androiddebugkey"
-                keyPassword = "androiddebug"
+                // Trimming invisible mobile spaces from your Keystore credentials
+                storePassword = (System.getenv("STORE_PASS") ?: "androiddebug").trim()
+                keyAlias = (System.getenv("KEY_ALIAS") ?: "androiddebugkey").trim()
+                keyPassword = (System.getenv("KEY_PASS") ?: "androiddebug").trim()
             }
         }
     }
