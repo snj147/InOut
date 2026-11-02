@@ -32,7 +32,6 @@ import com.personal.inout.data.PocketType
 import com.personal.inout.ocr.AmountCandidate
 import com.personal.inout.ui.LocalThemeColors
 import com.personal.inout.ui.ThemeColors
-import com.personal.inout.ui.dialogs.CustomCalendarDialog
 import com.personal.inout.util.MathEvaluator
 import java.text.SimpleDateFormat
 import java.util.*
