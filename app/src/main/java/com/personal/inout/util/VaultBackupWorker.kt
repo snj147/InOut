@@ -2,10 +2,9 @@ package com.personal.inout.util
 
 import android.content.Context
 import android.net.Uri
-import android.os.Environment
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import androidx.work.ListenableWorker.Result // Explicit import to prevent Result clash
+import androidx.work.ListenableWorker.Result
 import com.personal.inout.data.AppDatabase
 import java.io.File
 import java.text.SimpleDateFormat
@@ -21,34 +20,38 @@ class VaultBackupWorker(
         return try {
             val db = AppDatabase.getInstance(applicationContext)
             
-            // Creates the InOut folder in your phone's public Documents directory
-            val docsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOCUMENTS)
-            val inOutDir = File(docsDir, "InOut")
+            // Moves backups from public Documents to App-Specific Internal Storage for strict privacy
+            val inOutDir = File(applicationContext.filesDir, "InOut_Backups")
             if (!inOutDir.exists()) inOutDir.mkdirs()
 
-            // Generates the simplistic .inout branding requested: backupyymmddhhmmss.inout
             val timeStamp = SimpleDateFormat("yyMMddHHmmss", Locale.getDefault()).format(Date())
             val backupFile = File(inOutDir, "backup$timeStamp.inout")
             val uri = Uri.fromFile(backupFile)
 
-            // Exports the cryptographic vault silently
+            // Retrieves the user's secure passphrase from SharedPreferences (or Android Keystore proxy)
+            val prefs = applicationContext.getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE)
+            val passphrase = prefs.getString("vault_backup_passphrase", null)
+            
+            if (passphrase.isNullOrBlank()) {
+                return Result.failure() // Cannot backup without the secure key
+            }
+
             val exportResult = VaultBackupManager.exportEncryptedBackup(
                 applicationContext, 
                 db, 
                 uri, 
-                "INOUT_LEDGER_MASTER_KEY"
+                passphrase
             )
 
             if (exportResult.isSuccess) {
-                // Rolling 7-Day Cleanup: Enforces a strict 7-file limit for automated backups
                 val backups = inOutDir.listFiles { file -> 
                     file.name.startsWith("backup") && file.name.endsWith(".inout") 
                 }
                 
                 if (backups != null && backups.size > 7) {
-                    backups.sortByDescending { it.lastModified() } // Sort newest to oldest
+                    backups.sortByDescending { it.lastModified() }
                     for (i in 7 until backups.size) {
-                        backups[i].delete() // Purges the oldest files
+                        backups[i].delete() 
                     }
                 }
                 Result.success()
