@@ -117,13 +117,18 @@ fun CreateAccountDialog(
         if (uri != null) {
             scope.launch {
                 isProcessingDocument = true
-                val parsed = ReceiptScanner.processDocumentUri(context, uri)
-                isProcessingDocument = false
-                if (parsed.documentIntent == DocumentIntent.FINANCIAL_BALANCE_SHEET_STATEMENT && parsed.stagedLineItems.isNotEmpty()) {
-                    stagedBatchItems = parsed.stagedLineItems
-                } else if (parsed.total != null && parsed.total > 0.0) {
-                    name = parsed.merchant
-                    initialValuation = String.format(Locale.US, "%.0f", parsed.total)
+                try {
+                    val parsed = ReceiptScanner.processDocumentUri(context, uri)
+                    if (parsed.documentIntent == DocumentIntent.FINANCIAL_BALANCE_SHEET_STATEMENT && parsed.stagedLineItems.isNotEmpty()) {
+                        stagedBatchItems = parsed.stagedLineItems
+                    } else if (parsed.total != null && parsed.total > 0.0) {
+                        name = parsed.merchant
+                        initialValuation = String.format(Locale.US, "%.2f", parsed.total)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    isProcessingDocument = false
                 }
             }
         }
