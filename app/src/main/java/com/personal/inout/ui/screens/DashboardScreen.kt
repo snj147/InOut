@@ -3,7 +3,6 @@ package com.personal.inout.ui.screens
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -47,12 +46,14 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.personal.inout.BuildConfig
 import com.personal.inout.billing.PlayBillingManager
 import com.personal.inout.data.*
+import com.personal.inout.ocr.AmountCandidate
 import com.personal.inout.ocr.ReceiptScanner
 import com.personal.inout.ui.*
 import com.personal.inout.ui.components.*
@@ -60,6 +61,7 @@ import com.personal.inout.ui.dialogs.*
 import com.personal.inout.util.*
 import com.personal.inout.viewmodel.DashboardViewModel
 import kotlinx.coroutines.launch
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.abs
@@ -151,6 +153,11 @@ fun DashboardScreen(db: AppDatabase) {
 
     var ocrPrefilledNote by remember { mutableStateOf("") }
     var ocrPrefilledAmount by remember { mutableStateOf<Double?>(null) }
+    var ocrPrefilledDateMillis by remember { mutableStateOf<Long?>(null) }
+    var ocrNeedsConfirmation by remember { mutableStateOf(false) }
+    var ocrAlternativeTotals by remember { mutableStateOf<List<AmountCandidate>>(emptyList()) }
+
+    var tempCameraImageUri by remember { mutableStateOf<Uri?>(null) }
 
     val groupedRecords = remember(uiState.completedTransactions) {
         val calNow = Calendar.getInstance()
@@ -186,45 +193,44 @@ fun DashboardScreen(db: AppDatabase) {
         }
     }
 
-    fun processReceiptResult(bitmap: Bitmap) {
+    fun processDocumentUri(uri: Uri) {
         scope.launch {
             try {
-                val parsed = ReceiptScanner.processReceiptBitmap(bitmap)
+                val parsed = ReceiptScanner.processDocumentUri(context, uri)
                 ocrPrefilledNote = parsed.merchant
                 ocrPrefilledAmount = parsed.total
+                ocrPrefilledDateMillis = if (parsed.dateDetected) parsed.dateEpoch else null
+                ocrNeedsConfirmation = parsed.needsConfirmation
+                ocrAlternativeTotals = parsed.alternativeTotals
                 selectedPocketIdForEntry = uiState.liquidPockets.firstOrNull()?.id
                 showUnifiedEntrySheet = true
-                alertManager.showAlert("Parsed: ${parsed.merchant} (${(parsed.total ?: 0.0).toIndianRupee()})", AlertType.INFO)
+                if (parsed.needsConfirmation) alertManager.showAlert("Please confirm the parsed amount.", AlertType.WARNING)
+                else alertManager.showAlert("Parsed: ${parsed.merchant} (${(parsed.total ?: 0.0).toIndianRupee()})", AlertType.INFO)
             } catch (e: Exception) {
                 alertManager.showAlert("OCR Failed: ${e.localizedMessage}", AlertType.ERROR)
             }
         }
     }
 
-    val cameraSnapLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bitmap: Bitmap? ->
-        if (bitmap != null) processReceiptResult(bitmap)
+    val cameraFullResLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        if (success && tempCameraImageUri != null) {
+            processDocumentUri(tempCameraImageUri!!)
+        }
     }
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) cameraSnapLauncher.launch(null)
-        else alertManager.showAlert("Camera permission required for OCR receipts", AlertType.WARNING)
+        if (granted) {
+            val tmpFile = File(context.cacheDir, "scan_${System.currentTimeMillis()}.jpg")
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", tmpFile)
+            tempCameraImageUri = uri
+            cameraFullResLauncher.launch(uri)
+        } else {
+            alertManager.showAlert("Camera permission required for OCR receipts", AlertType.WARNING)
+        }
     }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
-        if (uri != null) {
-            scope.launch {
-                try {
-                    val parsed = ReceiptScanner.processDocumentUri(context, uri)
-                    ocrPrefilledNote = parsed.merchant
-                    ocrPrefilledAmount = parsed.total
-                    selectedPocketIdForEntry = uiState.liquidPockets.firstOrNull()?.id
-                    showUnifiedEntrySheet = true
-                    alertManager.showAlert("Parsed: ${parsed.merchant} (${(parsed.total ?: 0.0).toIndianRupee()})", AlertType.INFO)
-                } catch (e: Exception) {
-                    alertManager.showAlert("OCR Failed: ${e.localizedMessage}", AlertType.ERROR)
-                }
-            }
-        }
+        if (uri != null) processDocumentUri(uri)
     }
 
     CompositionLocalProvider(LocalThemeColors provides theme, LocalVaultAlertManager provides alertManager) {
@@ -270,6 +276,9 @@ fun DashboardScreen(db: AppDatabase) {
                                             isFabExpanded = false
                                             ocrPrefilledNote = ""
                                             ocrPrefilledAmount = null
+                                            ocrPrefilledDateMillis = null
+                                            ocrNeedsConfirmation = false
+                                            ocrAlternativeTotals = emptyList()
                                             selectedPocketIdForEntry = uiState.liquidPockets.firstOrNull()?.id
                                             selectedTargetPocketIdForEntry = null
                                             forcedEntryRail = null
@@ -282,7 +291,10 @@ fun DashboardScreen(db: AppDatabase) {
                                         onClick = {
                                             isFabExpanded = false
                                             if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                                                cameraSnapLauncher.launch(null)
+                                                val tmpFile = File(context.cacheDir, "scan_${System.currentTimeMillis()}.jpg")
+                                                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", tmpFile)
+                                                tempCameraImageUri = uri
+                                                cameraFullResLauncher.launch(uri)
                                             } else {
                                                 cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
                                             }
@@ -368,6 +380,9 @@ fun DashboardScreen(db: AppDatabase) {
                             onTransactPocket = { pocket ->
                                 ocrPrefilledNote = ""
                                 ocrPrefilledAmount = null
+                                ocrPrefilledDateMillis = null
+                                ocrNeedsConfirmation = false
+                                ocrAlternativeTotals = emptyList()
                                 when (pocket.type) {
                                     PocketType.CREDIT_CARD -> {
                                         forcedEntryRail = ActiveEntryRail.CARD_BILL
@@ -432,7 +447,6 @@ fun DashboardScreen(db: AppDatabase) {
                             onExportPdf = { fyYear -> scope.launch { PdfDossierExporter.generateAndShareDossier(context, fyYear) } },
                             onExportCsv = { CsvExporter.exportAndShareTransactions(context, uiState.completedTransactions) },
                             onExportEncryptedBackup = { 
-                                // FIX: Updated manual backup to use proper .inout extension
                                 val timeStamp = SimpleDateFormat("yyMMddHHmmss", Locale.getDefault()).format(Date())
                                 backupExportLauncher.launch("backup_$timeStamp.inout") 
                             },
@@ -512,6 +526,7 @@ fun DashboardScreen(db: AppDatabase) {
                     UnifiedEntrySheet(
                         allPockets = uiState.rawPockets, prefilledPocketId = selectedPocketIdForEntry, prefilledTargetPocketId = selectedTargetPocketIdForEntry,
                         forcedRail = forcedEntryRail, prefilledNote = ocrPrefilledNote, prefilledAmount = ocrPrefilledAmount,
+                        prefilledDateMillis = ocrPrefilledDateMillis, needsConfirmation = ocrNeedsConfirmation, alternativeTotals = ocrAlternativeTotals,
                         onDismiss = { showUnifiedEntrySheet = false },
                         onSubmitTransaction = { n, s, t, a, c, no, d, isR, f, tax, reimb -> 
                             viewModel.executeMasterEntryTrigger(n, s, t, (a * 100).toLong(), c, no, d, isR, f, tax, reimb, { alertManager.showAlert(it, AlertType.SUCCESS); showUnifiedEntrySheet = false }, { alertManager.showAlert(it, AlertType.ERROR) }, { alertManager.showAlert(it, AlertType.WARNING) }) 
