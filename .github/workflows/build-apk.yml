@@ -27,11 +27,19 @@ jobs:
         with:
           gradle-version: '8.8'
 
-      - name: Decode Persistent Keystore
+      - name: Generate and Commit Persistent Keystore
         run: |
-          mkdir -p app
-          # Safely print and decode the exact Base64 string into the binary keystore
-          printf "%s" "${{ secrets.KEYSTORE_B64 }}" | tr -d '\n\r ' | base64 --decode > app/debug.keystore
+          if [ ! -f app/inout.keystore ]; then
+            echo "Generating permanent keystore and saving it directly to your repository..."
+            keytool -genkeypair -v -keystore app/inout.keystore -storepass androiddebug -alias androiddebugkey -keypass androiddebug -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=InOut,O=Personal,C=IN" -noprompt
+            git config --global user.name "github-actions[bot]"
+            git config --global user.email "github-actions[bot]@users.noreply.github.com"
+            git add -f app/inout.keystore
+            git commit -m "chore: Auto-generate persistent keystore"
+            git push origin HEAD:${{ github.ref }}
+          else
+            echo "Persistent keystore already tracked in Git!"
+          fi
 
       - name: Build Debug APK
         env:
