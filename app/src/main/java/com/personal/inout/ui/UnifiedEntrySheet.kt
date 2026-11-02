@@ -5,6 +5,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -25,6 +27,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.personal.inout.data.LedgerPocket
 import com.personal.inout.data.MovementNature
 import com.personal.inout.data.PocketType
+import com.personal.inout.ocr.AmountCandidate
 import com.personal.inout.ui.LocalThemeColors
 import com.personal.inout.ui.ThemeColors
 import com.personal.inout.ui.dialogs.CustomCalendarDialog
@@ -49,6 +52,9 @@ fun UnifiedEntrySheet(
     forcedRail: ActiveEntryRail? = null,
     prefilledNote: String = "",
     prefilledAmount: Double? = null,
+    prefilledDateMillis: Long? = null,
+    needsConfirmation: Boolean = false,
+    alternativeTotals: List<AmountCandidate> = emptyList(),
     onDismiss: () -> Unit,
     onSubmitTransaction: (
         nature: MovementNature,
@@ -68,9 +74,9 @@ fun UnifiedEntrySheet(
     val theme = LocalThemeColors.current
 
     var selectedRail by remember { mutableStateOf(forcedRail ?: ActiveEntryRail.EXPENSE) }
-    var amountExpression by remember { mutableStateOf(prefilledAmount?.let { String.format(Locale.US, "%.0f", it) } ?: "") }
+    var amountExpression by remember { mutableStateOf(prefilledAmount?.let { String.format(Locale.US, "%.2f", it) } ?: "") }
     var note by remember { mutableStateOf(prefilledNote) }
-    var selectedDateMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    var selectedDateMillis by remember { mutableStateOf(prefilledDateMillis ?: System.currentTimeMillis()) }
     var showDatePicker by remember { mutableStateOf(false) }
 
     var isTaxDeductible by remember { mutableStateOf(false) }
@@ -165,7 +171,6 @@ fun UnifiedEntrySheet(
         )
     }
 
-    // REVERTED: Back to a strictly centered Dialog as requested
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -236,6 +241,28 @@ fun UnifiedEntrySheet(
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
                                 )
+                            }
+                        }
+                    }
+
+                    if (needsConfirmation && alternativeTotals.isNotEmpty()) {
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Confirm Total Amount", color = theme.mildRed, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(alternativeTotals) { cand ->
+                                    val isCandSel = amountExpression == String.format(Locale.US, "%.2f", cand.amount)
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(6.dp))
+                                            .background(if (isCandSel) theme.accent.copy(alpha = 0.2f) else theme.surfaceAlt)
+                                            .border(1.dp, if (isCandSel) theme.accent else theme.borderLight, RoundedCornerShape(6.dp))
+                                            .clickable { amountExpression = String.format(Locale.US, "%.2f", cand.amount) }
+                                            .padding(horizontal = 12.dp, vertical = 6.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text("₹${String.format(Locale.US, "%.2f", cand.amount)}", color = if (isCandSel) theme.accent else theme.textBright, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
                             }
                         }
                     }
@@ -333,7 +360,6 @@ fun UnifiedEntrySheet(
 
                     Text("CATEGORY", color = theme.textMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     
-                    // Strict 3x3 Category Grid
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         categories.chunked(3).forEach { rowCats ->
                             Row(
@@ -425,7 +451,7 @@ fun UnifiedEntrySheet(
                                 .padding(vertical = 7.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("🏷 80C Tag", color = if (isTaxDeductible) theme.accent else theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text("🏷️ 80C Tag", color = if (isTaxDeductible) theme.accent else theme.textMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
 
                         Box(
