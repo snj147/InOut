@@ -78,7 +78,8 @@ fun DashboardScreen(db: AppDatabase) {
         factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                return DashboardViewModel(db.ledgerDao(), prefs) as T
+                // FIX: Passing db directly instead of db.ledgerDao()
+                return DashboardViewModel(db, prefs) as T
             }
         }
     )
