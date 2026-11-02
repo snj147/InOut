@@ -21,11 +21,12 @@ data class DashboardUiState(
 )
 
 class DashboardViewModel(
-    private val dao: LedgerDao,
+    private val db: AppDatabase, // FIX: Changed from LedgerDao to AppDatabase
     val prefs: SharedPreferences
 ) : ViewModel() {
-
-    val ledgerEngine = VaultLedgerEngine(dao, prefs)
+    
+    private val dao = db.ledgerDao()
+    val ledgerEngine = VaultLedgerEngine(db, prefs) // FIX: Passing the full AppDatabase
 
     private val _uiState = MutableStateFlow(DashboardUiState())
     val uiState: StateFlow<DashboardUiState> = _uiState.asStateFlow()
