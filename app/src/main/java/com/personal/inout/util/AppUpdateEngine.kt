@@ -34,7 +34,6 @@ object AppUpdateEngine {
 
     suspend fun checkForUpdate(context: Context): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         try {
-            // FIX: Add cache-busting timestamp to bypass GitHub's stale API cache
             val url = URL("$GITHUB_REPO_API?t=${System.currentTimeMillis()}")
             val conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
@@ -150,7 +149,8 @@ object AppUpdateEngine {
 
     fun promptInstall(context: Context, apkFile: File) {
         val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            FileProvider.getUriForFile(context, "${context.packageName}.provider", apkFile)
+            // FIX: Explicitly matches the AndroidManifest provider authority
+            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
         } else {
             Uri.fromFile(apkFile)
         }
