@@ -30,10 +30,9 @@ android {
 
     signingConfigs {
         create("release") {
-            val keystoreFile = file("debug.keystore")
+            val keystoreFile = file("inout.keystore")
             if (keystoreFile.exists()) {
                 storeFile = keystoreFile
-                // Hardcoded to match the exact credentials you used in Codespaces
                 storePassword = "androiddebug"
                 keyAlias = "androiddebugkey"
                 keyPassword = "androiddebug"
