@@ -1,6 +1,7 @@
 package com.personal.inout.data
 
 import android.content.SharedPreferences
+import androidx.room.withTransaction
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.withContext
@@ -16,9 +17,11 @@ sealed class VaultExecutionResult {
 }
 
 class VaultLedgerEngine(
-    private val dao: LedgerDao,
+    private val db: AppDatabase,
     private val prefs: SharedPreferences
 ) {
+    private val dao = db.ledgerDao()
+
     suspend fun recordMovement(
         movementNature: MovementNature,
         sourcePocketId: Long,
@@ -38,80 +41,80 @@ class VaultLedgerEngine(
         
         if (amount <= 0L) return@withContext VaultExecutionResult.OverdraftError("Transaction amount must be strictly positive.")
 
-        val srcPocket = dao.getPocketById(sourcePocketId) ?: return@withContext VaultExecutionResult.OverdraftError("Source account missing.")
-        val tgtPocket = targetPocketId?.let { dao.getPocketById(it) }
+        return@withContext db.withTransaction {
+            val srcPocket = dao.getPocketById(sourcePocketId) ?: return@withTransaction VaultExecutionResult.OverdraftError("Source account missing.")
+            val tgtPocket = targetPocketId?.let { dao.getPocketById(it) }
 
-        if (movementNature == MovementNature.OPERATING_EXPENSE || movementNature == MovementNature.TRANSFER || movementNature == MovementNature.EMI_PRINCIPAL) {
-            val availableBal = dao.computePocketBalance(sourcePocketId)
-            
-            val isExemptFromOverdraft = srcPocket.type in listOf(PocketType.CREDIT_CARD, PocketType.LIABILITY_LOAN, PocketType.PEER_PAYABLE, PocketType.PEER_RECEIVABLE)
+            if (movementNature == MovementNature.OPERATING_EXPENSE || movementNature == MovementNature.TRANSFER || movementNature == MovementNature.EMI_PRINCIPAL) {
+                val availableBal = dao.computePocketBalance(sourcePocketId)
+                
+                val isExemptFromOverdraft = srcPocket.type in listOf(PocketType.CREDIT_CARD, PocketType.LIABILITY_LOAN, PocketType.PEER_PAYABLE, PocketType.PEER_RECEIVABLE)
 
-            if (availableBal < amount && !isExemptFromOverdraft) {
-                if (autoSplitEnabled && movementNature == MovementNature.OPERATING_EXPENSE) {
-                    val shortfall = amount - availableBal
-                    val secondaryAccounts = dao.getAllActivePocketsSnapshot()
-                        .filter { it.type == PocketType.LIQUID && it.id != sourcePocketId }
-                    
-                    var remainingShortfall = shortfall
-                    val splitTxList = mutableListOf<LedgerTransaction>()
+                if (availableBal < amount && !isExemptFromOverdraft) {
+                    if (autoSplitEnabled && movementNature == MovementNature.OPERATING_EXPENSE) {
+                        val shortfall = amount - availableBal
+                        val secondaryAccounts = dao.getAllActivePocketsSnapshot()
+                            .filter { it.type == PocketType.LIQUID && it.id != sourcePocketId }
+                        
+                        var remainingShortfall = shortfall
+                        val splitTxList = mutableListOf<LedgerTransaction>()
 
-                    if (availableBal > 0L) {
-                        splitTxList.add(LedgerTransaction(amount = availableBal, movementNature = movementNature, sourcePocketId = sourcePocketId, category = category, description = "$description (Split)", timestamp = timestamp, status = status, isTaxDeductible = isTaxDeductible, isReimbursable = isReimbursable, isSubscription = isSubscription, isRecurring = isRecurring, recurringFrequency = recurringFrequency))
-                    }
-
-                    for (sec in secondaryAccounts) {
-                        if (remainingShortfall <= 0L) break
-                        val secBal = dao.computePocketBalance(sec.id)
-                        if (secBal > 0L) {
-                            val draw = minOf(secBal, remainingShortfall)
-                            splitTxList.add(LedgerTransaction(amount = draw, movementNature = movementNature, sourcePocketId = sec.id, category = category, description = "$description (Auto-Split from ${sec.name})", timestamp = timestamp, status = status, isTaxDeductible = isTaxDeductible, isReimbursable = isReimbursable, isSubscription = isSubscription, isRecurring = isRecurring, recurringFrequency = recurringFrequency))
-                            remainingShortfall -= draw
+                        if (availableBal > 0L) {
+                            splitTxList.add(LedgerTransaction(amount = availableBal, movementNature = movementNature, sourcePocketId = sourcePocketId, category = category, description = "$description (Split)", timestamp = timestamp, status = status, isTaxDeductible = isTaxDeductible, isReimbursable = isReimbursable, isSubscription = isSubscription, isRecurring = isRecurring, recurringFrequency = recurringFrequency))
                         }
-                    }
 
-                    if (remainingShortfall > 0L) {
-                        return@withContext VaultExecutionResult.OverdraftError("Insufficient combined liquid funds. Shortfall: ₹${remainingShortfall / 100.0}")
-                    }
+                        for (sec in secondaryAccounts) {
+                            if (remainingShortfall <= 0L) break
+                            val secBal = dao.computePocketBalance(sec.id)
+                            if (secBal > 0L) {
+                                val draw = minOf(secBal, remainingShortfall)
+                                splitTxList.add(LedgerTransaction(amount = draw, movementNature = movementNature, sourcePocketId = sec.id, category = category, description = "$description (Auto-Split from ${sec.name})", timestamp = timestamp, status = status, isTaxDeductible = isTaxDeductible, isReimbursable = isReimbursable, isSubscription = isSubscription, isRecurring = isRecurring, recurringFrequency = recurringFrequency))
+                                remainingShortfall -= draw
+                            }
+                        }
 
-                    dao.insertTransactionsBatch(splitTxList)
-                    return@withContext VaultExecutionResult.Success("Auto-split across accounts successful.")
-                } else {
-                    return@withContext VaultExecutionResult.OverdraftError("Insufficient funds in ${srcPocket.name}. Available: ₹${availableBal / 100.0}")
+                        if (remainingShortfall > 0L) {
+                            return@withTransaction VaultExecutionResult.OverdraftError("Insufficient combined liquid funds. Shortfall: ₹${remainingShortfall / 100.0}")
+                        }
+
+                        dao.insertTransactionsBatch(splitTxList)
+                        return@withTransaction VaultExecutionResult.Success("Auto-split across accounts successful.")
+                    } else {
+                        return@withTransaction VaultExecutionResult.OverdraftError("Insufficient funds in ${srcPocket.name}. Available: ₹${availableBal / 100.0}")
+                    }
                 }
             }
+
+            val tx = LedgerTransaction(
+                amount = amount,
+                movementNature = movementNature,
+                sourcePocketId = sourcePocketId,
+                targetPocketId = targetPocketId,
+                category = category,
+                description = description,
+                timestamp = timestamp,
+                status = status,
+                isTaxDeductible = isTaxDeductible,
+                isReimbursable = isReimbursable,
+                isSubscription = isSubscription,
+                isRecurring = isRecurring,
+                recurringFrequency = recurringFrequency
+            )
+
+            val txId = dao.insertTransaction(tx)
+            
+            dao.insertAuditEntry(LedgerAuditEntry(
+                actionType = "INSERT",
+                entityType = "TRANSACTION",
+                recordId = txId,
+                preStateJson = "{}",
+                postStateJson = "{\"amount\": $amount, \"nature\": \"${movementNature.name}\"}",
+                reasonNote = "System generated entry"
+            ))
+
+            val targetNameStr = tgtPocket?.let { " to ${it.name}" } ?: ""
+            VaultExecutionResult.Success("Logged ₹${amount / 100.0} ${movementNature.name} from ${srcPocket.name}$targetNameStr")
         }
-
-        // DELETED duplicate blocker logic - users can now log identical amounts freely
-
-        val tx = LedgerTransaction(
-            amount = amount,
-            movementNature = movementNature,
-            sourcePocketId = sourcePocketId,
-            targetPocketId = targetPocketId,
-            category = category,
-            description = description,
-            timestamp = timestamp,
-            status = status,
-            isTaxDeductible = isTaxDeductible,
-            isReimbursable = isReimbursable,
-            isSubscription = isSubscription,
-            isRecurring = isRecurring,
-            recurringFrequency = recurringFrequency
-        )
-
-        val txId = dao.insertTransaction(tx)
-        
-        dao.insertAuditEntry(LedgerAuditEntry(
-            actionType = "INSERT",
-            entityType = "TRANSACTION",
-            recordId = txId,
-            preStateJson = "{}",
-            postStateJson = "{\"amount\": $amount, \"nature\": \"${movementNature.name}\"}",
-            reasonNote = "System generated entry"
-        ))
-
-        val targetNameStr = tgtPocket?.let { " to ${it.name}" } ?: ""
-        VaultExecutionResult.Success("Logged ₹${amount / 100.0} ${movementNature.name} from ${srcPocket.name}$targetNameStr")
     }
 
     suspend fun computeSolvencyDeck(): SolvencyMetricDeck = withContext(Dispatchers.IO) {
@@ -283,31 +286,33 @@ class VaultLedgerEngine(
         
         var executedCount = 0
 
-        for (template in activeTemplates) {
-            if (template.timestamp <= now) {
-                var currentExecutionTime = template.timestamp
-                
-                dao.updateTransaction(template.copy(isRecurring = false, recurringFrequency = "NONE"))
-                
-                while (true) {
-                    var executionTimeZdt = Instant.ofEpochMilli(currentExecutionTime).atZone(ZoneId.systemDefault())
+        db.withTransaction {
+            for (template in activeTemplates) {
+                if (template.timestamp <= now) {
+                    var currentExecutionTime = template.timestamp
                     
-                    executionTimeZdt = when (template.recurringFrequency) {
-                        "DAILY" -> executionTimeZdt.plusDays(1)
-                        "WEEKLY" -> executionTimeZdt.plusWeeks(1)
-                        "MONTHLY" -> executionTimeZdt.plusMonths(1)
-                        "YEARLY" -> executionTimeZdt.plusYears(1)
-                        else -> break
-                    }
-                    val nextExecutionTime = executionTimeZdt.toInstant().toEpochMilli()
+                    dao.updateTransaction(template.copy(isRecurring = false, recurringFrequency = "NONE"))
                     
-                    if (nextExecutionTime <= now) {
-                        dao.insertTransaction(template.copy(id = 0, timestamp = nextExecutionTime, isRecurring = false, recurringFrequency = "NONE"))
-                        executedCount++
-                        currentExecutionTime = nextExecutionTime
-                    } else {
-                        dao.insertTransaction(template.copy(id = 0, timestamp = nextExecutionTime, isRecurring = true, recurringFrequency = template.recurringFrequency))
-                        break
+                    while (true) {
+                        var executionTimeZdt = Instant.ofEpochMilli(currentExecutionTime).atZone(ZoneId.systemDefault())
+                        
+                        executionTimeZdt = when (template.recurringFrequency) {
+                            "DAILY" -> executionTimeZdt.plusDays(1)
+                            "WEEKLY" -> executionTimeZdt.plusWeeks(1)
+                            "MONTHLY" -> executionTimeZdt.plusMonths(1)
+                            "YEARLY" -> executionTimeZdt.plusYears(1)
+                            else -> break
+                        }
+                        val nextExecutionTime = executionTimeZdt.toInstant().toEpochMilli()
+                        
+                        if (nextExecutionTime <= now) {
+                            dao.insertTransaction(template.copy(id = 0, timestamp = nextExecutionTime, isRecurring = false, recurringFrequency = "NONE"))
+                            executedCount++
+                            currentExecutionTime = nextExecutionTime
+                        } else {
+                            dao.insertTransaction(template.copy(id = 0, timestamp = nextExecutionTime, isRecurring = true, recurringFrequency = template.recurringFrequency))
+                            break
+                        }
                     }
                 }
             }
