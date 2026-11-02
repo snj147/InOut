@@ -21,11 +21,6 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GIT_SHA", "\"$passedGitSha\"")
-
-        val tgToken = System.getenv("TELEGRAM_BOT_TOKEN") ?: ""
-        val tgChatId = System.getenv("TELEGRAM_CHAT_ID") ?: ""
-        buildConfigField("String", "TELEGRAM_BOT_TOKEN", "\"$tgToken\"")
-        buildConfigField("String", "TELEGRAM_CHAT_ID", "\"$tgChatId\"")
     }
 
     signingConfigs {
@@ -103,7 +98,6 @@ dependencies {
     debugImplementation(libs.androidx.ui.test.manifest)
 }
 
-// Configures Room to export the schema JSON files to a local directory
 kapt {
     arguments {
         arg("room.schemaLocation", "$projectDir/schemas")
