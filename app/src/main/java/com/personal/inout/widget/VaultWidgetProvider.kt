@@ -20,10 +20,9 @@ class VaultWidgetProvider : AppWidgetProvider() {
     override fun onUpdate(context: Context, appWidgetManager: AppWidgetManager, appWidgetIds: IntArray) {
         val db = AppDatabase.getInstance(context)
         val prefs = context.getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE)
-        val ledgerEngine = VaultLedgerEngine(db.ledgerDao(), prefs)
+        val ledgerEngine = VaultLedgerEngine(db, prefs) // FIX: Passing the full AppDatabase
 
         CoroutineScope(Dispatchers.IO).launch {
-            // Evaluates true liquid solvency, card buffers, and runway horizons (Rules 1, 3, 13)
             val solvencyDeck = ledgerEngine.computeSolvencyDeck()
 
             for (widgetId in appWidgetIds) {
