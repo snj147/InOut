@@ -32,7 +32,7 @@ class WidgetCommandActivity : Activity() {
 
         val db = AppDatabase.getInstance(applicationContext)
         val prefs = getSharedPreferences("inout_app_prefs", Context.MODE_PRIVATE)
-        val ledgerEngine = VaultLedgerEngine(db.ledgerDao(), prefs)
+        val ledgerEngine = VaultLedgerEngine(db, prefs) // FIX: Passing the full AppDatabase
 
         CoroutineScope(Dispatchers.IO).launch {
             val allPockets = db.ledgerDao().getAllActivePocketsSnapshot()
