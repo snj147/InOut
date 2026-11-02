@@ -22,7 +22,6 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GIT_SHA", "\"$passedGitSha\"")
 
-        // Trimming invisible mobile spaces from Telegram tokens
         val tgToken = (System.getenv("TELEGRAM_BOT_TOKEN") ?: "").trim()
         val tgChatId = (System.getenv("TELEGRAM_CHAT_ID") ?: "").trim()
         buildConfigField("String", "TELEGRAM_BOT_TOKEN", "\"$tgToken\"")
@@ -34,10 +33,10 @@ android {
             val keystoreFile = file("debug.keystore")
             if (keystoreFile.exists()) {
                 storeFile = keystoreFile
-                // Trimming invisible mobile spaces from your Keystore credentials
-                storePassword = (System.getenv("STORE_PASS") ?: "androiddebug").trim()
-                keyAlias = (System.getenv("KEY_ALIAS") ?: "androiddebugkey").trim()
-                keyPassword = (System.getenv("KEY_PASS") ?: "androiddebug").trim()
+                // Hardcoded to match the exact credentials you used in Codespaces
+                storePassword = "androiddebug"
+                keyAlias = "androiddebugkey"
+                keyPassword = "androiddebug"
             }
         }
     }
