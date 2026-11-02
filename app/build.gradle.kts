@@ -21,6 +21,12 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GIT_SHA", "\"$passedGitSha\"")
+
+        // Direct Telegram integration restored
+        val tgToken = System.getenv("TELEGRAM_BOT_TOKEN") ?: ""
+        val tgChatId = System.getenv("TELEGRAM_CHAT_ID") ?: ""
+        buildConfigField("String", "TELEGRAM_BOT_TOKEN", "\"$tgToken\"")
+        buildConfigField("String", "TELEGRAM_CHAT_ID", "\"$tgChatId\"")
     }
 
     signingConfigs {
