@@ -32,11 +32,11 @@ jobs:
           KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
         run: |
           mkdir -p app
-          echo "$KEYSTORE_B64" | base64 --decode > app/debug.keystore
+          # Uses tr to strip all invisible line breaks and spaces from the copied text before decoding
+          echo "$KEYSTORE_B64" | tr -d '\n\r ' | base64 -d -i > app/debug.keystore
 
       - name: Build Debug APK
         env:
-          # Restored Telegram Secrets mapping
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           STORE_PASS: ${{ secrets.STORE_PASS }}
