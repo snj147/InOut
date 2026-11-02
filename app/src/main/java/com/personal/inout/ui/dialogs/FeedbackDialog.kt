@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.personal.inout.BuildConfig
 import com.personal.inout.ui.ThemeColors
 import com.personal.inout.ui.components.CompactInputField
 import kotlinx.coroutines.Dispatchers
@@ -47,8 +48,9 @@ fun FeedbackDialog(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    // REPLACE WITH YOUR ACTUAL CLOUDFLARE WORKER URL
-    val workerProxyUrl = "https://inout-feedback-proxy.yourusername.workers.dev"
+    // Pulling directly from the restored BuildConfig
+    val telegramBotToken = BuildConfig.TELEGRAM_BOT_TOKEN
+    val telegramChatId = BuildConfig.TELEGRAM_CHAT_ID
 
     val filePickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         attachedUri = uri
@@ -133,16 +135,16 @@ fun FeedbackDialog(
                                     isSending = true
                                     scope.launch(Dispatchers.IO) {
                                         try {
-                                            val url = URL(workerProxyUrl)
-                                            val connection = url.openConnection() as HttpURLConnection
-                                            connection.requestMethod = "POST"
-                                            connection.doOutput = true
-
-                                            if (attachedUri != null) {
+                                            val responseCode = if (attachedUri != null) {
                                                 val boundary = "----WebKitFormBoundary7MA4YWxkTrZu0gW"
+                                                val url = URL("https://api.telegram.org/bot$telegramBotToken/sendDocument")
+                                                val connection = url.openConnection() as HttpURLConnection
+                                                connection.requestMethod = "POST"
+                                                connection.doOutput = true
                                                 connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
                                                 
                                                 val outputStream = DataOutputStream(connection.outputStream)
+                                                outputStream.writeBytes("--$boundary\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n$telegramChatId\r\n")
                                                 outputStream.writeBytes("--$boundary\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n$feedbackText\r\n")
                                                 
                                                 context.contentResolver.openInputStream(attachedUri!!)?.use { inputStream ->
@@ -153,20 +155,19 @@ fun FeedbackDialog(
                                                 outputStream.writeBytes("--$boundary--\r\n")
                                                 outputStream.flush()
                                                 outputStream.close()
+                                                connection.responseCode
                                             } else {
-                                                connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-                                                val postData = "caption=" + URLEncoder.encode(feedbackText, "UTF-8")
-                                                connection.outputStream.write(postData.toByteArray(Charsets.UTF_8))
+                                                val encodedText = URLEncoder.encode(feedbackText, "UTF-8")
+                                                val url = URL("https://api.telegram.org/bot$telegramBotToken/sendMessage?chat_id=$telegramChatId&text=$encodedText")
+                                                val connection = url.openConnection() as HttpURLConnection
+                                                connection.requestMethod = "GET"
+                                                connection.responseCode
                                             }
 
-                                            val responseCode = connection.responseCode
                                             withContext(Dispatchers.Main) {
                                                 if (responseCode in 200..299) {
                                                     onResult("Feedback sent.", false)
-                                                    onDismiss()
-                                                } else if (responseCode == 429) {
-                                                    onResult("Rate limit exceeded. Please wait.", true)
-                                                    isSending = false
+                                                    onDismiss() 
                                                 } else {
                                                     onResult("Error: HTTP $responseCode", true)
                                                     isSending = false
