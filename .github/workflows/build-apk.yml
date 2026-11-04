@@ -45,6 +45,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          REPO_READ_TOKEN: ${{ secrets.REPO_READ_TOKEN }}
         run: gradle assembleDebug -PGIT_SHA=${{ github.sha }} -PVERSION_CODE=${{ github.run_number }}
 
       - name: Clear Old APKs and Rename New APK
