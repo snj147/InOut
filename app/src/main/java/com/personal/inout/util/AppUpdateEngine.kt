@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import androidx.core.content.FileProvider
+import com.personal.inout.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -39,6 +40,12 @@ object AppUpdateEngine {
             conn.requestMethod = "GET"
             conn.setRequestProperty("Accept", "application/vnd.github.v3+json")
             conn.setRequestProperty("Cache-Control", "no-cache")
+            
+            // Injecting the read-only auth token for private repo access
+            val token = BuildConfig.GITHUB_READ_TOKEN
+            if (token.isNotBlank()) {
+                conn.setRequestProperty("Authorization", "Bearer $token")
+            }
 
             if (conn.responseCode == 200) {
                 val response = conn.inputStream.bufferedReader().readText()
@@ -76,6 +83,14 @@ object AppUpdateEngine {
             _downloadState.value = UpdateDownloadState.Downloading(0f)
             val url = URL(urlString)
             val conn = url.openConnection() as HttpURLConnection
+            
+            val token = BuildConfig.GITHUB_READ_TOKEN
+            if (token.isNotBlank()) {
+                conn.setRequestProperty("Authorization", "Bearer $token")
+                // Required to fetch the raw asset instead of a JSON response
+                conn.setRequestProperty("Accept", "application/octet-stream")
+            }
+            
             conn.connect()
 
             val fileLength = conn.contentLength
