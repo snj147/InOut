@@ -28,8 +28,8 @@ android {
         buildConfigField("String", "TELEGRAM_CHAT_ID", "\"$tgChatId\"")
         
         // Injecting the GitHub Read-Only token for the OTA updater
-        val ghToken = (System.getenv("GITHUB_READ_TOKEN") ?: "").trim()
-        buildConfigField("String", "GITHUB_READ_TOKEN", "\"$ghToken\"")
+        val ghToken = (System.getenv("REPO_READ_TOKEN") ?: "").trim()
+        buildConfigField("String", "REPO_READ_TOKEN", "\"$ghToken\"")
     }
 
     signingConfigs {
