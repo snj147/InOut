@@ -41,8 +41,7 @@ object AppUpdateEngine {
             conn.setRequestProperty("Accept", "application/vnd.github.v3+json")
             conn.setRequestProperty("Cache-Control", "no-cache")
             
-            // Injecting the read-only auth token for private repo access
-            val token = BuildConfig.GITHUB_READ_TOKEN
+            val token = BuildConfig.REPO_READ_TOKEN
             if (token.isNotBlank()) {
                 conn.setRequestProperty("Authorization", "Bearer $token")
             }
@@ -84,10 +83,9 @@ object AppUpdateEngine {
             val url = URL(urlString)
             val conn = url.openConnection() as HttpURLConnection
             
-            val token = BuildConfig.GITHUB_READ_TOKEN
+            val token = BuildConfig.REPO_READ_TOKEN
             if (token.isNotBlank()) {
                 conn.setRequestProperty("Authorization", "Bearer $token")
-                // Required to fetch the raw asset instead of a JSON response
                 conn.setRequestProperty("Accept", "application/octet-stream")
             }
             
@@ -164,7 +162,6 @@ object AppUpdateEngine {
 
     fun promptInstall(context: Context, apkFile: File) {
         val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            // FIX: Explicitly matches the AndroidManifest provider authority
             FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", apkFile)
         } else {
             Uri.fromFile(apkFile)
