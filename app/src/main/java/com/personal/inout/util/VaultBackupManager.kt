@@ -17,22 +17,29 @@ import java.security.spec.KeySpec
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
+import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
 object VaultBackupManager {
+    // V6 Modern Constants
     private const val ALGORITHM = "AES/GCM/NoPadding"
     private const val TAG_LENGTH_BIT = 128
     private const val IV_LENGTH_BYTE = 12
     private const val SALT_LENGTH_BYTE = 16
-    private const val ITERATION_COUNT = 600000 // Bruteforce resistance upgrade
+    private const val ITERATION_COUNT = 600000 
     private const val KEY_LENGTH_BIT = 256
+
+    // Legacy Vault Constants
+    private const val LEGACY_ALGORITHM = "AES/CBC/PKCS5Padding"
+    private const val LEGACY_IV_LENGTH_BYTE = 16
+    private const val LEGACY_ITERATION_COUNT = 10000
 
     suspend fun exportEncryptedBackup(
         context: Context,
         db: AppDatabase,
         destinationUri: Uri,
-        passphrase: String // Hardcoded key removed
+        passphrase: String
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
             val pockets: List<LedgerPocket> = db.ledgerDao().getAllActivePockets().first()
@@ -136,13 +143,19 @@ object VaultBackupManager {
         context: Context,
         db: AppDatabase,
         sourceUri: Uri,
-        passphrase: String // Hardcoded key removed
+        passphrase: String
     ): Result<Int> = withContext(Dispatchers.IO) {
-        runCatching {
-            val allBytes = context.contentResolver.openInputStream(sourceUri)?.use { inStream: InputStream ->
+        
+        val allBytes = try {
+            context.contentResolver.openInputStream(sourceUri)?.use { inStream: InputStream ->
                 inStream.readBytes()
             } ?: error("Failed to open backup source stream")
+        } catch (e: Exception) {
+            return@withContext Result.failure(e)
+        }
 
+        // Attempt V6 Modern GCM Decryption First
+        val v6Result = runCatching {
             if (allBytes.size < SALT_LENGTH_BYTE + IV_LENGTH_BYTE) {
                 error("Corrupted backup file (header payload too small)")
             }
@@ -161,9 +174,8 @@ object VaultBackupManager {
 
             val rootJson = JSONObject(String(plaintext, Charsets.UTF_8))
             
-            // SHA-256 Validation
             val providedHash = rootJson.optString("sha256", "")
-            rootJson.remove("sha256") // Strip the hash to recalculate the exact source payload
+            rootJson.remove("sha256") 
             val verificationHashBytes = rootJson.toString().toByteArray(Charsets.UTF_8)
             val calculatedHash = MessageDigest.getInstance("SHA-256").digest(verificationHashBytes).joinToString("") { "%02x".format(it) }
             
@@ -171,89 +183,118 @@ object VaultBackupManager {
                 error("Integrity failure: Backup hash mismatch. File may be corrupted or tampered with.")
             }
 
-            val pocketsArray = rootJson.getJSONArray("pockets")
-            val txArray = rootJson.getJSONArray("transactions")
-            val auditArray = rootJson.optJSONArray("audits") ?: JSONArray()
+            importParsedJsonToDatabase(db, rootJson)
+        }
 
-            var importedCount = 0
-            
-            // ATOMIC RESTORE TRANSACTION
-            db.withTransaction {
-                
-                // Nuke existing ledger
-                val dao = db.ledgerDao()
-                dao.observeAllTransactions().first().forEach { dao.deleteTransaction(it) }
-                dao.getAllActivePockets().first().forEach { dao.deletePocket(it) }
+        if (v6Result.isSuccess) return@withContext v6Result
 
-                for (i in 0 until pocketsArray.length()) {
-                    val p = pocketsArray.getJSONObject(i)
-                    val pocketType = PocketType.valueOf(p.getString("type"))
-                    val pocketObj = LedgerPocket(
-                        id = p.getLong("id"),
-                        name = p.getString("name"),
-                        type = pocketType,
-                        currency = p.optString("currency", "INR"),
-                        creditLimit = p.optLong("creditLimit", 0L),
-                        statementClosingDay = p.optInt("statementClosingDay", 0),
-                        billDueDay = p.optInt("billDueDay", 0),
-                        targetGoalAmount = p.optLong("targetGoalAmount", 0L),
-                        goalTargetDate = p.optLong("goalTargetDate", 0L),
-                        peerContactName = p.optString("peerContactName", ""),
-                        lastReconciledEpoch = p.optLong("lastReconciledEpoch", 0L),
-                        isArchived = p.optBoolean("isArchived", false),
-                        createdAt = p.optLong("createdAt", System.currentTimeMillis())
-                    )
-                    dao.insertPocket(pocketObj)
-                }
-
-                for (i in 0 until txArray.length()) {
-                    val t = txArray.getJSONObject(i)
-                    val nature = MovementNature.valueOf(t.optString("movementNature", "OPERATING_EXPENSE"))
-                    val status = SettlementStatus.valueOf(t.optString("status", "CLEARED"))
-                    val txObj = LedgerTransaction(
-                        id = t.optLong("id", 0L),
-                        timestamp = t.getLong("timestamp"),
-                        amount = t.getLong("amount"),
-                        description = t.getString("description"),
-                        category = t.getString("category"),
-                        movementNature = nature,
-                        status = status,
-                        sourcePocketId = t.getLong("sourcePocketId"),
-                        targetPocketId = if (t.isNull("targetPocketId")) null else t.getLong("targetPocketId"),
-                        receiptUri = if (t.isNull("receiptUri")) null else t.getString("receiptUri"),
-                        isTaxDeductible = t.optBoolean("isTaxDeductible", false),
-                        isReimbursable = t.optBoolean("isReimbursable", false),
-                        isSubscription = t.optBoolean("isSubscription", false),
-                        isRecurring = t.optBoolean("isRecurring", false),
-                        recurringFrequency = t.optString("recurringFrequency", "NONE"),
-                        recurringEndDate = t.optLong("recurringEndDate", 0L),
-                        originalCurrency = t.optString("originalCurrency", "INR"),
-                        foreignAmount = t.optLong("foreignAmount", 0L),
-                        splitParentId = if (t.isNull("splitParentId")) null else t.getLong("splitParentId"),
-                        idempotencyHash = t.optString("idempotencyHash", "")
-                    )
-                    dao.insertTransaction(txObj)
-                    importedCount++
-                }
-
-                for (i in 0 until auditArray.length()) {
-                    val a = auditArray.getJSONObject(i)
-                    dao.insertAuditEntry(
-                        LedgerAuditEntry(
-                            auditId = a.optLong("auditId", 0L),
-                            actionType = a.getString("actionType"),
-                            entityType = a.getString("entityType"),
-                            recordId = a.getLong("recordId"),
-                            preStateJson = a.getString("preStateJson"),
-                            postStateJson = a.getString("postStateJson"),
-                            reasonNote = a.optString("reasonNote", ""),
-                            timestamp = a.getLong("timestamp")
-                        )
-                    )
-                }
+        // Fallback: Attempt Legacy V5/CBC Decryption if GCM fails
+        val legacyResult = runCatching {
+            if (allBytes.size < SALT_LENGTH_BYTE + LEGACY_IV_LENGTH_BYTE) {
+                error("Corrupted legacy file (header payload too small)")
             }
 
-            importedCount
+            val salt = allBytes.copyOfRange(0, SALT_LENGTH_BYTE)
+            val iv = allBytes.copyOfRange(SALT_LENGTH_BYTE, SALT_LENGTH_BYTE + LEGACY_IV_LENGTH_BYTE)
+            val ciphertext = allBytes.copyOfRange(SALT_LENGTH_BYTE + LEGACY_IV_LENGTH_BYTE, allBytes.size)
+
+            val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA1") // Legacy used SHA1
+            val spec: KeySpec = PBEKeySpec(passphrase.toCharArray(), salt, LEGACY_ITERATION_COUNT, KEY_LENGTH_BIT)
+            val secretKey = SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
+
+            val cipher = Cipher.getInstance(LEGACY_ALGORITHM)
+            cipher.init(Cipher.DECRYPT_MODE, secretKey, IvParameterSpec(iv))
+            val plaintext = cipher.doFinal(ciphertext)
+
+            val rootJson = JSONObject(String(plaintext, Charsets.UTF_8))
+            importParsedJsonToDatabase(db, rootJson)
         }
+
+        if (legacyResult.isSuccess) return@withContext legacyResult
+        
+        // If both fail, return the original V6 error since that's what we expect by default
+        return@withContext Result.failure(Exception("Decryption failed. Invalid passphrase or corrupted backup file."))
+    }
+
+    private suspend fun importParsedJsonToDatabase(db: AppDatabase, rootJson: JSONObject): Int {
+        val pocketsArray = rootJson.getJSONArray("pockets")
+        val txArray = rootJson.getJSONArray("transactions")
+        val auditArray = rootJson.optJSONArray("audits") ?: JSONArray()
+
+        var importedCount = 0
+        
+        db.withTransaction {
+            val dao = db.ledgerDao()
+            dao.observeAllTransactions().first().forEach { dao.deleteTransaction(it) }
+            dao.getAllActivePockets().first().forEach { dao.deletePocket(it) }
+
+            for (i in 0 until pocketsArray.length()) {
+                val p = pocketsArray.getJSONObject(i)
+                val pocketType = PocketType.valueOf(p.getString("type"))
+                val pocketObj = LedgerPocket(
+                    id = p.getLong("id"),
+                    name = p.getString("name"),
+                    type = pocketType,
+                    currency = p.optString("currency", "INR"),
+                    creditLimit = p.optLong("creditLimit", 0L),
+                    statementClosingDay = p.optInt("statementClosingDay", 0),
+                    billDueDay = p.optInt("billDueDay", 0),
+                    targetGoalAmount = p.optLong("targetGoalAmount", 0L),
+                    goalTargetDate = p.optLong("goalTargetDate", 0L),
+                    peerContactName = p.optString("peerContactName", ""),
+                    lastReconciledEpoch = p.optLong("lastReconciledEpoch", 0L),
+                    isArchived = p.optBoolean("isArchived", false),
+                    createdAt = p.optLong("createdAt", System.currentTimeMillis())
+                )
+                dao.insertPocket(pocketObj)
+            }
+
+            for (i in 0 until txArray.length()) {
+                val t = txArray.getJSONObject(i)
+                val nature = MovementNature.valueOf(t.optString("movementNature", "OPERATING_EXPENSE"))
+                val status = SettlementStatus.valueOf(t.optString("status", "CLEARED"))
+                val txObj = LedgerTransaction(
+                    id = t.optLong("id", 0L),
+                    timestamp = t.getLong("timestamp"),
+                    amount = t.getLong("amount"),
+                    description = t.getString("description"),
+                    category = t.getString("category"),
+                    movementNature = nature,
+                    status = status,
+                    sourcePocketId = t.getLong("sourcePocketId"),
+                    targetPocketId = if (t.isNull("targetPocketId")) null else t.getLong("targetPocketId"),
+                    receiptUri = if (t.isNull("receiptUri")) null else t.getString("receiptUri"),
+                    isTaxDeductible = t.optBoolean("isTaxDeductible", false),
+                    isReimbursable = t.optBoolean("isReimbursable", false),
+                    isSubscription = t.optBoolean("isSubscription", false),
+                    isRecurring = t.optBoolean("isRecurring", false),
+                    recurringFrequency = t.optString("recurringFrequency", "NONE"),
+                    recurringEndDate = t.optLong("recurringEndDate", 0L),
+                    originalCurrency = t.optString("originalCurrency", "INR"),
+                    foreignAmount = t.optLong("foreignAmount", 0L),
+                    splitParentId = if (t.isNull("splitParentId")) null else t.getLong("splitParentId"),
+                    idempotencyHash = t.optString("idempotencyHash", "")
+                )
+                dao.insertTransaction(txObj)
+                importedCount++
+            }
+
+            for (i in 0 until auditArray.length()) {
+                val a = auditArray.getJSONObject(i)
+                dao.insertAuditEntry(
+                    LedgerAuditEntry(
+                        auditId = a.optLong("auditId", 0L),
+                        actionType = a.getString("actionType"),
+                        entityType = a.getString("entityType"),
+                        recordId = a.getLong("recordId"),
+                        preStateJson = a.getString("preStateJson"),
+                        postStateJson = a.getString("postStateJson"),
+                        reasonNote = a.optString("reasonNote", ""),
+                        timestamp = a.getLong("timestamp")
+                    )
+                )
+            }
+        }
+        return importedCount
     }
 }
