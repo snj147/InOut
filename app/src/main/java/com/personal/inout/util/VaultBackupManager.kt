@@ -30,11 +30,6 @@ object VaultBackupManager {
     private const val ITERATION_COUNT = 600000 
     private const val KEY_LENGTH_BIT = 256
 
-    // Legacy Vault Constants
-    private const val LEGACY_ALGORITHM = "AES/CBC/PKCS5Padding"
-    private const val LEGACY_IV_LENGTH_BYTE = 16
-    private const val LEGACY_ITERATION_COUNT = 10000
-
     suspend fun exportEncryptedBackup(
         context: Context,
         db: AppDatabase,
@@ -147,73 +142,111 @@ object VaultBackupManager {
     ): Result<Int> = withContext(Dispatchers.IO) {
         
         val allBytes = try {
-            context.contentResolver.openInputStream(sourceUri)?.use { inStream: InputStream ->
+            context.contentResolver.openInputStream(sourceUri)?.use { inStream ->
                 inStream.readBytes()
             } ?: error("Failed to open backup source stream")
         } catch (e: Exception) {
             return@withContext Result.failure(e)
         }
 
-        // Attempt V6 Modern GCM Decryption First
-        val v6Result = runCatching {
-            if (allBytes.size < SALT_LENGTH_BYTE + IV_LENGTH_BYTE) {
-                error("Corrupted backup file (header payload too small)")
+        // 1. Attempt V6 Modern GCM Decryption (AES/GCM, 600,000 iter, 16B salt, 12B IV)
+        runCatching {
+            if (allBytes.size >= SALT_LENGTH_BYTE + IV_LENGTH_BYTE) {
+                val salt = allBytes.copyOfRange(0, SALT_LENGTH_BYTE)
+                val iv = allBytes.copyOfRange(SALT_LENGTH_BYTE, SALT_LENGTH_BYTE + IV_LENGTH_BYTE)
+                val ciphertext = allBytes.copyOfRange(SALT_LENGTH_BYTE + IV_LENGTH_BYTE, allBytes.size)
+
+                val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+                val spec: KeySpec = PBEKeySpec(passphrase.toCharArray(), salt, ITERATION_COUNT, KEY_LENGTH_BIT)
+                val secretKey = SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
+
+                val cipher = Cipher.getInstance(ALGORITHM)
+                cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(TAG_LENGTH_BIT, iv))
+                val plaintext = cipher.doFinal(ciphertext)
+
+                val rootJson = JSONObject(String(plaintext, Charsets.UTF_8))
+                
+                val providedHash = rootJson.optString("sha256", "")
+                rootJson.remove("sha256") 
+                val verificationHashBytes = rootJson.toString().toByteArray(Charsets.UTF_8)
+                val calculatedHash = MessageDigest.getInstance("SHA-256").digest(verificationHashBytes).joinToString("") { "%02x".format(it) }
+                
+                if (providedHash.isNotEmpty() && providedHash != calculatedHash) {
+                    error("Integrity failure: Backup hash mismatch.")
+                }
+
+                return@withContext Result.success(importParsedJsonToDatabase(db, rootJson))
             }
-
-            val salt = allBytes.copyOfRange(0, SALT_LENGTH_BYTE)
-            val iv = allBytes.copyOfRange(SALT_LENGTH_BYTE, SALT_LENGTH_BYTE + IV_LENGTH_BYTE)
-            val ciphertext = allBytes.copyOfRange(SALT_LENGTH_BYTE + IV_LENGTH_BYTE, allBytes.size)
-
-            val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-            val spec: KeySpec = PBEKeySpec(passphrase.toCharArray(), salt, ITERATION_COUNT, KEY_LENGTH_BIT)
-            val secretKey = SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
-
-            val cipher = Cipher.getInstance(ALGORITHM)
-            cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(TAG_LENGTH_BIT, iv))
-            val plaintext = cipher.doFinal(ciphertext)
-
-            val rootJson = JSONObject(String(plaintext, Charsets.UTF_8))
-            
-            val providedHash = rootJson.optString("sha256", "")
-            rootJson.remove("sha256") 
-            val verificationHashBytes = rootJson.toString().toByteArray(Charsets.UTF_8)
-            val calculatedHash = MessageDigest.getInstance("SHA-256").digest(verificationHashBytes).joinToString("") { "%02x".format(it) }
-            
-            if (providedHash.isNotEmpty() && providedHash != calculatedHash) {
-                error("Integrity failure: Backup hash mismatch. File may be corrupted or tampered with.")
-            }
-
-            importParsedJsonToDatabase(db, rootJson)
         }
 
-        if (v6Result.isSuccess) return@withContext v6Result
-
-        // Fallback: Attempt Legacy V5/CBC Decryption if GCM fails
-        val legacyResult = runCatching {
-            if (allBytes.size < SALT_LENGTH_BYTE + LEGACY_IV_LENGTH_BYTE) {
-                error("Corrupted legacy file (header payload too small)")
-            }
-
-            val salt = allBytes.copyOfRange(0, SALT_LENGTH_BYTE)
-            val iv = allBytes.copyOfRange(SALT_LENGTH_BYTE, SALT_LENGTH_BYTE + LEGACY_IV_LENGTH_BYTE)
-            val ciphertext = allBytes.copyOfRange(SALT_LENGTH_BYTE + LEGACY_IV_LENGTH_BYTE, allBytes.size)
-
-            val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA1") // Legacy used SHA1
-            val spec: KeySpec = PBEKeySpec(passphrase.toCharArray(), salt, LEGACY_ITERATION_COUNT, KEY_LENGTH_BIT)
-            val secretKey = SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
-
-            val cipher = Cipher.getInstance(LEGACY_ALGORITHM)
-            cipher.init(Cipher.DECRYPT_MODE, secretKey, IvParameterSpec(iv))
-            val plaintext = cipher.doFinal(ciphertext)
-
-            val rootJson = JSONObject(String(plaintext, Charsets.UTF_8))
-            importParsedJsonToDatabase(db, rootJson)
+        // 2. Attempt Unencrypted Plaintext (In case it was exported raw)
+        runCatching {
+            val rootJson = JSONObject(String(allBytes, Charsets.UTF_8))
+            return@withContext Result.success(importParsedJsonToDatabase(db, rootJson))
         }
 
-        if (legacyResult.isSuccess) return@withContext legacyResult
-        
-        // If both fail, return the original V6 error since that's what we expect by default
-        return@withContext Result.failure(Exception("Decryption failed. Invalid passphrase or corrupted backup file."))
+        // 3. Brute-force Legacy AES/CBC combinations
+        // Handles older variations of PBKDF2 parameters and direct SHA-256 hashing
+        val legacyCombinations = listOf(
+            Triple(16, 10000, "PBKDF2WithHmacSHA1"),
+            Triple(16, 10000, "PBKDF2WithHmacSHA256"),
+            Triple(16, 65536, "PBKDF2WithHmacSHA1"),
+            Triple(16, 65536, "PBKDF2WithHmacSHA256"),
+            Triple(0, 0, "SHA-256-DIRECT")
+        )
+
+        for (combo in legacyCombinations) {
+            runCatching {
+                val saltBytes = combo.first
+                val iterations = combo.second
+                val algo = combo.third
+                val ivLen = 16
+
+                if (allBytes.size > saltBytes + ivLen) {
+                    val secretKey = if (algo == "SHA-256-DIRECT") {
+                        val digest = MessageDigest.getInstance("SHA-256").digest(passphrase.toByteArray(Charsets.UTF_8))
+                        SecretKeySpec(digest, "AES")
+                    } else {
+                        val salt = allBytes.copyOfRange(0, saltBytes)
+                        val factory = SecretKeyFactory.getInstance(algo)
+                        val spec = PBEKeySpec(passphrase.toCharArray(), salt, iterations, 256)
+                        SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
+                    }
+
+                    val iv = allBytes.copyOfRange(saltBytes, saltBytes + ivLen)
+                    val ciphertext = allBytes.copyOfRange(saltBytes + ivLen, allBytes.size)
+
+                    val cipher = Cipher.getInstance("AES/CBC/PKCS5Padding")
+                    cipher.init(Cipher.DECRYPT_MODE, secretKey, IvParameterSpec(iv))
+                    val plaintext = cipher.doFinal(ciphertext)
+
+                    val rootJson = JSONObject(String(plaintext, Charsets.UTF_8))
+                    return@withContext Result.success(importParsedJsonToDatabase(db, rootJson))
+                }
+            }
+        }
+
+        // 4. Try Legacy AES/GCM with lower iterations
+        runCatching {
+            if (allBytes.size >= 16 + 12) {
+                val salt = allBytes.copyOfRange(0, 16)
+                val iv = allBytes.copyOfRange(16, 16 + 12)
+                val ciphertext = allBytes.copyOfRange(16 + 12, allBytes.size)
+
+                val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+                val spec = PBEKeySpec(passphrase.toCharArray(), salt, 10000, 256)
+                val secretKey = SecretKeySpec(factory.generateSecret(spec).encoded, "AES")
+
+                val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+                cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
+                val plaintext = cipher.doFinal(ciphertext)
+
+                val rootJson = JSONObject(String(plaintext, Charsets.UTF_8))
+                return@withContext Result.success(importParsedJsonToDatabase(db, rootJson))
+            }
+        }
+
+        Result.failure(Exception("Decryption failed. Invalid passphrase or corrupted backup file."))
     }
 
     private suspend fun importParsedJsonToDatabase(db: AppDatabase, rootJson: JSONObject): Int {
