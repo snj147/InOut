@@ -8,6 +8,11 @@ on:
 permissions:
   contents: write
 
+# Run builds one at a time so an older run can never overwrite a newer release.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -78,9 +83,9 @@ jobs:
         if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         with:
           tag_name: rolling-alpha
-          name: "InOut Alpha Rolling (${{ github.sha }})"
+          name: "InOut Alpha Rolling #${{ github.run_number }} (${{ github.sha }})"
           body: |
-            Automated continuous alpha build from commit `${{ github.sha }}`.
+            Automated continuous alpha build #${{ github.run_number }} from commit `${{ github.sha }}`.
           files: "app/build/outputs/apk/debug/InOut-alpha-*.apk"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
